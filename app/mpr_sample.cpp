@@ -1,21 +1,32 @@
-// app/mpr_sample.cpp — Multi-Planar Reconstruction (MPR) sample (T14, FR-app.2).
+// app/mpr_sample.cpp — Multi-Planar Reconstruction (MPR) sample (T14/T15,
+// FR-app.2/3).
 //
 // Demonstrates the MPR capability (SPEC §1 goal 6): a single 1280x960 window
 // with a 2x2 viewport grid (four 640x480 viewports; T top-left, C top-right,
 // S bottom-left, 3D bottom-right, per SPEC FR-app.2). The Transverse (constant
 // Z), Coronal (constant Y) and Sagittal (constant X) views render the volume
-// slice along their pinned axis (SPEC §4 FR-app.2); the 3D view is reserved
-// for T15 (mesh + contour) and shows a background in T14.
+// slice along their pinned axis (SPEC §4 FR-app.2); the 3D view (bottom-right)
+// renders the golden box mesh (FR-app.3). Each slice view also overlays the
+// plane∩mesh cross-section contour (FR-app.3): the box's intersection with the
+// view's slice plane, computed in closed form and rasterized into the slice
+// image before the PlaneRenderer displays it.
 //
 // Rendering architecture (app-level composition, SPEC §3):
 //   - the 2x2 viewport layout and the per-axis slice sampling come from the
 //     shared app/mpr_slice scaffolding (mprViewports / makeSliceImage), which
 //     the T14 gate tests headlessly;
+//   - the contour overlay and the 3D-view camera come from the shared
+//     app/mpr_contour scaffolding (meshPlaneContour / overlayContour /
+//     make3dCamera), which the T15 gate tests headlessly;
 //   - each of the three slice views is rendered into its own 640x480 offscreen
 //     FBO via render::PlaneRenderer: a per-view orthographic camera maps the
 //     slice image's pixel space [0,imgW]x[0,imgH] onto the full viewport, and
 //     the shared unit quad is scaled onto that pixel rectangle (so the whole
 //     slice fills the view);
+//   - the 3D view FBO is rendered via render::MeshRenderer with the golden box
+//     and the make3dCamera camera, whose look-at target is the slice-state
+//     crosshair — the intersection point of the three slice planes (the
+//     slice-state ↔ 3D-view camera interplay);
 //   - a small present pass (core/ wrappers only) composites the FBOs onto the
 //     window's default framebuffer in their viewport regions.
 //
@@ -37,6 +48,7 @@
 #include <utility>
 #include <vector>
 
+#include "app/mpr_contour.hpp"
 #include "app/mpr_slice.hpp"
 #include "app/sample_harness.hpp"
 #include "core/draw.hpp"
@@ -52,6 +64,7 @@
 #include "data/volume_dataset.hpp"
 #include "io/volume/nrrd_volume_loader.hpp"
 #include "render/mesh_renderer.hpp" // render::Camera / render::RenderTarget
+#include "render/phong_material.hpp"
 #include "render/plane_renderer.hpp"
 #include "volume/transfer_function.hpp"
 
@@ -78,6 +91,21 @@ constexpr int kDefaultFrames = 300;
 constexpr std::uint32_t kViewportWidth = 640u;
 constexpr std::uint32_t kViewportHeight = 480u;
 
+// The golden box mesh (FR-app.3): a box spanning these voxel-index bounds,
+// inside the 128x128x70 CT volume, so every slice view's plane intersects it
+// (the Transverse/Coronal/Sagittal contours are the box's cross-section
+// rectangles). Integer bounds + half-integer slice planes => non-degenerate
+// closed-form cross-sections.
+constexpr glm::vec3 kGoldenBoxMin(32.0f, 32.0f, 10.0f);
+constexpr glm::vec3 kGoldenBoxMax(96.0f, 96.0f, 60.0f);
+
+// The 3D-view box material: a clean solid color mapping to exact RGBA8 bytes
+// (0.2*255=51, 0.4*255=102, 0.8*255=204). Opaque (alpha 1.0), so the v1 opaque
+// forward pass draws the box with no OIT engaged. Under the v1 flat +Z
+// lighting the +Z face of the box shades to exactly this color; faces with
+// normals not aligned to +Z shade to black (docs/render.md / docs/mpr.md).
+constexpr glm::vec4 kBoxMaterialColor(0.2f, 0.4f, 0.8f, 1.0f);
+
 /// A CT window/level transfer function over the sample_ct value range
 /// ([-3024, 2529], SPEC §7): air (low) transparent, soft tissue opaque/bright.
 /// Deterministic control points (FR-vol.1); monotonic alpha ramp. Mirrors the
@@ -93,8 +121,10 @@ volume::TransferFunction makeCtTransferFunction() {
 }
 
 /// Build the shared slice-state: hold each 2D view on the middle slice of its
-/// axis (shared slice-state/camera scaffolding, T14). T15 adds camera control
-/// that drives these.
+/// axis (shared slice-state/camera scaffolding, T14). The slice state drives
+/// both the slice views' contour planes and the 3D view camera's look-at
+/// target (make3dCamera, T15): the 3D view refocuses on the intersection point
+/// of the three slice planes.
 app::MprSliceState makeInitialSliceState(const data::VolumeDataset& dataset) {
     app::MprSliceState state;
     state.transverseZ = dataset.sizeZ() / 2u;
@@ -204,12 +234,41 @@ class MPRView final : public app::ISample {
           coronalImage_(makeSliceImage(dataset_, tf_, app::MprAxis::Coronal,
                                        sliceState_.coronalY)),
           sagittalImage_(makeSliceImage(dataset_, tf_, app::MprAxis::Sagittal,
-                                        sliceState_.sagittalX)) {
+                                        sliceState_.sagittalX)),
+          box_(app::makeBoxMesh(kGoldenBoxMin, kGoldenBoxMax)),
+          boxMaterial_(kBoxMaterialColor) {
         // One shared unit quad, scaled per slice view onto that view's image
         // pixel rectangle (makeSliceModel) and viewed through a per-view
         // orthographic camera (makeSliceCamera) — the shared 2D-view camera
         // scaffolding that maps each slice image onto its full viewport.
         quad_ = render::PlaneGeometry::unitQuadXY();
+
+        // The golden box mesh (FR-app.3) with an opaque material, for the 3D
+        // view. The 3D-view camera is driven by the slice state (make3dCamera):
+        // it looks at the intersection point of the three slice planes.
+        boxScene_.meshes.push_back(
+            render::MeshInstance{&box_, &boxMaterial_, glm::mat4(1.0f)});
+        boxCamera_ = app::make3dCamera(sliceState_, box_.bounds(),
+                                       static_cast<float>(kViewportWidth) /
+                                           static_cast<float>(kViewportHeight));
+
+        // Overlay the plane∩mesh cross-section contour on each slice view
+        // (FR-app.3): the box's intersection with that view's slice plane,
+        // computed in closed form and rasterized into the slice image at the
+        // FR-app.3 contour color, so the PlaneRenderer shows the contour on
+        // top of the slice.
+        const std::array<app::MprAxis, 3> axes = {app::MprAxis::Transverse,
+                                                  app::MprAxis::Coronal,
+                                                  app::MprAxis::Sagittal};
+        const std::array<data::Image*, 3> images = {
+            &transverseImage_, &coronalImage_, &sagittalImage_};
+        for (std::size_t i = 0u; i < 3u; ++i) {
+            const app::SlicePlane plane = app::slicePlane(axes[i], sliceState_);
+            const std::vector<app::ContourSegment> curve =
+                app::meshPlaneContour(box_, plane);
+            *images[i] =
+                app::overlayContour(*images[i], curve, app::kContourColor);
+        }
     }
 
     data::Result<void> renderFrame(int width, int height) override {
@@ -225,17 +284,20 @@ class MPRView final : public app::ISample {
     }
 
     const char* title() const override {
-        return "MPR sample: 2x2 viewport grid (T/C/S slices + 3D)";
+        return "MPR sample: 2x2 viewport grid (T/C/S slices + contours + 3D)";
     }
 
     const char* instructions() const noexcept override {
-        return "Capability: Multi-Planar Reconstruction (SPEC FR-app.2).\n"
+        return "Capability: Multi-Planar Reconstruction (SPEC FR-app.2/3).\n"
                "A single 1280x960 window shows four 640x480 viewports in a "
                "2x2 grid:\n"
-               "T (top-left) = Transverse slice (constant Z),\n"
-               "C (top-right) = Coronal slice (constant Y),\n"
-               "S (bottom-left) = Sagittal slice (constant X),\n"
-               "3D (bottom-right) = reserved for the 3D view (T15).\n"
+               "T (top-left) = Transverse slice (constant Z) + mesh contour,\n"
+               "C (top-right) = Coronal slice (constant Y) + mesh contour,\n"
+               "S (bottom-left) = Sagittal slice (constant X) + mesh "
+               "contour,\n"
+               "3D (bottom-right) = the golden box mesh, viewed from the "
+               "slice-state crosshair (the intersection of the three slice "
+               "planes).\n"
                "Run the sample, then close the window (or set "
                "RE_SAMPLE_MAX_FRAMES) to exit.";
     }
@@ -300,7 +362,8 @@ class MPRView final : public app::ISample {
     }
 
     /// Render the three slice views (T/C/S) into their own 640x480 FBOs via
-    /// PlaneRenderer; the 3D view FBO is left cleared (T15 fills it).
+    /// PlaneRenderer, and the 3D view (the golden box mesh, FR-app.3) via
+    /// MeshRenderer into its FBO.
     data::Result<void> renderSlices() {
         const std::array<const data::Image*, 3> sliceImages = {
             &transverseImage_, &coronalImage_, &sagittalImage_};
@@ -327,20 +390,21 @@ class MPRView final : public app::ISample {
             }
         }
 
-        // Clear the 3D view FBO to a distinct background (T15 renders the mesh
-        // + contour here).
-        viewFramebuffers_[3]->framebuffer.bind();
-        core::setViewport(0, 0, static_cast<int>(kViewportWidth),
-                          static_cast<int>(kViewportHeight));
-        core::setClearColor(0.10f, 0.10f, 0.14f, 1.0f);
-        core::clearColor();
-        viewFramebuffers_[3]->framebuffer.unbind();
-        return data::Result<void>(data::value);
+        // Render the 3D view (bottom-right): the golden box mesh through
+        // MeshRenderer, seen through the slice-state-driven camera whose
+        // target is the intersection point of the three slice planes
+        // (FR-app.3, "the 3D view draws the mesh").
+        render::RenderTarget target3d;
+        target3d.framebuffer = &viewFramebuffers_[3]->framebuffer;
+        target3d.width = kViewportWidth;
+        target3d.height = kViewportHeight;
+        target3d.clearColor = glm::vec4(0.10f, 0.10f, 0.14f, 1.0f);
+        return boxRenderer_.render(boxScene_, boxCamera_, target3d);
     }
 
     /// Composite the four view FBOs onto the window's default framebuffer in
     /// their viewport regions (SPEC FR-app.2 grid). The 3D viewport is drawn
-    /// from its (background) FBO; T15 fills it with the mesh.
+    /// from its FBO (the golden box mesh, FR-app.3).
     data::Result<void> present(int width, int height) {
         const std::array<app::MprViewport, 4> views = app::mprViewports(width, height);
         core::bindDefaultFramebuffer();
@@ -373,6 +437,13 @@ class MPRView final : public app::ISample {
     data::Image transverseImage_;
     data::Image coronalImage_;
     data::Image sagittalImage_;
+
+    // The golden box mesh + material for the 3D view (FR-app.3).
+    data::Mesh box_;
+    render::PhongMaterial boxMaterial_;
+    render::MeshScene boxScene_;
+    render::Camera boxCamera_;
+    render::MeshRenderer boxRenderer_;
 
     render::PlaneGeometry quad_;
     render::PlaneRenderer sliceRenderer_;

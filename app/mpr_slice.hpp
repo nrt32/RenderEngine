@@ -50,8 +50,11 @@ struct MprViewport {
 };
 
 /// The slice-state scaffolding: which voxel-index plane each 2D view is on.
-/// v1 holds each view on a fixed (constructor-chosen) index; T15 adds camera
-/// control that drives these.
+/// v1 holds each view on a fixed (constructor-chosen) index. The slice state
+/// DRIVES the T15 composition: each slice view's contour plane
+/// (app::slicePlane, app/mpr_contour.hpp) and the 3D view's camera look-at
+/// target (app::make3dCamera) are both derived from it — the slice-state ↔
+/// 3D-view camera interplay (FR-app.3).
 struct MprSliceState {
     std::uint32_t transverseZ{0}; ///< Transverse slice index (constant Z).
     std::uint32_t coronalY{0};    ///< Coronal slice index (constant Y).

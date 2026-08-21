@@ -35,6 +35,7 @@ target_link_libraries(re_imgui PUBLIC
 add_library(re_app STATIC
     sample_harness.cpp
     mpr_slice.cpp
+    mpr_contour.cpp
 )
 
 target_include_directories(re_app PUBLIC
@@ -42,9 +43,12 @@ target_include_directories(re_app PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../>
 )
 
+# re_render is linked for the render::Camera struct that mpr_contour.hpp
+# exposes (the 3D-view camera, T15). No cycle: re_render never depends on app/.
 target_link_libraries(re_app PUBLIC
     re_core
     re_imgui
+    re_render
     spdlog::spdlog
     re_project_warnings
 )

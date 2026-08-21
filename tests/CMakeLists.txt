@@ -17,6 +17,7 @@ add_executable(${RE_TEST_TARGET}
     t11_render_slice_test.cpp
     t12_samples_test.cpp
     t14_mpr_test.cpp
+    t15_mpr_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
