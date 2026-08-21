@@ -34,6 +34,7 @@ target_link_libraries(re_imgui PUBLIC
 # ---------------------------------------------------------------------------
 add_library(re_app STATIC
     sample_harness.cpp
+    mpr_slice.cpp
 )
 
 target_include_directories(re_app PUBLIC
@@ -61,9 +62,10 @@ if(RE_BUILD_SAMPLES OR RE_BUILD_TESTS)
     add_executable(re_sample_volume volume_sample.cpp)
     add_executable(re_sample_slice slice_sample.cpp)
     add_executable(re_sample_oit oit_sample.cpp)
+    add_executable(re_sample_mpr mpr_sample.cpp)
 
     foreach(sample_target re_sample_mesh re_sample_plane re_sample_volume
-            re_sample_slice re_sample_oit)
+            re_sample_slice re_sample_oit re_sample_mpr)
         target_link_libraries(${sample_target} PRIVATE
             re_app
             re_render

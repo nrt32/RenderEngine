@@ -16,6 +16,7 @@ add_executable(${RE_TEST_TARGET}
     t10_oit_test.cpp
     t11_render_slice_test.cpp
     t12_samples_test.cpp
+    t14_mpr_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
@@ -25,6 +26,7 @@ target_link_libraries(${RE_TEST_TARGET}
         re_io
         re_volume
         re_render
+        re_app
         re_project_warnings
         GTest::gtest
         GTest::gtest_main
@@ -46,6 +48,7 @@ target_compile_definitions(${RE_TEST_TARGET} PRIVATE
     RE_SAMPLE_VOLUME_BIN="${CMAKE_BINARY_DIR}/app/re_sample_volume"
     RE_SAMPLE_SLICE_BIN="${CMAKE_BINARY_DIR}/app/re_sample_slice"
     RE_SAMPLE_OIT_BIN="${CMAKE_BINARY_DIR}/app/re_sample_oit"
+    RE_SAMPLE_MPR_BIN="${CMAKE_BINARY_DIR}/app/re_sample_mpr"
     RE_TEST_BIN_DIR="${CMAKE_BINARY_DIR}"
 )
 
