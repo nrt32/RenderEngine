@@ -31,8 +31,11 @@
 no_secrets	forbid_grep	(api[_-]?key|password|secret)\s*=\s*["'][A-Za-z0-9+/]{12,}	hard-coded secrets are forbidden
 
 # --- Dependency lock: every FetchContent_Declare must carry a pinned GIT_TAG ---
-# (must be a release tag or commit SHA, never a branch name; reviewer verifies)
+# (must be a release tag or commit SHA, never a branch name; the mechanical
+# floor below rejects common branch names in every build file incl. the root
+# CMakeLists.txt, reviewer verifies the rest)
 deps_pinned	require_grep	FetchContent_Declare\([^)]*GIT_TAG	dependencies must be pinned via FetchContent GIT_TAG
+deps_pinned_no_branch	forbid_flag	GIT_TAG\s+["']?(master|main|HEAD|develop)\b	dependencies must pin a release tag or commit SHA, never a branch name
 
 # --- GL ownership: raw GL calls ONLY under core/ (RAII + core::Draw API) -------
 # render/, app/, and tests/ must go through core/ wrappers; io/, data/,

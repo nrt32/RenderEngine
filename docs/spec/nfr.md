@@ -29,5 +29,5 @@
 - **Profiling (macro-gated)** — in `core/`: scoped profiler macros compiled out
   unless enabled; can measure FPS, data-load time, data-transfer (upload) time,
   draw-call time.
-- **Soft performance floor: NOT adopted for v1** (no automated FPS gate;
-  interactivity is a manual sample check).
+- **Soft performance floor (stretch): NOT adopted for v1** (no automated FPS
+  gate; interactivity is a manual sample check).

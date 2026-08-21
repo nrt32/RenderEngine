@@ -45,7 +45,8 @@ checksums are pinned in SPEC section 7.
   Slicer testing-data mirror `Slicer/SlicerTestingData` (content-addressed
   release `SHA256`).
 - **Pinned URL:** https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e
-- **License:** CC-BY-SA 4.0.
+- **License:** CC-BY-SA 4.0. Attribution (dataset, paper citation, DOI,
+  change indication) recorded in `data/volumes/LICENSE`.
 - **Source SHA256:** `4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e`
 - **Committed file SHA256:** `816375cdcbb3a00abb87fcbd14075f78287aaf7e05eb751082b5c900f2df7865`
 - **Format:** NRRD (text header + raw, uncompressed voxel block), `type: int`

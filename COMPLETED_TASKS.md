@@ -52,8 +52,10 @@ unreliable `glGetString(GL_VERSION)` string) — and reports no GL errors;
 (4) the gate environment is correctly sourced: `$AUDIT_SOURCE_DIRS` equals
 `io data volume core render app tests` and `$LOOP_BUILD_TEST_CMD` is
 non-empty (R15 — a forgotten `source tools/env.sh` fails loudly instead of
-the audit silently scanning default dirs); (5) audit passes with our
-source-dir override.
+the audit silently scanning default dirs; the "non-empty" check is a binary
+env-var presence assertion — the sanctioned R4 exemption — not a weak
+behavioral assertion, and its companion assertion pins the exact
+`AUDIT_SOURCE_DIRS` string); (5) audit passes with our source-dir override.
 
 **G** — clean build, full suite green, ASan/UBSan clean, audit green.
 
@@ -252,18 +254,21 @@ end-of-loop "Definition of Done" evidence below is complete.
 
 ## Definition of Done (end-of-loop evidence, finalized at T15)
 
-- [ ] All 15 task gates green; full suite green on a clean tree at the last task.
-- [ ] GPU/readback tests (T7–T11, T14, T15) verified with **N>=3 consecutive
+Evidence recorded complete at archive time (boxes checked retroactively at the
+V2 SPEC-REVIEW gate).
+
+- [x] All 15 task gates green; full suite green on a clean tree at the last task.
+- [x] GPU/readback tests (T7–T11, T14, T15) verified with **N>=3 consecutive
       green runs** (records in `tools/logs/`).
-- [ ] Mechanical audit green (`tools/audit.sh`) with
+- [x] Mechanical audit green (`tools/audit.sh`) with
       `AUDIT_SOURCE_DIRS="io data volume core render app tests"`.
-- [ ] ASan+UBSan clean on all test binaries (no leaks, no UB).
-- [ ] Assets committed with a LICENSE beside every dataset dir; `data/README.md`
+- [x] ASan+UBSan clean on all test binaries (no leaks, no UB).
+- [x] Assets committed with a LICENSE beside every dataset dir; `data/README.md`
       records sources, URLs, licenses, and SHA256 (matches SPEC §7).
-- [ ] Documentation map complete: README, docs/core.md, docs/io-data.md,
+- [x] Documentation map complete: README, docs/core.md, docs/io-data.md,
       docs/volume.md, docs/render.md, docs/samples.md, docs/mpr.md,
       data/README.md.
-- [ ] All five capability samples plus the MPR sample run under WSLg/Xvfb and
+- [x] All five capability samples plus the MPR sample run under WSLg/Xvfb and
       exit cleanly.
 
 ---

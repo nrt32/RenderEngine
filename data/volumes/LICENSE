@@ -13,3 +13,15 @@ Pinned source URL (SPEC section 7):
 <= 128, SPEC section 5 memory budget) and re-written as a raw NRRD by
 `tools/convert_nrrd.py` at setup time; the committed file's own SHA256 is
 recorded in `data/README.md` and SPEC section 7.
+
+## Attribution (CC-BY-SA 4.0)
+
+`sample_ct.nrrd` is derived from `CT-chest.nrrd`, task 06 (Lung) of the
+Medical Segmentation Decathlon test set:
+
+- Antonelli, M., Reinke, A., Bakas, S., et al. "The Medical Segmentation
+  Decathlon." Nature Communications 13, 4128 (2022).
+  https://doi.org/10.1038/s41467-022-30695-9
+- License: CC BY-SA 4.0 — https://creativecommons.org/licenses/by-sa/4.0/
+- Indication of changes: downsampled to 128x128x70 and re-written as a raw
+  NRRD by `tools/convert_nrrd.py` (this repository).
