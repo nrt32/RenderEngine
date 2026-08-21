@@ -1,0 +1,11 @@
+# loop-framework (managed — never commit)
+.opencode/
+tools/run_task.sh
+tools/run_all.sh
+tools/session_status.sh
+tools/audit.sh
+tools/env_gpu.sh
+tools/force_purge.sh
+tools/audit.rules.example
+tools/lsan.supp.template
+tools/logs/

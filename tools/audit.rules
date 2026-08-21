@@ -1,0 +1,57 @@
+# =============================================================================
+# PROJECT audit rules (tools/audit.rules) — RenderEngine
+# It is DATA, not framework logic. The engine (tools/audit.sh) runs these plus
+# built-in generic checks (branch on main, no warning-suppression flags/pragmas,
+# state-file schema, no tracked binaries outside allowed dirs).
+#
+# Format: name<TAB>mode<TAB>target<TAB>message
+# Modes:
+#   forbid_grep    regex            fail if regex found in source dirs
+#   require_grep   regex            fail if regex NOT found in source dirs
+#   forbid_flag    token            fail if token appears in build files
+#   forbid_pragma  token            fail if token appears in source files
+#   forbid_ext     ext,csv          fail if tracked files carry these extensions
+#   forbid_outside dir|regex        fail if regex matches any source OUTSIDE dir
+#                                  (the FIRST '|' splits dir from regex, so the
+#                                  regex may itself contain '|' alternations)
+#   require_only   dir|regex        fail if regex matches outside dir AND has a match inside dir
+# '#' lines are comments. Source-scanning rules scan ONLY the directories in
+# AUDIT_SOURCE_DIRS (default: src include lib engine tests app). If your
+# owning-module rule must cover dirs outside the defaults, override
+# AUDIT_SOURCE_DIRS in env (or add those dirs) or the audit can't see them.
+# Rules are skipped when no source dirs exist yet; build-file rules are skipped
+# when no build files exist yet.
+#
+# NOTE: project layout uses io/ data/ volume/ core/ render/ app/ tests/, so
+# AUDIT_SOURCE_DIRS must be overridden to include them (see audit.sh env or
+# run_task.sh) for the ownership/forbidden rules below to take effect.
+# =============================================================================
+
+# --- Hard-coded secrets anywhere in the tree (generic, keep this one) ----------
+no_secrets	forbid_grep	(api[_-]?key|password|secret)\s*=\s*["'][A-Za-z0-9+/]{12,}	hard-coded secrets are forbidden
+
+# --- Dependency lock: every FetchContent_Declare must carry a pinned GIT_TAG ---
+# (must be a release tag or commit SHA, never a branch name; reviewer verifies)
+deps_pinned	require_grep	FetchContent_Declare\([^)]*GIT_TAG	dependencies must be pinned via FetchContent GIT_TAG
+
+# --- GL ownership: raw GL calls ONLY under core/ (RAII + core::Draw API) -------
+# render/, app/, and tests/ must go through core/ wrappers; io/, data/,
+# volume/ are GL-free. Single-dir anchor (forbid_outside supports one dir).
+gpu_api_ownership	forbid_outside	core/|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/
+
+# --- Legacy fixed-function API must never appear anywhere ----------------------
+no_legacy_api	forbid_grep	glBegin|glMatrixMode|glOrtho|glFrustum	legacy fixed-function API is forbidden
+
+# --- Readback discipline: raw readback calls only under core/ ------------------
+# (single-GL-owner rule; readback is consumed by tests for verification)
+no_production_readback	forbid_outside	core/|\b(glMapBufferRange|glGetBufferSubData|glReadPixels|glGetTexImage|glGetTexLevelParameteriv)\b	readback raw calls only under core/ (test-consumed)
+
+# --- Logging discipline: no raw printf/cout for diagnostics --------------------
+no_raw_diagnostics	forbid_grep	std::cout|std::cerr|\bprintf\(	logging discipline: use spdlog, not printf/cout
+
+# --- Asset licensing: every dataset dir must carry a LICENSE file --------------
+# (grep is a floor; the T2 gate enforces one LICENSE per dataset dir)
+assets_licensed	require_grep	LICENSE	at least one LICENSE present (floor); per-dataset-dir LICENSE enforced by T2 gate (SPEC section 7)
+
+# --- Build hygiene (generic, reinforce here) -----------------------------------
+# (built-in checks already cover warning-suppression flags/pragmas)
