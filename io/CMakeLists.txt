@@ -1,9 +1,11 @@
-# io/ — loaders ONLY, no GL (SPEC S3). Mesh (T4) and volume (T5) loaders.
-# io/ consumes data/ containers (CPU, GL-free) and stb_image for decoding.
+# io/ — loaders ONLY, no GL (SPEC S3). Mesh + image (T4) and volume NRRD (T5)
+# loaders. io/ consumes data/ containers (CPU, GL-free) and stb_image for
+# decoding.
 
 add_library(re_io STATIC
     mesh/obj_mesh_loader.cpp
     image/image_loader.cpp
+    volume/nrrd_volume_loader.cpp
 )
 
 target_include_directories(re_io PUBLIC

@@ -8,6 +8,7 @@ add_executable(${RE_TEST_TARGET}
     t2_assets_test.cpp
     t3_core_gl_test.cpp
     t4_io_data_test.cpp
+    t5_volume_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
