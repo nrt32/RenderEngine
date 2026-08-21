@@ -26,6 +26,10 @@ void clearColor() noexcept {
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
+void bindDefaultFramebuffer() noexcept {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 void enableDepthTest() noexcept {
     glEnable(GL_DEPTH_TEST);
 }

@@ -32,6 +32,12 @@ void setClearColor(float r, float g, float b, float a) noexcept;
 /// color (glClear GL_COLOR_BUFFER_BIT).
 void clearColor() noexcept;
 
+/// Bind the default framebuffer (0) as the draw+read framebuffer
+/// (glBindFramebuffer(GL_FRAMEBUFFER, 0)). Renderers bind this when
+/// `RenderTarget::framebuffer` is null, i.e. when a sample renders into the
+/// window's on-screen default framebuffer rather than an offscreen FBO (T12).
+void bindDefaultFramebuffer() noexcept;
+
 /// Enable/disable the depth test (glEnable/glDisable GL_DEPTH_TEST).
 void enableDepthTest() noexcept;
 void disableDepthTest() noexcept;

@@ -15,6 +15,7 @@ add_executable(${RE_TEST_TARGET}
     t9_render_volume_test.cpp
     t10_oit_test.cpp
     t11_render_slice_test.cpp
+    t12_samples_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
@@ -33,6 +34,17 @@ target_link_libraries(${RE_TEST_TARGET}
 # from the build dir). Pointed at the SOURCE tree, not the build tree.
 target_compile_definitions(${RE_TEST_TARGET} PRIVATE
     TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+# T12 gate (FR-app.1): the sample-smoke test spawns the mesh/plane/volume
+# sample binaries under Xvfb. The binaries are built by app/ whenever
+# RE_BUILD_TESTS is on; pass their absolute paths + the build dir (for the
+# captured sample logs) as compile definitions.
+target_compile_definitions(${RE_TEST_TARGET} PRIVATE
+    RE_SAMPLE_MESH_BIN="${CMAKE_BINARY_DIR}/app/re_sample_mesh"
+    RE_SAMPLE_PLANE_BIN="${CMAKE_BINARY_DIR}/app/re_sample_plane"
+    RE_SAMPLE_VOLUME_BIN="${CMAKE_BINARY_DIR}/app/re_sample_volume"
+    RE_TEST_BIN_DIR="${CMAKE_BINARY_DIR}"
 )
 
 # Sanitizers on the test binary: ASan + UBSan (SPEC S5, "Memory/sanitizers").

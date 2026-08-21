@@ -3,6 +3,7 @@
 
 add_library(re_core STATIC
     offscreen_context.cpp
+    window.cpp
     gl_error.cpp
     logging.cpp
     vertex_buffer.cpp

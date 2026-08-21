@@ -160,9 +160,8 @@ data::Result<void> MeshRenderer::drawTransparent(const MeshScene& scene,
 data::Result<void> MeshRenderer::render(const MeshScene& scene,
                                         const Camera& camera,
                                         const RenderTarget& target) {
-    if (target.framebuffer == nullptr) {
-        return data::makeError<void>(1,
-                                     "MeshRenderer: null target framebuffer");
+    if (target.width == 0u || target.height == 0u) {
+        return data::makeError<void>(1, "MeshRenderer: invalid target size");
     }
 
     // Determine whether any mesh is transparent (SPEC §3: OIT is a
@@ -176,9 +175,15 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
         }
     }
 
-    // Bind the target and prepare draw state. v1 FBOs are color-only (no depth
-    // attachment, SPEC §6 / docs/core.md), so the depth test is left off.
-    target.framebuffer->bind();
+    // Bind the target and prepare draw state. A null framebuffer means the
+    // window's on-screen default framebuffer (T12); otherwise bind the
+    // offscreen FBO. v1 FBOs are color-only (no depth attachment, SPEC §6 /
+    // docs/core.md), so the depth test is left off.
+    if (target.framebuffer == nullptr) {
+        core::bindDefaultFramebuffer();
+    } else {
+        target.framebuffer->bind();
+    }
     core::setViewport(0, 0, static_cast<int>(target.width),
                       static_cast<int>(target.height));
     core::setClearColor(target.clearColor.r, target.clearColor.g,

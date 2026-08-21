@@ -9,7 +9,9 @@ project(RenderEngine
 # Options
 # ---------------------------------------------------------------------------
 option(RE_BUILD_TESTS "Build the RenderEngine unit-test suite" ON)
-option(RE_BUILD_SAMPLES "Build the RenderEngine sample applications" OFF)
+# Samples are part of the T12+ deliverable; the T12 gate runs them headlessly
+# under Xvfb (FR-app.1), so they are built by default.
+option(RE_BUILD_SAMPLES "Build the RenderEngine sample applications" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

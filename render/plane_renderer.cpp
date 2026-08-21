@@ -246,9 +246,8 @@ data::Result<core::Texture2D*> PlaneRenderer::textureFor(
 data::Result<void> PlaneRenderer::render(const PlaneScene& scene,
                                          const Camera& camera,
                                          const RenderTarget& target) {
-    if (target.framebuffer == nullptr) {
-        return data::makeError<void>(1,
-                                     "PlaneRenderer: null target framebuffer");
+    if (target.width == 0u || target.height == 0u) {
+        return data::makeError<void>(1, "PlaneRenderer: invalid target size");
     }
 
     auto programResult = planeProgram();
@@ -265,10 +264,16 @@ data::Result<void> PlaneRenderer::render(const PlaneScene& scene,
     }
     core::VertexArray* quadVao = *quadResult;
 
-    // Bind the target and prepare draw state. v1 FBOs are color-only (no depth
-    // attachment), so the depth test is left off; blending is off (textures
-    // are sampled with alpha and written straight).
-    target.framebuffer->bind();
+    // Bind the target and prepare draw state. A null framebuffer means the
+    // window's on-screen default framebuffer (T12); otherwise bind the
+    // offscreen FBO. v1 FBOs are color-only (no depth attachment), so the depth
+    // test is left off; blending is off (textures are sampled with alpha and
+    // written straight).
+    if (target.framebuffer == nullptr) {
+        core::bindDefaultFramebuffer();
+    } else {
+        target.framebuffer->bind();
+    }
     core::setViewport(0, 0, static_cast<int>(target.width),
                       static_cast<int>(target.height));
     core::setClearColor(target.clearColor.r, target.clearColor.g,

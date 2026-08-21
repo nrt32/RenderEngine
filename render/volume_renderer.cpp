@@ -292,9 +292,8 @@ void VolumeRenderer::uploadTransferFunction(
 data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
                                           const Camera& camera,
                                           const RenderTarget& target) {
-    if (target.framebuffer == nullptr) {
-        return data::makeError<void>(1,
-                                     "VolumeRenderer: null target framebuffer");
+    if (target.width == 0u || target.height == 0u) {
+        return data::makeError<void>(1, "VolumeRenderer: invalid target size");
     }
 
     auto programResult = rayCastProgram();
@@ -311,10 +310,16 @@ data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
     }
     core::VertexArray* quadVao = *quadResult;
 
-    // Bind the target and prepare draw state. v1 FBOs are color-only (no depth
-    // attachment), so the depth test is left off; blending is off because the
-    // shader already writes the final premultiplied composited color.
-    target.framebuffer->bind();
+    // Bind the target and prepare draw state. A null framebuffer means the
+    // window's on-screen default framebuffer (T12); otherwise bind the
+    // offscreen FBO. v1 FBOs are color-only (no depth attachment), so the depth
+    // test is left off; blending is off because the shader already writes the
+    // final premultiplied composited color.
+    if (target.framebuffer == nullptr) {
+        core::bindDefaultFramebuffer();
+    } else {
+        target.framebuffer->bind();
+    }
     core::setViewport(0, 0, static_cast<int>(target.width),
                       static_cast<int>(target.height));
     core::setClearColor(target.clearColor.r, target.clearColor.g,
