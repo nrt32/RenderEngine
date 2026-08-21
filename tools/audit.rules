@@ -40,7 +40,11 @@ deps_pinned	require_grep	FetchContent_Declare\([^)]*GIT_TAG	dependencies must be
 gpu_api_ownership	forbid_outside	core|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/
 
 # --- Legacy fixed-function API must never appear anywhere ----------------------
-no_legacy_api	forbid_grep	glBegin|glMatrixMode|glOrtho|glFrustum	legacy fixed-function API is forbidden
+# glBegin is word-boundary anchored so the legacy immediate-mode entry point
+# (glBegin(...)) stays banned while core GL 3.0+ transform feedback
+# (glBeginTransformFeedback, used by SliceRenderer's cross-section capture,
+# T11) is NOT a legacy call and must not be flagged.
+no_legacy_api	forbid_grep	\bglBegin\b|glMatrixMode|glOrtho|glFrustum	legacy fixed-function API is forbidden
 
 # --- Readback discipline: raw readback calls only under core/ ------------------
 # (single-GL-owner rule; readback is consumed by tests for verification)

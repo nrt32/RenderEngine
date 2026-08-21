@@ -13,6 +13,7 @@ add_library(re_core STATIC
     texture3d.cpp
     framebuffer.cpp
     shader_program.cpp
+    transform_feedback.cpp
     draw.cpp
     read_pixels.cpp
 )

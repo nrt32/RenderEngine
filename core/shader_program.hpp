@@ -24,6 +24,7 @@
 #include <glm/vec3.hpp>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "data/result.hpp"
 
@@ -33,8 +34,9 @@ namespace re::core {
 /// failures (typed, SPEC S5). Public API: lives in the header.
 enum class ShaderError : int {
     VertexCompile = 1,   ///< Vertex shader failed to compile.
-    FragmentCompile = 2, ///< Fragment shader failed to compile.
-    Link = 3,            ///< Linking the program failed.
+    GeometryCompile = 2, ///< Geometry shader failed to compile.
+    FragmentCompile = 3, ///< Fragment shader failed to compile.
+    Link = 4,            ///< Linking the program failed.
 };
 
 /// RAII wrapper for a GL shader program (linked vertex + fragment shaders).
@@ -48,6 +50,32 @@ class ShaderProgram {
     /// diagnostics (see file comment) and whose code is a ShaderError value.
     static data::Result<ShaderProgram> create(std::string_view vertexSource,
                                               std::string_view fragmentSource);
+
+    /// Compile `vertexSource` + `geometrySource` + `fragmentSource` and link
+    /// them into a program. `geometrySource` must declare a `layout(...) in`
+    /// and `layout(...) out` matching the draw and its output primitive type.
+    /// On any failure returns a typed error whose message embeds the driver's
+    /// diagnostics and whose code is a ShaderError value.
+    static data::Result<ShaderProgram> createWithGeometry(
+        std::string_view vertexSource, std::string_view geometrySource,
+        std::string_view fragmentSource);
+
+    /// Compile `vertexSource` + `geometrySource` + `fragmentSource`, declare
+    /// the transform-feedback varyings `varyings` (each a GLSL varying name
+    /// written by the geometry stage), and link them into a program. The
+    /// varyings are captured with GL_INTERLEAVED_ATTRIBS into the single
+    /// transform-feedback buffer bound to index 0 (the caller begins capture
+    /// with the primitive mode matching the geometry stage's output, e.g.
+    /// GL_TRIANGLES, via core::TransformFeedback::begin).
+    ///
+    /// This is used by the SliceRenderer cross-section gate (T11, FR-render.4)
+    /// to capture the on-plane vertices a geometry shader emits. On any failure
+    /// returns a typed error whose message embeds the driver's diagnostics and
+    /// whose code is a ShaderError value.
+    static data::Result<ShaderProgram> createWithTransformFeedback(
+        std::string_view vertexSource, std::string_view geometrySource,
+        std::string_view fragmentSource,
+        const std::vector<std::string>& varyings);
 
     ShaderProgram(const ShaderProgram&) = delete;
     ShaderProgram& operator=(const ShaderProgram&) = delete;

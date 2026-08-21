@@ -5,6 +5,7 @@
 #include <glad/gl.h>
 
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -99,35 +100,71 @@ data::Result<std::uint32_t> compileStage(GLenum stage, std::string_view source,
 
 } // namespace
 
-data::Result<ShaderProgram> ShaderProgram::create(
-    std::string_view vertexSource, std::string_view fragmentSource) {
-    auto vertex =
-        compileStage(GL_VERTEX_SHADER, vertexSource,
-                     static_cast<int>(ShaderError::VertexCompile), "vertex");
-    if (vertex.failed()) {
-        return data::makeError<ShaderProgram>(vertex.error().code,
-                                              vertex.error().message);
-    }
+/// A single shader stage to compile: its GL type + source.
+struct StageSource {
+    GLenum type;
+    std::string_view source;
+};
 
-    auto fragment = compileStage(GL_FRAGMENT_SHADER, fragmentSource,
-                                 static_cast<int>(ShaderError::FragmentCompile),
-                                 "fragment");
-    if (fragment.failed()) {
-        glDeleteShader(*vertex);
-        return data::makeError<ShaderProgram>(fragment.error().code,
-                                              fragment.error().message);
+/// Compile and link `stages` into a program. When `varyings` is non-empty, the
+/// transform-feedback varyings are declared (GL_INTERLEAVED_ATTRIBS) before
+/// linking. Returns the linked program name on success.
+data::Result<std::uint32_t> createAndLink(
+    const std::vector<StageSource>& stages,
+    const std::vector<std::string>& varyings) {
+    // Compile each stage first so a failure can clean up all created objects.
+    std::vector<std::uint32_t> shaderObjects;
+    for (const StageSource& stage : stages) {
+        int errorCode = 1;
+        const char* stageLabel = "shader";
+        if (stage.type == GL_VERTEX_SHADER) {
+            errorCode = static_cast<int>(ShaderError::VertexCompile);
+            stageLabel = "vertex";
+        } else if (stage.type == GL_GEOMETRY_SHADER) {
+            errorCode = static_cast<int>(ShaderError::GeometryCompile);
+            stageLabel = "geometry";
+        } else if (stage.type == GL_FRAGMENT_SHADER) {
+            errorCode = static_cast<int>(ShaderError::FragmentCompile);
+            stageLabel = "fragment";
+        }
+        auto compiled =
+            compileStage(stage.type, stage.source, errorCode, stageLabel);
+        if (compiled.failed()) {
+            for (const std::uint32_t s : shaderObjects) {
+                glDeleteShader(s);
+            }
+            return data::makeError<std::uint32_t>(compiled.error().code,
+                                                  compiled.error().message);
+        }
+        shaderObjects.push_back(*compiled);
     }
 
     if (glCreateProgram == nullptr) {
-        glDeleteShader(*vertex);
-        glDeleteShader(*fragment);
-        return data::makeError<ShaderProgram>(
+        // Unusual partial-load edge case: the stages above compiled, so free
+        // them before reporting the missing context (no leaks on any path).
+        for (const std::uint32_t s : shaderObjects) {
+            glDeleteShader(s);
+        }
+        return data::makeError<std::uint32_t>(
             1, "ShaderProgram: no GL context (glCreateProgram not loaded)");
     }
 
     const std::uint32_t program = glCreateProgram();
-    glAttachShader(program, *vertex);
-    glAttachShader(program, *fragment);
+    for (const std::uint32_t s : shaderObjects) {
+        glAttachShader(program, s);
+    }
+
+    if (!varyings.empty()) {
+        std::vector<const char*> varyingPtrs;
+        varyingPtrs.reserve(varyings.size());
+        for (const std::string& v : varyings) {
+            varyingPtrs.push_back(v.c_str());
+        }
+        glTransformFeedbackVaryings(program,
+                                    static_cast<GLsizei>(varyingPtrs.size()),
+                                    varyingPtrs.data(), GL_INTERLEAVED_ATTRIBS);
+    }
+
     glLinkProgram(program);
 
     GLint linkStatus = GL_FALSE;
@@ -138,16 +175,64 @@ data::Result<ShaderProgram> ShaderProgram::create(
             std::string("ShaderProgram: link failed:\n") +
             normalizeInfoLog(log);
         glDeleteProgram(program);
-        glDeleteShader(*vertex);
-        glDeleteShader(*fragment);
-        return data::makeError<ShaderProgram>(
+        for (const std::uint32_t s : shaderObjects) {
+            glDeleteShader(s);
+        }
+        return data::makeError<std::uint32_t>(
             static_cast<int>(ShaderError::Link), message);
     }
 
     // Linked programs no longer need their attached shader objects.
-    glDeleteShader(*vertex);
-    glDeleteShader(*fragment);
-    return data::makeValue<ShaderProgram>(ShaderProgram(program));
+    for (const std::uint32_t s : shaderObjects) {
+        glDeleteShader(s);
+    }
+    return data::makeValue<std::uint32_t>(program);
+}
+
+data::Result<ShaderProgram> ShaderProgram::create(
+    std::string_view vertexSource, std::string_view fragmentSource) {
+    std::vector<StageSource> stages = {
+        StageSource{GL_VERTEX_SHADER, vertexSource},
+        StageSource{GL_FRAGMENT_SHADER, fragmentSource},
+    };
+    auto program = createAndLink(stages, {});
+    if (program.failed()) {
+        return data::makeError<ShaderProgram>(program.error().code,
+                                              program.error().message);
+    }
+    return data::makeValue<ShaderProgram>(ShaderProgram(*program));
+}
+
+data::Result<ShaderProgram> ShaderProgram::createWithGeometry(
+    std::string_view vertexSource, std::string_view geometrySource,
+    std::string_view fragmentSource) {
+    std::vector<StageSource> stages = {
+        StageSource{GL_VERTEX_SHADER, vertexSource},
+        StageSource{GL_GEOMETRY_SHADER, geometrySource},
+        StageSource{GL_FRAGMENT_SHADER, fragmentSource},
+    };
+    auto program = createAndLink(stages, {});
+    if (program.failed()) {
+        return data::makeError<ShaderProgram>(program.error().code,
+                                              program.error().message);
+    }
+    return data::makeValue<ShaderProgram>(ShaderProgram(*program));
+}
+
+data::Result<ShaderProgram> ShaderProgram::createWithTransformFeedback(
+    std::string_view vertexSource, std::string_view geometrySource,
+    std::string_view fragmentSource, const std::vector<std::string>& varyings) {
+    std::vector<StageSource> stages = {
+        StageSource{GL_VERTEX_SHADER, vertexSource},
+        StageSource{GL_GEOMETRY_SHADER, geometrySource},
+        StageSource{GL_FRAGMENT_SHADER, fragmentSource},
+    };
+    auto program = createAndLink(stages, varyings);
+    if (program.failed()) {
+        return data::makeError<ShaderProgram>(program.error().code,
+                                              program.error().message);
+    }
+    return data::makeValue<ShaderProgram>(ShaderProgram(*program));
 }
 
 ShaderProgram::ShaderProgram(ShaderProgram&& other) noexcept : id_(other.id_) {

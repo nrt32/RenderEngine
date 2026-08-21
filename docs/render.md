@@ -11,10 +11,12 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 > the `ITransparencyPipeline` interface, the shared `MeshGeometry`, and the
 > `MeshRenderer` opaque forward pass, FR-render.1/3), the **T8 deliverable**
 > (`PlaneRenderer` textured quads/planes, FR-render.5), the **T9 deliverable**
-> (`VolumeRenderer` ray-cast GL draw pass, FR-render.6), and the **T10
+> (`VolumeRenderer` ray-cast GL draw pass, FR-render.6), the **T10
 > deliverable** (`LinkedListOIT`, the per-pixel linked-list order-independent
-> transparency pipeline, FR-render.2/3). It is part of the `docs/render.md`
-> documentation map (T7/T8/T9/T10; later tasks extend it).
+> transparency pipeline, FR-render.2/3), and the **T11 deliverable**
+> (`SliceRenderer`, the geometry-shader plane clip of a mesh, FR-render.4). It
+> is part of the `docs/render.md` documentation map (T7/T8/T9/T10/T11; later
+> tasks extend it).
 
 ## Components
 
@@ -220,6 +222,64 @@ orthographic projection mapping NDC `[-1,1]^2` onto the full 64×64 viewport:
 | OIT pipeline engagement | `beginCount == 0` | opaque-only scene never engages the injected spy (FR-render.3) |
 | `isTransparent()` | `false` at alpha 1.0; `true` at alpha 0.5 and 0.0 | transparency is `baseColor().a < 1.0` (FR-render.3) |
 
+### `SliceRenderer` (`render/slice_renderer.hpp`, `.cpp`) — T11
+
+A **stateless geometry-shader plane-clip renderer** (SPEC §3, FR-render.4): the
+mesh-family technique that slices a mesh against a plane **purely on the GPU**.
+It reuses the shared `MeshGeometry` (mesh geometry handling) and the `IMaterial`
+interface exactly like `MeshRenderer`, and **does not use OIT in v1** (SPEC §3
+"Slicing is geometry, not compositing"). `SliceRenderer::render(scene, camera,
+plane, target)` receives all of its data per call; the renderer owns only GL
+resources — its cached clip shader program (vertex + geometry + fragment), its
+transform-feedback capture program + object, and the GPU geometries of the
+meshes it has drawn (keyed by mesh pointer, shared with the mesh family).
+
+Public scene structs (defined in `slice_renderer.hpp`; reuses `MeshInstance` /
+`MeshScene`-style `SliceScene` from `mesh_renderer.hpp`):
+
+| Type | Purpose |
+|---|---|
+| `ClipPlane` | the slice plane in **world space**: a unit `normal` + a `point` on the plane. The kept side is `dot(normal, p - point) >= 0`. |
+| `SliceScene` | a vector of `MeshInstance`s to clip (CPU-side; `app/` builds these). |
+
+**Geometry shader clip (pure GPU).** The vertex shader transforms each vertex to
+world space; the geometry shader computes each triangle's signed plane distance
+`d[i] = dot(uPlaneNormal, P[i] - uPlanePoint)` and clips with the standard
+Sutherland–Hodgman half-space clip against `d >= 0`, emitting the resulting 3-
+or 4-vertex polygon as a triangle fan. The fragment shader shades the clipped
+mesh with the triangle's **geometric face normal** (computed from the
+world-space winding `normalize(cross(P1 - P0, P2 - P0))`) under the same
+deterministic v1 flat lighting as the `MeshRenderer` opaque pass, so a kept
+surface whose geometric normal is +Z renders at exactly the material's base
+color.
+
+**Cross-section capture (test-consumed).** `captureCrossSection(scene, plane,
+out)` runs a second program whose geometry shader emits ONLY the **on-plane
+cross-section polygon** of each triangle — the triangle's vertices exactly on
+the plane plus the edge-intersection points where the plane cuts an edge
+(`P[i] + t * (P[j] - P[i])` with `t = d[i] / (d[i] - d[j])`, which lies exactly
+on the plane) — into a transform-feedback buffer
+(`core::TransformFeedback`, a `core/` wrapper) and reads the emitted world-space
+positions back. This is a **test-consumed readback path** (guardrail
+`no_production_readback`): the render path never reads back from the GPU; the
+FR-render.4 gate uses the captured vertices to assert they lie on the clip
+plane. A crossing triangle whose intersection is a strict segment emits a
+degenerate (zero-area) triangle so the emitted vertex count is deterministic.
+
+#### Acceptance constants (FR-render.4, docs/render.md)
+
+Golden cube `[-1,1]^3` (8 corners, 12 triangles, CCW-outward winding so the
+geometric face normals point outward) clipped by the plane z=0 (normal `(0,0,1)`
+through the origin; kept side z >= 0), identity model:
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| Crossing triangles | `8` | the 4 vertical faces (x=±1, y=±1) contribute 2 triangles each; the z=±1 faces are entirely on one side and contribute none |
+| Emitted cross-section vertices | `24` | 8 crossing triangles × 3 vertices per degenerate cross-section triangle (a strict segment emits a zero-area triangle) |
+| Plane distance of every emitted vertex | `<= 1e-4 * 2 = 2e-4` | `|dot((0,0,1), v - (0,0,0))| = |v.z|`; each vertex is an edge intersection computed at `t = d[i]/(d[i]-d[j])` and lies on z=0 up to float rounding; relative tolerance 1e-4 × mesh extent 2 (SPEC §4 plane-geometry tolerance) |
+| Clipped-mesh center pixel | `{51, 102, 204}` (±1) | kept z=+1 face's geometric normal is exactly +Z → shade `dot((0,0,1),(0,0,1)) = 1` → `color = baseColor {0.2, 0.4, 0.8}` → bytes `{51,102,204}` (FR-render.4, within 1/255) |
+| Base color | `{0.2, 0.4, 0.8, 1.0}` | clean RGBA8 bytes: `0.2*255=51`, `0.4*255=102`, `0.8*255=204` |
+
 ### `PlaneRenderer` (`render/plane_renderer.hpp`, `.cpp`) — T8
 
 A **stateless textured-plane renderer** (SPEC §3, FR-render.5): it feeds the MPR
@@ -380,10 +440,12 @@ out.rgb = 0.5*(1 + 0.5 + 0.25 + 0.125)     = 0.9375  (along green)
 - **GL ownership**: `render/` is GL-call-free. Raw draw-state calls
   (`glViewport`, `glClear`, `glDrawElements`, …) live in `core/draw.cpp`; raw
   readback (`glReadPixels`) lives in `core/read_pixels.cpp`; SSBO creation/
-  binding/readback lives in `core/storage_buffer.cpp`; image binding + memory
-  barriers live in `core/draw.cpp` (all under `core/`). The only readback
-  consumers are tests (pixel reads, `LinkedListOIT::readCapturedFragmentCount`)
-  — guardrail `no_production_readback`.
+  binding/readback lives in `core/storage_buffer.cpp`; transform-feedback
+  creation/capture/readback lives in `core/transform_feedback.cpp`; image
+  binding + memory barriers live in `core/draw.cpp` (all under `core/`). The
+  only readback consumers are tests (pixel reads,
+  `LinkedListOIT::readCapturedFragmentCount`,
+  `SliceRenderer::captureCrossSection`) — guardrail `no_production_readback`.
 - **Stateless + dependency inversion**: `render()` takes all data per call;
   renderers depend on `IMaterial` / `ITransparencyPipeline` abstractions.
 - **Typed diagnostics**: draw/geometry failures return `data::Result` — no
