@@ -1,0 +1,15 @@
+# License — data/volumes/
+
+| File | Dataset | Source | License |
+|---|---|---|---|
+| `sample_ct.nrrd` | CT chest sample volume (`CT-chest.nrrd`, Medical Decathlon test data) | 3D Slicer testing-data mirror, `Slicer/SlicerTestingData` release `SHA256` (content-addressed) | CC-BY-SA 4.0 |
+
+Pinned source URL (SPEC section 7):
+
+- https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e
+  (source file `CT-chest.nrrd`, source SHA256 `4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e`)
+
+`sample_ct.nrrd` is the source volume downsampled to 128x128x70 (all axes
+<= 128, SPEC section 5 memory budget) and re-written as a raw NRRD by
+`tools/convert_nrrd.py` at setup time; the committed file's own SHA256 is
+recorded in `data/README.md` and SPEC section 7.

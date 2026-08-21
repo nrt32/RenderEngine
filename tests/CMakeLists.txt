@@ -5,6 +5,7 @@ set(RE_TEST_TARGET re_tests)
 add_executable(${RE_TEST_TARGET}
     offscreen_fixture.cpp
     t1_scaffolding_test.cpp
+    t2_assets_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
@@ -14,6 +15,12 @@ target_link_libraries(${RE_TEST_TARGET}
         re_project_warnings
         GTest::gtest
         GTest::gtest_main
+)
+
+# Repo root, so tests can locate the committed assets under data/ (they run
+# from the build dir). Pointed at the SOURCE tree, not the build tree.
+target_compile_definitions(${RE_TEST_TARGET} PRIVATE
+    TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 # Sanitizers on the test binary: ASan + UBSan (SPEC S5, "Memory/sanitizers").

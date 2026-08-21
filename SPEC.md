@@ -293,6 +293,14 @@ and recording the verified SHA256s in this section is the **T2 implementer's**
 deliverable. Re-running setup is therefore idempotent and never touches git
 state.
 
+**Verified SHA256s of the committed files (T2):**
+- `data/meshes/bunny.obj` — `1eb35d1e21ce99e5ce911353b6be278990713448dd9e8f5c9387f9de39b32205` (matches source)
+- `data/meshes/teapot.obj` — `1b5396fedd74b577e32cef41146582c2f2e1a050d5b4915193c0ac1ad4187ed4` (matches source)
+- `data/volumes/sample_ct.nrrd` — `816375cdcbb3a00abb87fcbd14075f78287aaf7e05eb751082b5c900f2df7865` (downsampled 128×128×70; source SHA256 `4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e`)
+
+These are asserted by the T2 gate (SHA256 of each committed file, plus the NRRD
+dims ≤128³ and the bunny.obj hand-counted vertex count).
+
 ### Meshes (sample OBJs)
 - `data/meshes/bunny.obj` — Stanford bunny, public domain.
 - `data/meshes/teapot.obj` — Utah teapot, public domain.
