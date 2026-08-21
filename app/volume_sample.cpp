@@ -92,6 +92,15 @@ class VolumeSample final : public re::app::ISample {
         return "Volume sample: ray-cast CT chest (128x128x70)";
     }
 
+    const char* instructions() const noexcept override {
+        return "Capability: basic ray-cast volume rendering (SPEC FR-render.6).\n"
+               "The CT chest is sampled along each view ray and composited "
+               "front-to-back through render::VolumeRenderer with a CT "
+               "window/level transfer function.\n"
+               "Run the sample, then close the window (or set "
+               "RE_SAMPLE_MAX_FRAMES) to exit.";
+    }
+
    private:
     re::data::VolumeDataset dataset_;
     re::volume::TransferFunction tf_;

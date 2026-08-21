@@ -385,8 +385,14 @@ data::Result<void> LinkedListOIT::end(const Camera& camera,
     }
     core::VertexArray* quadVao = *quadResult;
 
-    // Bind the target and composite over its current (opaque) contents.
-    target.framebuffer->bind();
+    // Bind the target and composite over its current (opaque) contents. A null
+    // framebuffer means the window's on-screen default framebuffer (T12);
+    // otherwise bind the offscreen FBO (mirrors MeshRenderer::render).
+    if (target.framebuffer == nullptr) {
+        core::bindDefaultFramebuffer();
+    } else {
+        target.framebuffer->bind();
+    }
     core::setViewport(0, 0, static_cast<int>(target.width),
                       static_cast<int>(target.height));
     core::disableDepthTest();

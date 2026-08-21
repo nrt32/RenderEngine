@@ -42,6 +42,14 @@ class ISample {
 
     /// A short one-line description shown in the ImGui overlay.
     virtual const char* title() const = 0;
+
+    /// Optional per-sample instructions on how to drive this capability, shown
+    /// as help text in the ImGui overlay (T13, FR-app.1 "per-sample
+    /// instructions"). May be multiple lines separated by '\n', or empty when
+    /// the sample has nothing to say.
+    virtual const char* instructions() const noexcept {
+        return "";
+    }
 };
 
 /// Shared sample harness: owns a visible window + GL context, wires the ImGui

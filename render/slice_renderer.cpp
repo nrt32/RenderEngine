@@ -254,9 +254,8 @@ data::Result<void> SliceRenderer::render(const SliceScene& scene,
                                          const Camera& camera,
                                          const ClipPlane& plane,
                                          const RenderTarget& target) {
-    if (target.framebuffer == nullptr) {
-        return data::makeError<void>(1,
-                                     "SliceRenderer: null target framebuffer");
+    if (target.width == 0u || target.height == 0u) {
+        return data::makeError<void>(1, "SliceRenderer: invalid target size");
     }
 
     auto programResult = clipProgram();
@@ -266,9 +265,15 @@ data::Result<void> SliceRenderer::render(const SliceScene& scene,
     }
     core::ShaderProgram* program = *programResult;
 
-    // Bind the target and prepare draw state. v1 FBOs are color-only (no depth
+    // Bind the target and prepare draw state. A null framebuffer means the
+    // window's on-screen default framebuffer (T12/T13 interactive samples);
+    // otherwise bind the offscreen FBO. v1 FBOs are color-only (no depth
     // attachment, SPEC §6 / docs/core.md), so the depth test is left off.
-    target.framebuffer->bind();
+    if (target.framebuffer == nullptr) {
+        core::bindDefaultFramebuffer();
+    } else {
+        target.framebuffer->bind();
+    }
     core::setViewport(0, 0, static_cast<int>(target.width),
                       static_cast<int>(target.height));
     core::setClearColor(target.clearColor.r, target.clearColor.g,

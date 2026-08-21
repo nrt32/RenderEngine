@@ -1,9 +1,10 @@
-// tests/t12_samples_test.cpp — T12 gate tests (FR-app.1, partial, SPEC §4).
+// tests/t12_samples_test.cpp — T12/T13 gate tests (FR-app.1, SPEC §4).
 //
-// Asserts that each of the mesh/plane/volume samples (built by T12 from the
-// shared app::SampleHarness) runs under Xvfb, opens a window with a GL 4.6 core
-// context, and exits cleanly (exit code 0, no sanitizer reports) within a
-// timeout:
+// Asserts that each capability sample (built from the shared app::SampleHarness)
+// runs under Xvfb, opens a window with a GL 4.6 core context, and exits cleanly
+// (exit code 0, no sanitizer reports) within a timeout. T12 covers the
+// mesh/plane/volume samples (FR-app.1, partial); T13 adds the slice/OIT samples
+// so the FULL 5-sample smoke set passes (FR-app.1, complete):
 //   (1) exit code == 0  — the sample rendered `RE_SAMPLE_MAX_FRAMES` frames
 //       without a frame failure (the harness returns 1 on any render error) and
 //       shut down cleanly (FR-app.1: "exit code 0");
@@ -44,11 +45,15 @@ namespace {
 // Explainable constants (FR-app.1 / SPEC §2, §8).
 // ---------------------------------------------------------------------------
 
-// The three T12 samples, in build order (binaries produced by app/).
-constexpr const char* kSampleNames[] = {"mesh", "plane", "volume"};
-constexpr const char* kSampleBins[] = {RE_SAMPLE_MESH_BIN, RE_SAMPLE_PLANE_BIN,
-                                       RE_SAMPLE_VOLUME_BIN};
-constexpr int kSampleCount = 3;
+// The five capability samples (T12 + T13), in build order (binaries produced by
+// app/): mesh, plane, volume (T12) and slice, OIT (T13) — the complete FR-app.1
+// smoke set.
+constexpr const char* kSampleNames[] = {"mesh", "plane", "volume", "slice",
+                                        "oit"};
+constexpr const char* kSampleBins[] = {
+    RE_SAMPLE_MESH_BIN, RE_SAMPLE_PLANE_BIN, RE_SAMPLE_VOLUME_BIN,
+    RE_SAMPLE_SLICE_BIN, RE_SAMPLE_OIT_BIN};
+constexpr int kSampleCount = 5;
 
 // The sample renders this many frames before exiting (small: the gate only
 // needs the window opened and a clean exit).
@@ -118,10 +123,10 @@ int runSampleUnderXvfb(const std::string& bin, const std::string& name,
 } // namespace
 
 // ---------------------------------------------------------------------------
-// FR-app.1 (partial) — each sample runs, opens a window, exits cleanly.
+// FR-app.1 (full, T12 + T13) — each sample runs, opens a window, exits cleanly.
 // ---------------------------------------------------------------------------
 
-TEST(T12Samples, MeshPlaneVolumeSamplesRunOpenWindowExitClean) {
+TEST(T12Samples, FiveCapabilitySamplesRunOpenWindowExitClean) {
     for (int i = 0; i < kSampleCount; ++i) {
         const std::string name = kSampleNames[i];
         const std::string bin = kSampleBins[i];

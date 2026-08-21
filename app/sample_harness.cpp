@@ -96,6 +96,26 @@ int SampleHarness::run(int maxFrames) {
             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize);
         ImGui::Text("%s", sample_->title());
         ImGui::Text("Frame %d / %d", frames + 1, maxFrames);
+        const char* instructions = sample_->instructions();
+        if (instructions != nullptr && instructions[0] != '\0') {
+            ImGui::Separator();
+            // The instructions text is split into lines on '\n' so the overlay
+            // wraps them cleanly (ImGui::TextWrapped renders one paragraph).
+            ImGui::TextWrapped("How to drive this capability:");
+            const std::string text(instructions);
+            std::size_t start = 0u;
+            while (start < text.size()) {
+                const std::size_t nl = text.find('\n', start);
+                const std::string line = (nl == std::string::npos)
+                                             ? text.substr(start)
+                                             : text.substr(start, nl - start);
+                ImGui::BulletText("%s", line.c_str());
+                if (nl == std::string::npos) {
+                    break;
+                }
+                start = nl + 1u;
+            }
+        }
         ImGui::End();
 
         ImGui::Render();

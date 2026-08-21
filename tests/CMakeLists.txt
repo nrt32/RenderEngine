@@ -36,14 +36,16 @@ target_compile_definitions(${RE_TEST_TARGET} PRIVATE
     TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
-# T12 gate (FR-app.1): the sample-smoke test spawns the mesh/plane/volume
-# sample binaries under Xvfb. The binaries are built by app/ whenever
-# RE_BUILD_TESTS is on; pass their absolute paths + the build dir (for the
-# captured sample logs) as compile definitions.
+# T12/T13 gate (FR-app.1): the sample-smoke test spawns the full 5-sample set
+# (mesh/plane/volume/slice/OIT) under Xvfb. The binaries are built by app/
+# whenever RE_BUILD_TESTS is on; pass their absolute paths + the build dir (for
+# the captured sample logs) as compile definitions.
 target_compile_definitions(${RE_TEST_TARGET} PRIVATE
     RE_SAMPLE_MESH_BIN="${CMAKE_BINARY_DIR}/app/re_sample_mesh"
     RE_SAMPLE_PLANE_BIN="${CMAKE_BINARY_DIR}/app/re_sample_plane"
     RE_SAMPLE_VOLUME_BIN="${CMAKE_BINARY_DIR}/app/re_sample_volume"
+    RE_SAMPLE_SLICE_BIN="${CMAKE_BINARY_DIR}/app/re_sample_slice"
+    RE_SAMPLE_OIT_BIN="${CMAKE_BINARY_DIR}/app/re_sample_oit"
     RE_TEST_BIN_DIR="${CMAKE_BINARY_DIR}"
 )
 

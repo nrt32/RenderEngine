@@ -3,10 +3,11 @@
 `app/` is the **compositions + samples module** (SPEC §3): it owns the shared
 sample harness (visible window + ImGui overlay wiring + run loop), the sample
 applications that drive each rendering capability, and (in later tasks) the
-`SceneView`/`MPRView` compositions. This page documents the **T12 deliverable**:
-the `SampleHarness` component and the mesh/plane/volume samples driven through
-it (FR-app.1, partial). It is part of the `docs/samples.md` documentation map
-(T12/T13).
+`SceneView`/`MPRView` compositions. This page documents the **T12 + T13
+deliverable**: the `SampleHarness` component and the **full 5-capability sample
+set** driven through it — mesh, plane, volume (T12) and slice, OIT (T13) — each
+with per-sample driving instructions (FR-app.1, complete). It is part of the
+`docs/samples.md` documentation map (T12/T13).
 
 ## Components
 
@@ -40,6 +41,7 @@ the frame loop. A sample implements `ISample` and the harness drives it:
 |---|---|
 | `ISample::renderFrame(width, height)` | render one frame of the sample's 3D scene into the window's **default framebuffer** (a `render::RenderTarget` with `framebuffer == nullptr`, see below). Returns a typed error on failure (SPEC §5). |
 | `ISample::title()` | one-line description shown in the ImGui overlay. |
+| `ISample::instructions()` | optional multi-line help text shown in the overlay (T13) describing how to drive the sample's capability; empty by default. |
 | `SampleHarness::run(maxFrames)` | the run loop: poll events → ImGui new-frame → sample `renderFrame` → ImGui overlay → present. Stops cleanly after `maxFrames` frames or on window close; returns the process exit code (0 clean). |
 | `app::sampleMaxFrames(default)` | reads the `RE_SAMPLE_MAX_FRAMES` env var (bounded run, so the gate can terminate samples headlessly). |
 
@@ -48,8 +50,9 @@ Per frame the harness:
    `ImGui_ImplGlfw_NewFrame`, `ImGui::NewFrame`);
 2. calls `sample_->renderFrame(w, h)` into the window's default framebuffer —
    if it returns a typed error, the run aborts with exit code 1 (never silent);
-3. draws the overlay (`title`, frame counter), renders ImGui
-   (`ImGui_ImplOpenGL3_RenderDrawData`), and swaps buffers.
+3. draws the overlay (`title`, frame counter, and — when the sample provides
+   them — the per-capability driving instructions from `ISample::instructions()`),
+   renders ImGui (`ImGui_ImplOpenGL3_RenderDrawData`), and swaps buffers.
 
 The ImGui OpenGL3 backend uses its own self-contained imgl3w loader (no glad
 wiring); it resolves GL entry points lazily against the current context, which
@@ -64,30 +67,61 @@ The samples render into the window's on-screen default framebuffer, not an
 offscreen FBO. `MeshRenderer`, `PlaneRenderer`, and `VolumeRenderer` now treat a
 **null** `RenderTarget::framebuffer` as "bind the default framebuffer"
 (`core::bindDefaultFramebuffer`, i.e. `glBindFramebuffer(GL_FRAMEBUFFER, 0)`) —
-added in T12 for the interactive sample path. Offscreen FBO targets (the T7–T11
-gate paths) are unchanged; a zero-width/height target is still rejected with a
-typed error.
+added in T12 for the interactive sample path. **T13 extends this to the two
+remaining renderers used by the new slice/OIT samples**: `SliceRenderer::render`
+and `LinkedListOIT::end` (the composite pass) also treat a null framebuffer as
+the default, so the slice and OIT samples can render on-screen. Offscreen FBO
+targets (the T7–T11 gate paths) are unchanged; a zero-width/height target is
+still rejected with a typed error.
 
-## Samples (T12)
+## Samples (T12 + T13)
 
 Each sample is a small executable (`app/re_sample_*`) that loads its data,
-builds a scene, and hands an `ISample` to a `SampleHarness`. All three exit
+builds a scene, and hands an `ISample` to a `SampleHarness`. All five exit
 cleanly (code 0) after `RE_SAMPLE_MAX_FRAMES` frames (default 300) so the gate
 can run them under Xvfb within a timeout (FR-app.1). Build them with
 `RE_BUILD_SAMPLES=ON` (default; also forced on whenever `RE_BUILD_TESTS` is on,
-because the T12 gate spawns them).
+because the T12/T13 gate spawns them).
 
 | Sample | Executable | Demonstrates | Data |
 |---|---|---|---|
 | Mesh | `re_sample_mesh` | opaque shaded mesh (Phong) | `data/meshes/bunny.obj` (SPEC §7) |
 | Plane | `re_sample_plane` | textured quad | procedural 256×256 RGBA gradient (in code, deterministic) |
 | Volume | `re_sample_volume` | ray-cast volume (front-to-back compositing) | `data/volumes/sample_ct.nrrd` + CT window/level transfer function |
+| Slice | `re_sample_slice` | geometry-shader plane clip of a mesh | `data/meshes/teapot.obj` (SPEC §7), clipped by a horizontal midplane |
+| OIT | `re_sample_oit` | order-independent transparency (linked-list) | three overlapping transparent quads (in code, deterministic) |
 
 The mesh sample frames the bunny with a perspective camera computed from its
 AABB (eye pulled back along +Z by `radius / tan(fov/2)`); the plane sample
 textures the unit XY quad with a closed-form gradient image; the volume sample
 renders the CT chest with a deterministic transfer function (air transparent,
-soft tissue opaque/bright).
+soft tissue opaque/bright). The slice sample loads the teapot and clips it by a
+horizontal plane at its vertical midpoint (`y = 0.5*(min.y + max.y)`, kept side
+`y >= midpoint`) through `render::SliceRenderer` — the geometry shader keeps the
+upper half and emits the on-plane cross-section (slicing is geometry, not
+compositing, SPEC §3). The OIT sample stacks three overlapping transparent quads
+(red near, green middle, blue far) through `render::MeshRenderer` with an
+injected `render::LinkedListOIT` pipeline, so the center region shows all three
+blended in depth order regardless of draw order (FR-render.2/3).
+
+### Driving each capability (per-sample instructions)
+
+Every sample's ImGui overlay shows a short "How to drive this capability" help
+block (from `ISample::instructions()`, T13). Each sample is static in v1 (one
+window, one GL context, one render thread, SPEC §5 — no camera controls), so
+"driving" the capability means running the sample, observing the rendered
+result, and exiting cleanly:
+
+| Sample | How to drive it |
+|---|---|
+| `re_sample_mesh` | observe the shaded bunny (opaque Phong, FR-render.1); close the window to exit. |
+| `re_sample_plane` | observe the textured gradient quad (FR-render.5); close the window to exit. |
+| `re_sample_volume` | observe the ray-cast CT chest (FR-render.6); close the window to exit. |
+| `re_sample_slice` | observe the teapot cut open along its horizontal midplane with the on-plane cross-section (FR-render.4); close the window to exit. |
+| `re_sample_oit` | observe the three overlapping transparent quads blended in depth order (FR-render.2/3); close the window to exit. |
+
+The overlay instructions text is the authoritative per-sample help for each
+capability; the table above summarizes it.
 
 ### Running the samples
 
@@ -97,6 +131,8 @@ source tools/env.sh && cmake --build build -j
 ./build/app/re_sample_mesh
 ./build/app/re_sample_plane
 ./build/app/re_sample_volume
+./build/app/re_sample_slice
+./build/app/re_sample_oit
 # Headless (Xvfb), bounded run for automation:
 RE_SAMPLE_MAX_FRAMES=30 xvfb-run -a ./build/app/re_sample_mesh
 ```
@@ -107,9 +143,9 @@ Environment variables:
 |---|---|
 | `RE_SAMPLE_MAX_FRAMES` | number of frames before the sample exits cleanly (default 300). |
 
-## Acceptance constants (FR-app.1 partial, docs/samples.md)
+## Acceptance constants (FR-app.1, docs/samples.md)
 
-The T12 gate spawns each sample with
+The T12/T13 gate spawns each of the five samples with
 `timeout 120 env RE_SAMPLE_MAX_FRAMES=20 ASAN_OPTIONS=detect_leaks=0
 GALLIUM_DRIVER=llvmpipe MESA_GL_VERSION_OVERRIDE=4.6 xvfb-run -a <bin>`
 (SPEC §8: samples run under WSLg when present, otherwise under Xvfb) and

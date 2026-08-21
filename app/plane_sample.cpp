@@ -93,6 +93,14 @@ class PlaneSample final : public re::app::ISample {
         return "Plane sample: textured gradient quad";
     }
 
+    const char* instructions() const noexcept override {
+        return "Capability: textured plane (SPEC FR-render.5).\n"
+               "A unit XY quad textured with a closed-form RGBA gradient is "
+               "drawn through render::PlaneRenderer (feeds the MPR views).\n"
+               "Run the sample, then close the window (or set "
+               "RE_SAMPLE_MAX_FRAMES) to exit.";
+    }
+
    private:
     re::render::PlaneGeometry geometry_;
     re::data::Image image_;

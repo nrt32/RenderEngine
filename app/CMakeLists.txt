@@ -50,16 +50,20 @@ target_link_libraries(re_app PUBLIC
 
 # ---------------------------------------------------------------------------
 # Sample applications. Built when samples are requested OR when the test suite
-# is enabled (RE_BUILD_TESTS): the T12 gate (FR-app.1) runs the mesh/plane/
-# volume samples headlessly under Xvfb, so their executables must exist whenever
-# the test suite is configured (a missing binary would fail the gate loudly).
+# is enabled (RE_BUILD_TESTS): the T12/T13 gates (FR-app.1) run the full
+# 5-sample set (mesh/plane/volume/slice/OIT) headlessly under Xvfb, so their
+# executables must exist whenever the test suite is configured (a missing
+# binary would fail the gate loudly).
 # ---------------------------------------------------------------------------
 if(RE_BUILD_SAMPLES OR RE_BUILD_TESTS)
     add_executable(re_sample_mesh mesh_sample.cpp)
     add_executable(re_sample_plane plane_sample.cpp)
     add_executable(re_sample_volume volume_sample.cpp)
+    add_executable(re_sample_slice slice_sample.cpp)
+    add_executable(re_sample_oit oit_sample.cpp)
 
-    foreach(sample_target re_sample_mesh re_sample_plane re_sample_volume)
+    foreach(sample_target re_sample_mesh re_sample_plane re_sample_volume
+            re_sample_slice re_sample_oit)
         target_link_libraries(${sample_target} PRIVATE
             re_app
             re_render
