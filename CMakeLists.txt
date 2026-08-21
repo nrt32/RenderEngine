@@ -1,0 +1,136 @@
+cmake_minimum_required(VERSION 3.24)
+
+project(RenderEngine
+    VERSION 0.1.0
+    DESCRIPTION "C++20 real-time rendering engine (OpenGL 4.6 core)"
+    LANGUAGES CXX C)
+
+# ---------------------------------------------------------------------------
+# Options
+# ---------------------------------------------------------------------------
+option(RE_BUILD_TESTS "Build the RenderEngine unit-test suite" ON)
+option(RE_BUILD_SAMPLES "Build the RenderEngine sample applications" OFF)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+endif()
+
+# Warnings-as-errors is mandated by the project (SPEC S5, NFR Build hygiene).
+# It is applied ONLY to RenderEngine's own targets (re_core, re_tests, ...) —
+# NOT to third-party dependencies fetched via FetchContent, which must build
+# with their own flags. The re_project_warnings interface below is linked by
+# every project target.
+add_library(re_project_warnings INTERFACE)
+target_compile_options(re_project_warnings INTERFACE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror
+)
+
+# ---------------------------------------------------------------------------
+# Third-party dependencies — pinned via FetchContent GIT_TAG (SPEC S2/S6).
+# Every GIT_TAG is a release tag or commit SHA (never a branch name).
+# ---------------------------------------------------------------------------
+include(FetchContent)
+
+# GLFW 3.4 — windowing / context creation.
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.4
+    GIT_SHALLOW TRUE
+)
+
+# glad2 v2.0.8 — GL loader generator (glad_add_library). Pinned to the v2.0.8
+# release commit (SPEC S2: commit 73db193).
+FetchContent_Declare(
+    glad
+    GIT_REPOSITORY https://github.com/Dav1dde/glad.git
+    GIT_TAG v2.0.8
+    GIT_SHALLOW TRUE
+)
+
+# GLM 1.0.1 — header-only GLSL-compatible math.
+set(GLM_ENABLE_CXX_20 ON CACHE BOOL "" FORCE)
+set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG 1.0.1
+    GIT_SHALLOW TRUE
+)
+
+# Dear ImGui v1.92.9 — immediate-mode GUI.
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.92.9
+    GIT_SHALLOW TRUE
+)
+
+# GoogleTest v1.15.x — unit testing.
+set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG v1.15.2
+    GIT_SHALLOW TRUE
+)
+
+# spdlog v1.14.1 — logging.
+set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.14.1
+    GIT_SHALLOW TRUE
+)
+
+# stb — single-header image loading (stb_image), pinned commit.
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20
+    GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(glfw glm imgui spdlog stb googletest)
+
+# glad2 is generated via its own CMake integration (glad_add_library); it needs
+# Python and the glad source tree, so it is populated separately. Its cmake/
+# subdirectory defines the glad_add_library function with defaults that resolve
+# GLAD_SOURCES_DIR / GLAD_CMAKE_DIR relative to the fetched source tree.
+FetchContent_GetProperties(glad)
+if(NOT glad_POPULATED)
+    FetchContent_Populate(glad)
+endif()
+add_subdirectory("${glad_SOURCE_DIR}/cmake" "${CMAKE_CURRENT_BINARY_DIR}/glad-cmake" EXCLUDE_FROM_ALL)
+# Generate + build a static glad loader for OpenGL 4.6 core (SPEC S2). The
+# loader is built against the same GLFW-provided context in core/.
+glad_add_library(glad_gl_core_46 STATIC API gl:core=4.6 REPRODUCIBLE)
+
+# ---------------------------------------------------------------------------
+# Module subdirectories
+# ---------------------------------------------------------------------------
+add_subdirectory(io)
+add_subdirectory(data)
+add_subdirectory(volume)
+add_subdirectory(core)
+add_subdirectory(render)
+add_subdirectory(app)
+
+if(RE_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

@@ -37,14 +37,14 @@ deps_pinned	require_grep	FetchContent_Declare\([^)]*GIT_TAG	dependencies must be
 # --- GL ownership: raw GL calls ONLY under core/ (RAII + core::Draw API) -------
 # render/, app/, and tests/ must go through core/ wrappers; io/, data/,
 # volume/ are GL-free. Single-dir anchor (forbid_outside supports one dir).
-gpu_api_ownership	forbid_outside	core/|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/
+gpu_api_ownership	forbid_outside	core|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/
 
 # --- Legacy fixed-function API must never appear anywhere ----------------------
 no_legacy_api	forbid_grep	glBegin|glMatrixMode|glOrtho|glFrustum	legacy fixed-function API is forbidden
 
 # --- Readback discipline: raw readback calls only under core/ ------------------
 # (single-GL-owner rule; readback is consumed by tests for verification)
-no_production_readback	forbid_outside	core/|\b(glMapBufferRange|glGetBufferSubData|glReadPixels|glGetTexImage|glGetTexLevelParameteriv)\b	readback raw calls only under core/ (test-consumed)
+no_production_readback	forbid_outside	core|\b(glMapBufferRange|glGetBufferSubData|glReadPixels|glGetTexImage|glGetTexLevelParameteriv)\b	readback raw calls only under core/ (test-consumed)
 
 # --- Logging discipline: no raw printf/cout for diagnostics --------------------
 no_raw_diagnostics	forbid_grep	std::cout|std::cerr|\bprintf\(	logging discipline: use spdlog, not printf/cout

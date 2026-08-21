@@ -6,7 +6,7 @@
 ## 1. Goals & non-goals
 
 ### Product
-A C++ real-time rendering engine built on **OpenGL (GL 3.3 core)** with **CMake**
+A C++ real-time rendering engine built on **OpenGL (GL 4.6 core)** with **CMake**
 as the build system, developed and run on **Ubuntu inside WSL on Windows**.
 Version 1 is a capability-focused engine that renders meshes, volumes (basic
 ray casting), planes, mesh slices, and Order-Independent-Transparency (OIT)
@@ -58,8 +58,8 @@ Each capability ships as:
 | Language | **C++20** | Modern, broadly supported; GCC 12+ on Ubuntu/WSL with no extra toolchain setup |
 | Compiler | GCC (Ubuntu default toolchain) | Standard on Ubuntu/WSL; selected at setup time |
 | Build system | **CMake (>= 3.24)** | Runner's build+test gate supports CMake natively |
-| GPU API | **OpenGL 3.3 core** (GLSL 330) | Safe compatibility floor for WSL/Windows GL drivers; provides VAOs, FBOs, modern shaders for OIT + ray casting |
-| GL loader | **glad2 v2.0.8** (GL 3.3 core generator) | Generated at configure time via FetchContent; pinned release tag (commit 73db193) |
+| GPU API | **OpenGL 4.6 core** (GLSL 460) | The WSL Mesa D3D12 driver exposes GL 4.6 core natively; provides VAOs, FBOs, modern shaders for OIT + ray casting |
+| GL loader | **glad2 v2.0.8** (GL 4.6 core generator) | Generated at configure time via FetchContent; pinned release tag (commit 73db193) |
 | Windowing | **GLFW 3.4** | Standard; WSLg displays GLFW windows natively |
 | Math | **GLM 1.0.1** | De-facto GLSL-compatible math lib; header-only |
 | GUI | **Dear ImGui v1.92.9** | Immediate-mode, tiny footprint, OpenGL3 backend, ideal for MPR viewport + panels |
@@ -338,6 +338,9 @@ state.
   audit ownership rules to see our non-default layout.
 
 ### GL/GPU notes
-- WSLg exposes OpenGL via Mesa; target GL 3.3 core. Verify with `glxinfo`.
+- WSLg exposes OpenGL via Mesa; target GL 4.6 core (the D3D12 gallium driver reports
+  core 4.6 natively; llvmpipe caps at 4.5). Verify with `glxinfo -l`. The headless
+  test env forces llvmpipe with `MESA_GL_VERSION_OVERRIDE=4.6` so the gate asserts
+  the SPEC 4.6 target on a deterministic, leak-clean software driver.
 - Tests create an offscreen GL context (hidden GLFW window; EGL-surfaceless
   fallback) so the gate never needs a display.

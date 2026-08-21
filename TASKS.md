@@ -78,8 +78,8 @@ build/test commands **and the `source tools/env.sh` launch prerequisite
 
 **T** — gate tests assert: (1) the empty suite builds and runs green with the
 sanitizers; (2) a trivial explainable constant (e.g. 2+2==4) passes; (3) the
-offscreen fixture creates a GL 3.3 core context — asserted via
-`glGetIntegerv(GL_MAJOR_VERSION)==3`, `glGetIntegerv(GL_MINOR_VERSION)==3`,
+offscreen fixture creates a GL 4.6 core context — asserted via
+`glGetIntegerv(GL_MAJOR_VERSION)==4`, `glGetIntegerv(GL_MINOR_VERSION)==6`,
 and `GL_CONTEXT_PROFILE_MASK & GL_CONTEXT_CORE_PROFILE_BIT` (not the
 unreliable `glGetString(GL_VERSION)` string) — and reports no GL errors;
 (4) the gate environment is correctly sourced: `$AUDIT_SOURCE_DIRS` equals

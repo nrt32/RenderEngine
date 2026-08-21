@@ -14,7 +14,7 @@
 
 ## Project: RenderEngine
 
-- **Stack:** C++20, CMake (>= 3.24), OpenGL 3.3 core (glad2), GLFW 3.4, GLM,
+- **Stack:** C++20, CMake (>= 3.24), OpenGL 4.6 core (glad2), GLFW 3.4, GLM,
   Dear ImGui, GoogleTest, spdlog, stb_image — all pinned via FetchContent
   `GIT_TAG` (SPEC §2). Build+test gate uses CMake; the loop MUST be launched
   with `source tools/env.sh` first (exports `LOOP_BUILD_TEST_CMD` +
@@ -35,4 +35,11 @@
   of truth.
 - **GL/display:** samples need WSLg display; unit tests run headless with an
   offscreen GL context and are built with ASan+UBSan.
+- **Build & test:** always `source tools/env.sh` first (exports
+  `LOOP_BUILD_TEST_CMD` and `AUDIT_SOURCE_DIRS`, SPEC §8) — the R15 gate test
+  fails loudly if those env vars are missing. Then run
+  `eval "$LOOP_BUILD_TEST_CMD"` from the repo root (or the equivalent
+  `cmake -S . -B build && cmake --build build -j$(nproc) && ctest
+  --test-dir build --output-on-failure`). This matches `tools/env.sh`, the
+  single source of truth for the loop's build/test command.
 - **Docs:** public APIs carry Doxygen comments (SPEC §5).

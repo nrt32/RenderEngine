@@ -9,3 +9,6 @@ tools/force_purge.sh
 tools/audit.rules.example
 tools/lsan.supp.template
 tools/logs/
+
+# CMake build directory (never commit build artifacts)
+build/

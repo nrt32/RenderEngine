@@ -1,0 +1,14 @@
+# RenderEngine dataset licenses
+
+The datasets under `data/` are redistributed under the following permissive
+licenses. Each external dataset also carries a LICENSE file beside its own
+directory (enforced per-dataset by the T2 gate).
+
+| Dataset | Source | License |
+|---|---|---|
+| `data/meshes/bunny.obj` (Stanford bunny) | Stanford 3D Scanning Repository, via alecjacobson/common-3d-test-models | Public domain (Stanford Computer Graphics Laboratory scan data) |
+| `data/meshes/teapot.obj` (Utah teapot) | Martin Newell, via alecjacobson/common-3d-test-models | Public domain |
+| `data/volumes/sample_ct.nrrd` (CT chest) | Slicer Testing Data (Medical Decathlon `CT-chest.nrrd`) | CC-BY-SA 4.0 |
+
+See `data/README.md` (finalized in T2) for the authoritative source URLs and
+SHA256 checksums (SPEC section 7).

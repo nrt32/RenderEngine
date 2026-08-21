@@ -1,0 +1,19 @@
+# RenderEngine clang-format configuration (NAMING_CONVENTIONS S7).
+# 4-space indent, 80-column soft limit, Google-adjacent braces.
+
+BasedOnStyle: Google
+IndentWidth: 4
+ContinuationIndentWidth: 4
+ColumnLimit: 80
+UseTab: Never
+TabWidth: 4
+Standard: c++20
+
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+BreakBeforeBraces: Attach
+PointerAlignment: Left
+DerivePointerAlignment: false
+SpacesBeforeTrailingComments: 1
