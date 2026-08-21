@@ -107,6 +107,15 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(glfw glm imgui spdlog stb googletest)
 
+# stb is a header-only repo with no CMakeLists.txt of its own, so
+# FetchContent_MakeAvailable cannot create a target for it. Expose the
+# populated source tree as an INTERFACE library so io/ (image loader) can
+# link `stb` for the include path.
+if(NOT TARGET stb)
+    add_library(stb INTERFACE)
+    target_include_directories(stb INTERFACE "${stb_SOURCE_DIR}")
+endif()
+
 # glad2 is generated via its own CMake integration (glad_add_library); it needs
 # Python and the glad source tree, so it is populated separately. Its cmake/
 # subdirectory defines the glad_add_library function with defaults that resolve

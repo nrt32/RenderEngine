@@ -1,9 +1,18 @@
-# data/ — CPU containers, no GL (SPEC S3). Header-only for v1.
+# data/ — CPU containers, no GL (SPEC S3). Mesh + Image containers (T4).
 
-add_library(re_data INTERFACE)
-
-target_include_directories(re_data INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+add_library(re_data STATIC
+    mesh.cpp
+    image.cpp
 )
 
-# data/ must stay GL-free; the interface carries no GL/GLFW/glad dependency.
+target_include_directories(re_data PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../>
+)
+
+# glm is a pure-math header-only dependency (no GL calls), so data/ stays
+# GL-free. re_project_warnings keeps data/ sources clean under -Werror.
+target_link_libraries(re_data PUBLIC
+    glm::glm
+    re_project_warnings
+)
