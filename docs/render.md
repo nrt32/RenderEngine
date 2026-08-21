@@ -9,9 +9,11 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 
 > This page documents the **T7 deliverable** (`IMaterial` + `PhongMaterial`,
 > the `ITransparencyPipeline` interface, the shared `MeshGeometry`, and the
-> `MeshRenderer` opaque forward pass, FR-render.1/3) and the **T8 deliverable**
-> (`PlaneRenderer` textured quads/planes, FR-render.5). It is part of the
-> `docs/render.md` documentation map (T7/T8; later tasks extend it).
+> `MeshRenderer` opaque forward pass, FR-render.1/3), the **T8 deliverable**
+> (`PlaneRenderer` textured quads/planes, FR-render.5), and the **T9
+> deliverable** (`VolumeRenderer` ray-cast GL draw pass, FR-render.6). It is
+> part of the `docs/render.md` documentation map (T7/T8/T9; later tasks extend
+> it).
 
 ## Components
 
@@ -190,6 +192,91 @@ viewport pixel `(px,py)` (py=0 is the bottom) samples image pixel
 | `unitQuadXY()` normal | `(0,0,1)` | `normalize(cross(c1-c0, c3-c0))` = `cross((2,0,0),(0,2,0))` / 4 |
 | `unitQuadXY()` UV binding | `uv[0]=(0,0)`, `uv[2]=(1,1)` | image maps once across the quad |
 | 90° Z rotation, bottom-left pixel | `G == 0` (±1) | `(x,y)→(-y,x)`: viewport `(-1,-1)` is local corner3 = UV `(0,1)` → image `(0,0)` = `(0,0,128)` (was `G=252` unrotated) |
+
+### `VolumeRenderer` (`render/volume_renderer.hpp`, `.cpp`) — T9
+
+A **stateless ray-cast volume renderer** (SPEC §3, FR-render.6) that consumes the
+pure `volume/` math (SPEC §3: "VolumeRenderer (ray-cast GL draw; volume/ provides
+the pure math)"). `VolumeRenderer::render(scene, camera, target)` receives all of
+its data per call; the renderer owns only GL resources — its cached ray-cast
+shader program, one shared full-screen quad VAO/VBO, and a 3D-texture cache keyed
+by dataset pointer (each `data::VolumeDataset` is uploaded to the GPU once and
+reused across instances and views).
+
+Public scene structs and constant (defined in `volume_renderer.hpp`):
+
+| Type | Purpose |
+|---|---|
+| `VolumeInstance` | a `data::VolumeDataset`, the `volume::TransferFunction` mapping its scalar values to RGBA, and a model matrix. The dataset occupies the unit cube `[0,1]^3` in **model space**; the model matrix places/orients it in world space. |
+| `VolumeScene` | a vector of `VolumeInstance`s (CPU-side; `app/` builds these). |
+| `kDefaultStepLength` | the default ray-cast sampling step length in world units (`0.25`); the shader samples `floor(span / stepLength)` steps at their centers (FR-vol.3). |
+
+`VolumeRenderer::render(scene, camera, target)`:
+
+1. Binds the target framebuffer, sets the viewport, clears to the clear color,
+   and leaves depth/blend off (v1 FBOs are color-only, SPEC §6 / docs/core.md).
+2. For each volume, uploads (or reuses) its dataset as a `core::Texture3D`
+   (`GL_R32F`, `GL_LINEAR` trilinear filtering, `GL_CLAMP_TO_EDGE`), uploads the
+   transfer function's control points as uniforms, and draws the shared
+   full-screen quad through the cached ray-cast shader.
+
+**The ray-cast fragment shader** reconstructs the pixel's world ray by
+unprojecting its NDC near/far points through `uViewProj = proj * view` (works for
+ortho and perspective), intersects it against the volume's **world AABB**
+(closed-form slab method, FR-vol.3), then steps along the segment at center
+positions (FR-vol.3) sampling the density texture and evaluating the
+piecewise-linear transfer function (FR-vol.1), accumulating front-to-back with
+premultiplied alpha (FR-vol.2). This mirrors the pure `volume/` math exactly:
+
+| Shader step | volume/ counterpart |
+|---|---|
+| slab AABB intersection | `volume::intersectRayAabb` |
+| `floor(span/step)`, `t[k] = tEntry + (k+0.5)*step` | `volume::computeRaySampleSteps` |
+| piecewise-linear ramp | `volume::TransferFunction::sample` |
+| `w=(1-a)*tf.a; rgb+=w*tf.rgb; a+=w` | `volume::compositeFrontToBack` |
+
+**Texture-coordinate mapping (trilinear, exact).** The dataset's index space
+`[0, dim-1]` is normalized to model space `[0,1]^3`; a model-space position `p`
+maps to a continuous index `idx = p * (dim-1)`. The shader samples at texture
+coordinate `u = (idx + 0.5) / dim`, so with GL_LINEAR each texel center (`idx`
+integer) reproduces the voxel value and an interior `idx` reproduces the CPU
+trilinear interpolant (`data::VolumeDataset::sampleTrilinear`, FR-data.3). The
+world AABB used for the slab intersection is computed on the CPU by transforming
+the 8 corners of `[0,1]^3` by the model matrix and taking the min/max — exact for
+axis-aligned scaling/translation (the v1 case), conservative for rotated models.
+
+**Transfer function on GPU.** The TF's control points are uploaded as fixed-size
+uniform arrays (`uTfValues[8]`, `uTfColors[8]`, `uTfCount`); the shader evaluates
+the same clamped piecewise-linear ramp as `TransferFunction::sample`. A TF with
+more than 8 control points is rejected with a typed error (the shader's fixed
+array size). Control-point colors are straight RGBA and are premultiplied during
+compositing, exactly as `compositeFrontToBack` does (FR-vol.2).
+
+#### Acceptance constants (FR-render.6, docs/render.md)
+
+A tiny synthetic volume (2×2×2, every voxel `0.5`) occupies `[0,1]^3` in world
+space (identity model). Orthographic camera at `(0.5,0.5,5)` looking straight
+down `-Z` maps NDC `[-1,1]^2` onto the full 64×64 viewport. For any pixel the
+reconstructed ray is exactly parallel to `-Z`, so its world-AABB intersection
+spans exactly `1.0` in z; with `kDefaultStepLength = 0.25`,
+`floor(1.0/0.25) = 4` steps at their centers. Every sample's density is the
+uniform `0.5`; the constant-green transfer function (control points at 0 and 1,
+both `{0,1,0,0.5}`) maps it to straight RGBA `{0,1,0,0.5}`; compositing four such
+samples front-to-back (FR-vol.2) gives the premultiplied result `{0, 0.9375, 0,
+0.9375}`:
+
+```
+out.a   = 1 - (1-0.5)^4                    = 0.9375
+out.rgb = 0.5*(1 + 0.5 + 0.25 + 0.125)     = 0.9375  (along green)
+```
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| Center-pixel RGBA | `{0, 239, 0, 239}` (±1) | `round(0.9375*255) = 239`; the T9 gate compares against the analytic CPU ray-cast from the same volume/ math within 1/255 (FR-render.6) |
+| Analytic CPU ray-cast | `{0, 0.9375, 0, 0.9375}` (±1e-6) | `volume::computeRaySampleSteps` + `sampleTrilinear` + TF + `compositeFrontToBack` on the center-pixel ray |
+| Identity-model world AABB | `[0,1]^3` | transform of the 8 corners of `[0,1]^3` by the identity model |
+| `model = T(1,2,3)*S(0.5)` world AABB | `[1,1.5] × [2,2.5] × [3,3.5]` | `S` first then `T`; corner `(0,0,0)` → `(1,2,3)`, corner `(1,1,1)` → `(1.5,2.5,3.5)` |
+| Too many TF control points | typed error containing `more than 8 control points` | the shader's fixed uniform array size is 8 |
 
 ## Guardrails observed
 

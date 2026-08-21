@@ -17,6 +17,7 @@
 //
 // so the offending line is unambiguously reported in "0:N" form.
 
+#include <cstddef>
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <glm/mat4x4.hpp>
@@ -66,6 +67,9 @@ class ShaderProgram {
     void setUniformInt(std::string_view name,
                        std::int32_t value) const noexcept;
 
+    /// Set a 1-component float uniform. The program must be in use.
+    void setUniformFloat(std::string_view name, float value) const noexcept;
+
     /// Set a vec3 uniform. The program must be in use.
     void setUniformVec3(std::string_view name,
                         const glm::vec3& value) const noexcept;
@@ -73,6 +77,16 @@ class ShaderProgram {
     /// Set a vec4 uniform. The program must be in use.
     void setUniformVec4(std::string_view name,
                         const glm::vec4& value) const noexcept;
+
+    /// Set the first `count` elements of a float array uniform. The program
+    /// must be in use.
+    void setUniformFloatArray(std::string_view name, const float* values,
+                              std::size_t count) const noexcept;
+
+    /// Set the first `count` elements of a vec4 array uniform. The program
+    /// must be in use.
+    void setUniformVec4Array(std::string_view name, const glm::vec4* values,
+                             std::size_t count) const noexcept;
 
     /// Set a mat4 uniform. The program must be in use.
     void setUniformMat4(std::string_view name,

@@ -8,6 +8,7 @@ add_library(re_render STATIC
     mesh_geometry.cpp
     mesh_renderer.cpp
     plane_renderer.cpp
+    volume_renderer.cpp
 )
 
 target_include_directories(re_render PUBLIC
@@ -18,6 +19,7 @@ target_include_directories(re_render PUBLIC
 target_link_libraries(re_render PUBLIC
     re_core
     re_data
+    re_volume
     glm::glm
     spdlog::spdlog
     re_project_warnings

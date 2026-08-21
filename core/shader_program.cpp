@@ -185,6 +185,12 @@ void ShaderProgram::setUniformInt(std::string_view name,
     glUniform1i(glGetUniformLocation(id_, nameString.c_str()), value);
 }
 
+void ShaderProgram::setUniformFloat(std::string_view name,
+                                    float value) const noexcept {
+    const std::string nameString(name);
+    glUniform1f(glGetUniformLocation(id_, nameString.c_str()), value);
+}
+
 void ShaderProgram::setUniformVec3(std::string_view name,
                                    const glm::vec3& value) const noexcept {
     const std::string nameString(name);
@@ -195,6 +201,22 @@ void ShaderProgram::setUniformVec4(std::string_view name,
                                    const glm::vec4& value) const noexcept {
     const std::string nameString(name);
     glUniform4fv(glGetUniformLocation(id_, nameString.c_str()), 1, &value.x);
+}
+
+void ShaderProgram::setUniformFloatArray(std::string_view name,
+                                         const float* values,
+                                         std::size_t count) const noexcept {
+    const std::string nameString(name);
+    glUniform1fv(glGetUniformLocation(id_, nameString.c_str()),
+                 static_cast<GLsizei>(count), values);
+}
+
+void ShaderProgram::setUniformVec4Array(std::string_view name,
+                                        const glm::vec4* values,
+                                        std::size_t count) const noexcept {
+    const std::string nameString(name);
+    glUniform4fv(glGetUniformLocation(id_, nameString.c_str()),
+                 static_cast<GLsizei>(count), &values[0].x);
 }
 
 void ShaderProgram::setUniformMat4(std::string_view name,
