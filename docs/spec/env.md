@@ -19,6 +19,11 @@
 - Build tools: `curl`/`wget` (asset fetch at setup), `python3` (conversion
   tooling for NRRD downsample at setup — `tools/convert_nrrd.py`, **stdlib
   only, no pip deps**), `unzip`.
+- `ccache` (recommended, not required) — compiler cache so rebuilds after
+  `tools/clean.sh` (or spurious recompiles) hit cached objects. If the system
+  package is unavailable (no sudo), a user-local static binary under
+  `~/.local/bin/ccache` is fine; `tools/configure.sh` auto-detects it via
+  PATH and wires it in as the CMake compiler launcher.
 
 ### Toolchain
 - Compiler: GCC 12+ (Ubuntu default on 22.04+).
@@ -26,21 +31,36 @@
 
 ### Environment variables
 - `DISPLAY` (WSLg auto; X server fallback only if not W11).
-- `LOOP_BUILD_TEST_CMD` — must be set to the CMake build+test command when
+- `LOOP_BUILD_TEST_CMD` — must be set to the build+test command when
   launching the loop (runner needs it; default runner logic knows CMake, but
-  set explicitly).
+  set explicitly). `tools/env.sh` sets it to `tools/configure.sh && cmake
+  --build build -j$(nproc) && ctest --test-dir build --output-on-failure`,
+  i.e. conditional configure + incremental build + full suite.
 - `AUDIT_SOURCE_DIRS="io data volume core render app tests"` — required for
   audit ownership rules to see our non-default layout.
 
 ### Convenience scripts (tools/)
 The repo ships thin wrappers around the §8 build/test/env contract so manual
-sessions never have to reconstruct it: `tools/build.sh [target...]`
-(configure + build), `tools/test.sh` (configure + build + `ctest
---output-on-failure`, exactly `eval "$LOOP_BUILD_TEST_CMD"`), `tools/run_sample.sh
-<mesh|plane|volume|slice|oit|mpr>` (build + run one sample interactively;
-requires WSLg/X display), and `tools/clean.sh` (removes only `build/`). Each
-sources `tools/env.sh` itself and is non-authoritative: the loop gate still uses
-`tools/env.sh` + `LOOP_BUILD_TEST_CMD` as its single source of truth.
+sessions never have to reconstruct it. All builds are **incremental/cached**:
+`tools/configure.sh` (shared helper) runs the CMake configure step only when
+needed — no `build/CMakeCache.txt` yet, or some `CMakeLists.txt`/`*.cmake`
+newer than it — and wires `ccache` in as the C/C++ compiler launcher when it
+is on PATH (the launcher persists in `CMakeCache.txt`, so later configures
+keep it). `cmake --build` then rebuilds only what changed, with recompiles
+served from the ccache.
+
+- `tools/build.sh [target...]` — conditional configure + incremental build.
+- `tools/test.sh` — conditional configure + incremental build + `ctest
+  --output-on-failure`; exactly `eval "$LOOP_BUILD_TEST_CMD"`.
+- `tools/run_sample.sh <mesh|plane|volume|slice|oit|mpr>` — build + run one
+  sample interactively (requires WSLg/X display).
+- `tools/clean.sh [--ccache]` — removes only `build/` (the ccache survives, so
+  the next build recompiles from cache); `--ccache` also clears the compiler
+  cache + stats.
+
+Each script sources `tools/env.sh` itself and is non-authoritative: the loop
+gate still uses `tools/env.sh` + `LOOP_BUILD_TEST_CMD` as its single source of
+truth.
 
 ### GL/GPU notes
 - WSLg exposes OpenGL via Mesa; target GL 4.6 core (the D3D12 gallium driver reports

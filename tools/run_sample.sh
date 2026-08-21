@@ -22,7 +22,7 @@ esac
 # shellcheck disable=SC1091
 source tools/env.sh
 
-cmake -S . -B build
+tools/configure.sh
 cmake --build build --target "re_sample_${NAME}" -j"$(nproc)"
 
 exec "build/app/re_sample_${NAME}"

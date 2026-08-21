@@ -39,7 +39,10 @@
   `LOOP_BUILD_TEST_CMD` and `AUDIT_SOURCE_DIRS`, SPEC §8) — the R15 gate test
   fails loudly if those env vars are missing. Then run
   `eval "$LOOP_BUILD_TEST_CMD"` from the repo root (or the equivalent
-  `cmake -S . -B build && cmake --build build -j$(nproc) && ctest
-  --test-dir build --output-on-failure`). This matches `tools/env.sh`, the
-  single source of truth for the loop's build/test command.
+  `tools/configure.sh && cmake --build build -j$(nproc) && ctest
+  --test-dir build --output-on-failure`). Builds are incremental/cached
+  (SPEC §5/§8): `tools/configure.sh` skips cmake when nothing changed and
+  wires ccache in as the compiler launcher when installed. This matches
+  `tools/env.sh`, the single source of truth for the loop's build/test
+  command.
 - **Docs:** public APIs carry Doxygen comments (SPEC §5).

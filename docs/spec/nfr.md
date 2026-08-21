@@ -8,6 +8,10 @@
 ### Generic (always kept)
 - **Build hygiene** — warnings-as-errors in the gate; no warning-suppression
   pragmas/flags.
+- **Incremental/cached builds** — configure runs only when CMake inputs change
+  (`tools/configure.sh`); `cmake --build` rebuilds only what changed; ccache
+  (when installed) is the compiler launcher so recompiles are served from the
+  compiler cache. No script does a full clean rebuild by default.
 - **Determinism** — reproducible builds; deterministic test ordering.
 - **Documentation** — Doxygen comments on all public API (required by user).
 - **Portability** — builds and runs on Ubuntu/WSL target; no Windows-only code
