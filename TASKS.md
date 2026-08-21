@@ -118,12 +118,15 @@ FBO), ShaderProgram compile/link with typed diagnostics (typed `data::Result`
 from T1, SPEC §5).
 
 **T** — gate asserts (FR-core.1/2): (1) create→bind→destroy of each RAII object
-produces no GL errors under the offscreen fixture and is ASan/LSan clean;
-(2) a valid shader compiles/links and reports no error; (3) an intentionally-
-malformed shader (source contains the known-bad token `glibberish` at line 7)
-returns a typed error string containing that token and the offending line
-(`ERROR: 0:7` — golden substring), no crash; (4) destructor order frees GL
-objects (no GL errors on teardown).
+   produces no GL errors under the offscreen fixture and is ASan/LSan clean;
+   (2) a valid shader compiles/links and reports no error; (3) an intentionally-
+   malformed shader (source contains the known-bad token `glibberish` at line 7)
+   returns a typed error string containing that token and the offending line
+   (`ERROR: 0:7` — golden substring), no crash; (4) destructor order frees GL
+   objects (no GL errors on teardown).
+   Shaders in gate tests use **GLSL 450** (not 460) per SPEC §8: the headless
+   gate runs on llvmpipe, whose GLSL compiler caps at 4.50; a 4.6 core context
+   accepts 4.50 shaders.
 
 **G** — suite green, sanitizer clean, audit green.
 

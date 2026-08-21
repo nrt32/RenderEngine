@@ -80,7 +80,9 @@ tests/    headless unit tests (consume core/ wrappers + the core/ fixture)
   display is available). The test environment forces the deterministic Mesa
   **llvmpipe** software driver with `MESA_GL_VERSION_OVERRIDE=4.6` (SPEC §8), so
   the gate asserts the 4.6-core target on a leak-clean software driver; on WSLg
-  the native Mesa D3D12 driver exposes GL 4.6 core as well.
+  the native Mesa D3D12 driver exposes GL 4.6 core as well. Test shaders use
+  **GLSL 450** (llvmpipe's GLSL compiler caps at 4.50; a 4.6 core context
+  accepts 4.50 shaders) — see SPEC §8.
 - GL-touching tests consume GL only through `core/` wrappers — raw GL calls stay
   under `core/` (guardrail `gpu_api_ownership`).
 - No C++ exceptions in v1; failures are reported via the typed `data::Result`

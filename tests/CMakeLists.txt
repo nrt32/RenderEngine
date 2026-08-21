@@ -6,6 +6,7 @@ add_executable(${RE_TEST_TARGET}
     offscreen_fixture.cpp
     t1_scaffolding_test.cpp
     t2_assets_test.cpp
+    t3_core_gl_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

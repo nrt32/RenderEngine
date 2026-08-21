@@ -1,0 +1,63 @@
+// core/texture2d.cpp — RAII 2D texture implementation.
+
+#include "core/texture2d.hpp"
+
+#include <glad/gl.h>
+
+#include <cstdint>
+
+namespace re::core {
+
+data::Result<Texture2D> Texture2D::create() {
+    if (glGenTextures == nullptr) {
+        return data::makeError<Texture2D>(
+            1, "Texture2D: no GL context (glGenTextures not loaded)");
+    }
+    std::uint32_t id = 0u;
+    glGenTextures(1, &id);
+    return data::makeValue<Texture2D>(Texture2D(id));
+}
+
+Texture2D::Texture2D(Texture2D&& other) noexcept : id_(other.id_) {
+    other.id_ = 0u;
+}
+
+Texture2D& Texture2D::operator=(Texture2D&& other) noexcept {
+    if (this != &other) {
+        if (id_ != 0u) {
+            glDeleteTextures(1, &id_);
+        }
+        id_ = other.id_;
+        other.id_ = 0u;
+    }
+    return *this;
+}
+
+Texture2D::~Texture2D() {
+    if (id_ != 0u) {
+        glDeleteTextures(1, &id_);
+    }
+}
+
+void Texture2D::bind(std::uint32_t unit) const noexcept {
+    glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(unit));
+    glBindTexture(GL_TEXTURE_2D, id_);
+}
+
+void Texture2D::unbind(std::uint32_t unit) const noexcept {
+    glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(unit));
+    glBindTexture(GL_TEXTURE_2D, 0u);
+}
+
+void Texture2D::upload(std::uint32_t width, std::uint32_t height,
+                       const std::uint8_t* rgba8Data) const noexcept {
+    glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(GL_RGBA8),
+                 static_cast<GLsizei>(width), static_cast<GLsizei>(height), 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, rgba8Data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+} // namespace re::core

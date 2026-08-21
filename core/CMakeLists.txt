@@ -5,6 +5,12 @@ add_library(re_core STATIC
     offscreen_context.cpp
     gl_error.cpp
     logging.cpp
+    vertex_buffer.cpp
+    element_buffer.cpp
+    vertex_array.cpp
+    texture2d.cpp
+    framebuffer.cpp
+    shader_program.cpp
 )
 
 target_include_directories(re_core PUBLIC

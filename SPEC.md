@@ -347,8 +347,25 @@ dims ≤128³ and the bunny.obj hand-counted vertex count).
 
 ### GL/GPU notes
 - WSLg exposes OpenGL via Mesa; target GL 4.6 core (the D3D12 gallium driver reports
-  core 4.6 natively; llvmpipe caps at 4.5). Verify with `glxinfo -l`. The headless
-  test env forces llvmpipe with `MESA_GL_VERSION_OVERRIDE=4.6` so the gate asserts
-  the SPEC 4.6 target on a deterministic, leak-clean software driver.
+  core 4.6 natively; llvmpipe caps at 4.5). Verify with `glxinfo -l`.
+- **Test GLSL level is GLSL 450, not 460.** The headless gate runs on the
+  deterministic software driver (llvmpipe) so LeakSanitizer attribution is stable
+  and leak-clean (see the leak-gate note below). llvmpipe's GLSL compiler supports
+  up to **4.50** — not 4.60 — and `MESA_GL_VERSION_OVERRIDE=4.6` only raises the
+  *reported* context version, never the GLSL level, so `#version 460` shaders
+  fail to compile with `GLSL 4.60 is not supported...`. A GL 4.6 core context
+  accepts GLSL 4.50 shaders, so **gate/test shaders are written `#version 450`**
+  — the portable level that compiles on both llvmpipe and d3d12. GLSL 460 remains
+  the target for hardware-driven sample shaders on the native d3d12 path.
+- **Leak-gate driver is llvmpipe, not d3d12.** The native d3d12 driver
+  `dlclose()`s its closed DSOs (`libd3d12core`, `libdxcore`, `libnvwgf2umx`,
+  `/dev/zero` pages) before LeakSanitizer attributes leaks, so attribution is
+  nondeterministic and its ~66 KB driver pool surfaces as `<unknown module>`,
+  which cannot be suppressed without also masking real engine leaks (an
+  allocation made from an `lp::` frame is still reported). The leak gate
+  therefore runs on `GALLIUM_DRIVER=llvmpipe` (driver DSOs stay mapped;
+  attribution is stable), where only third-party windowing/runtime allocations
+  are suppressed. The T1 gate asserts the 4.6-core target on that llvmpipe env
+  via `MESA_GL_VERSION_OVERRIDE=4.6`.
 - Tests create an offscreen GL context (hidden GLFW window; EGL-surfaceless
   fallback) so the gate never needs a display.
