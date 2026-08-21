@@ -11,6 +11,8 @@ add_library(re_core STATIC
     texture2d.cpp
     framebuffer.cpp
     shader_program.cpp
+    draw.cpp
+    read_pixels.cpp
 )
 
 target_include_directories(re_core PUBLIC

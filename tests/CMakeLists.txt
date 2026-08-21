@@ -10,6 +10,7 @@ add_executable(${RE_TEST_TARGET}
     t4_io_data_test.cpp
     t5_volume_test.cpp
     t6_volume_math_test.cpp
+    t7_render_mesh_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
@@ -18,6 +19,7 @@ target_link_libraries(${RE_TEST_TARGET}
         re_data
         re_io
         re_volume
+        re_render
         re_project_warnings
         GTest::gtest
         GTest::gtest_main

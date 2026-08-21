@@ -191,6 +191,12 @@ void ShaderProgram::setUniformVec3(std::string_view name,
     glUniform3fv(glGetUniformLocation(id_, nameString.c_str()), 1, &value.x);
 }
 
+void ShaderProgram::setUniformVec4(std::string_view name,
+                                   const glm::vec4& value) const noexcept {
+    const std::string nameString(name);
+    glUniform4fv(glGetUniformLocation(id_, nameString.c_str()), 1, &value.x);
+}
+
 void ShaderProgram::setUniformMat4(std::string_view name,
                                    const glm::mat4& value) const noexcept {
     const std::string nameString(name);

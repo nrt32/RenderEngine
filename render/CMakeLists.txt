@@ -1,7 +1,23 @@
-# render/ — ONE class per rendering technique (SPEC S3). Populated in later
-# tasks (T7-T11). Uses core/ GL wrappers only.
+# render/ — ONE class per rendering technique (SPEC §3). Uses core/ GL wrappers
+# only (guardrail gpu_api_ownership). T7 adds IMaterial + PhongMaterial,
+# ITransparencyPipeline (interface), MeshGeometry, and the MeshRenderer opaque
+# forward pass.
 
-add_library(re_render INTERFACE)
-target_include_directories(re_render INTERFACE
+add_library(re_render STATIC
+    phong_material.cpp
+    mesh_geometry.cpp
+    mesh_renderer.cpp
+)
+
+target_include_directories(re_render PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../>
+)
+
+target_link_libraries(re_render PUBLIC
+    re_core
+    re_data
+    glm::glm
+    spdlog::spdlog
+    re_project_warnings
 )

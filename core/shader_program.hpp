@@ -70,6 +70,10 @@ class ShaderProgram {
     void setUniformVec3(std::string_view name,
                         const glm::vec3& value) const noexcept;
 
+    /// Set a vec4 uniform. The program must be in use.
+    void setUniformVec4(std::string_view name,
+                        const glm::vec4& value) const noexcept;
+
     /// Set a mat4 uniform. The program must be in use.
     void setUniformMat4(std::string_view name,
                         const glm::mat4& value) const noexcept;
