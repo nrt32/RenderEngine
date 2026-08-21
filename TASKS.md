@@ -59,6 +59,7 @@ SPEC.md for FRs, §6 for guardrails, NAMING_CONVENTIONS.md for style.
 | T13 | docs/samples.md |
 | T14 | docs/mpr.md |
 | T15 | docs/mpr.md; end-of-loop DoD evidence (see "Definition of Done") |
+| T16 | README.md (convenience scripts table), SPEC §8 (Convenience scripts note) |
 
 ---
 
@@ -298,3 +299,37 @@ end-of-loop "Definition of Done" evidence below is complete.
       data/README.md.
 - [ ] All five capability samples plus the MPR sample run under WSLg/Xvfb and
       exit cleanly.
+
+---
+
+## Post-loop tasks
+
+Sequential loop T1–T15 are complete; the Definition of Done above is finalized.
+Post-loop tasks follow the same R-rules (gates, review, audit) but extend the
+finished v1 rather than building it.
+
+## T16: Dev-experience tooling (convenience scripts)
+
+**D** — commit the four thin wrapper scripts under `tools/` that reconstruct the
+§8 contract so manual sessions never re-derive it: `tools/build.sh [target...]`
+(configure + build, target pass-through to `cmake --build`), `tools/test.sh`
+(configure + build + `ctest --test-dir build --output-on-failure`, exactly
+`eval "$LOOP_BUILD_TEST_CMD"`), `tools/run_sample.sh <mesh|plane|volume|slice|oit|mpr>`
+(build + run one sample interactively), and `tools/clean.sh` (removes only
+`build/`). Each sources `tools/env.sh` itself. Scripts stay **non-authoritative**:
+the loop gate still uses `tools/env.sh` + `LOOP_BUILD_TEST_CMD` as the single
+source of truth (SPEC §8). README convenience-scripts table and SPEC §8 note
+updated (already drafted, uncommitted).
+
+**T** — gate asserts (R15-style, explainable): (1) each script exists, is
+executable, and is `shellcheck`-clean; (2) `tools/test.sh` from a clean tree
+reproduces the full §8 contract: full suite green AND it sourced `tools/env.sh`
+(`$AUDIT_SOURCE_DIRS` equals `io data volume core render app tests` after it
+runs); (3) `tools/build.sh re_sample_mesh` builds exactly that target and
+`tools/test.sh` output matches `eval "$LOOP_BUILD_TEST_CMD"` (same exit code);
+(4) `tools/run_sample.sh` with an invalid name exits 2 and prints the literal
+usage line `valid names: mesh plane volume slice oit mpr`; (5) `tools/clean.sh`
+removes `build/` and leaves the source tree untouched (asserted via a
+no-op-pattern: it references only the `build` path); (6) audit green.
+
+**G** — suite green, audit green, scripts committed with README/SPEC docs.

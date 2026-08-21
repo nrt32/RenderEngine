@@ -51,6 +51,18 @@ ctest --test-dir build --output-on-failure
 `$LOOP_BUILD_TEST_CMD` expands to exactly the three commands above, so you can
 also run `eval "$LOOP_BUILD_TEST_CMD"` from the repository root.
 
+### Convenience scripts (tools/)
+
+The four scripts below source `tools/env.sh` for you, so no manual setup is
+needed:
+
+| Script | Purpose |
+|---|---|
+| `tools/build.sh [target...]` | Configure + build all targets (or pass targets through to `cmake --build`) |
+| `tools/test.sh` | Configure, build, and run the full test suite headless (`ctest --output-on-failure`) |
+| `tools/run_sample.sh <name>` | Build and run one sample interactively: `mesh plane volume slice oit mpr` |
+| `tools/clean.sh` | Remove only `build/` (kept scoped; never touches source or other dirs) |
+
 ### Requirements
 
 - CMake >= 3.24

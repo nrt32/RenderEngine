@@ -345,6 +345,16 @@ dims ≤128³ and the bunny.obj hand-counted vertex count).
 - `AUDIT_SOURCE_DIRS="io data volume core render app tests"` — required for
   audit ownership rules to see our non-default layout.
 
+### Convenience scripts (tools/)
+The repo ships thin wrappers around the §8 build/test/env contract so manual
+sessions never have to reconstruct it: `tools/build.sh [target...]`
+(configure + build), `tools/test.sh` (configure + build + `ctest
+--output-on-failure`, exactly `eval "$LOOP_BUILD_TEST_CMD"`), `tools/run_sample.sh
+<mesh|plane|volume|slice|oit|mpr>` (build + run one sample interactively;
+requires WSLg/X display), and `tools/clean.sh` (removes only `build/`). Each
+sources `tools/env.sh` itself and is non-authoritative: the loop gate still uses
+`tools/env.sh` + `LOOP_BUILD_TEST_CMD` as its single source of truth.
+
 ### GL/GPU notes
 - WSLg exposes OpenGL via Mesa; target GL 4.6 core (the D3D12 gallium driver reports
   core 4.6 natively; llvmpipe caps at 4.5). Verify with `glxinfo -l`.
