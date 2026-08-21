@@ -13,6 +13,7 @@ add_executable(${RE_TEST_TARGET}
     t7_render_mesh_test.cpp
     t8_render_plane_test.cpp
     t9_render_volume_test.cpp
+    t10_oit_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

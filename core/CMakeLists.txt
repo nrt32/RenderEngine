@@ -8,6 +8,7 @@ add_library(re_core STATIC
     vertex_buffer.cpp
     element_buffer.cpp
     vertex_array.cpp
+    storage_buffer.cpp
     texture2d.cpp
     texture3d.cpp
     framebuffer.cpp

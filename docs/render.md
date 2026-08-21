@@ -10,10 +10,11 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 > This page documents the **T7 deliverable** (`IMaterial` + `PhongMaterial`,
 > the `ITransparencyPipeline` interface, the shared `MeshGeometry`, and the
 > `MeshRenderer` opaque forward pass, FR-render.1/3), the **T8 deliverable**
-> (`PlaneRenderer` textured quads/planes, FR-render.5), and the **T9
-> deliverable** (`VolumeRenderer` ray-cast GL draw pass, FR-render.6). It is
-> part of the `docs/render.md` documentation map (T7/T8/T9; later tasks extend
-> it).
+> (`PlaneRenderer` textured quads/planes, FR-render.5), the **T9 deliverable**
+> (`VolumeRenderer` ray-cast GL draw pass, FR-render.6), and the **T10
+> deliverable** (`LinkedListOIT`, the per-pixel linked-list order-independent
+> transparency pipeline, FR-render.2/3). It is part of the `docs/render.md`
+> documentation map (T7/T8/T9/T10; later tasks extend it).
 
 ## Components
 
@@ -49,8 +50,101 @@ The swappable OIT interface (SPEC §3 "OIT is a characteristic, not a peer
 renderer"). `MeshRenderer` auto-engages an injected pipeline **only when some
 mesh's material is transparent** (FR-render.3); an opaque-only scene never
 engages it. The interface lives here so an injectable spy (test double) can
-confirm the pipeline stays off for opaque scenes. `LinkedListOIT` (the v1
-implementation) arrives in T10.
+confirm the pipeline stays off for opaque scenes.
+
+The interface exposes the three lifecycle calls `MeshRenderer` drives:
+
+- `begin(camera, target)` — prepare capture storage for the frame (called
+  before the opaque pass);
+- `drawTransparent(geometry, baseColor, model, camera)` — capture one
+  transparent mesh (called per transparent mesh between begin/end);
+- `end(camera, target)` — depth-sort + composite over the target's opaque
+  contents;
+- `isEngaged()` — true between begin() and end().
+
+The renderer depends only on this abstraction (dependency inversion, SPEC §3):
+a stub or spy implementation drives the same `MeshRenderer` unchanged (the T10
+gate asserts exactly this, FR-render.3).
+
+**Typed errors (SPEC §5).** Every lifecycle call returns `data::Result<void>`:
+a storage-allocation, shader-build, or draw-issue failure surfaces as a typed
+error that `MeshRenderer::render` propagates to the caller — never a silent
+disengage. On `begin()` failure the pipeline stays un-engaged and
+`MeshRenderer::render` aborts the frame (the target is left cleared) so the
+caller can handle the error instead of receiving a partial frame.
+
+### `LinkedListOIT` (`render/linked_list_oit.hpp`, `.cpp`) — T10
+
+The **v1 order-independent transparency pipeline** (SPEC §3, FR-render.2/3): a
+classic **per-pixel linked list**, implemented as capture → depth-sort →
+composite:
+
+1. **Capture pass.** Each transparent mesh is drawn through the capture program.
+   The fragment shader
+   - premultiplies the material's straight RGBA base color
+     (`color.rgb = baseColor.rgb * baseColor.a`, `color.a = baseColor.a`);
+   - atomically allocates a node index (`atomicAdd` on a counter SSBO);
+   - links the node into the pixel's linked list by swapping the pixel's head
+     pointer (`imageAtomicExchange` on an R32UI head-pointer texture);
+   - stores the node (premultiplied color, `gl_FragCoord.z`, next pointer) into
+     a node SSBO.
+   The capture shader writes **no color output**, so the target framebuffer's
+   opaque contents are preserved.
+2. **Memory barriers.** `core::memoryBarrierShaderStorage()` is issued between
+   capture draws and before the composite pass so the atomic SSBO/image writes
+   are visible (the gate's llvmpipe driver requires an explicit barrier between
+   draws that perform atomic SSBO operations).
+3. **Composite pass.** A full-screen pass reads each pixel's linked list from
+   the head-pointer texture, collects up to `maxFragmentsPerPixel` nodes,
+   **insertion-sorts by depth (near → far)**, then composites **back-to-front**
+   with the premultiplied-alpha "over" operator over black:
+   ```
+   acc.rgb = s.rgb + (1 - s.a) * acc.rgb
+   acc.a   = s.a   + (1 - s.a) * acc.a
+   ```
+   The composite shader outputs the accumulated premultiplied transparent
+   color, which is blended over the target's opaque contents with the fixed
+   "over" blend state `(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)` — so the transparent
+   fragments are composited **over** the opaque geometry in the correct depth
+   order, regardless of draw order.
+
+The pipeline owns only GL resources (SPEC §3 "Stateless renderers"): the two
+shader programs, a shared full-screen quad VAO, one R32UI head-pointer texture,
+and two SSBOs (node buffer sized `width * height * maxFragmentsPerPixel`,
+counter buffer). Storage is (re)allocated in `begin()` when the target size
+changes. `readCapturedFragmentCount()` is a **test-consumed readback**
+(guardrail `no_production_readback`): the render path never reads back from the
+GPU; the FR-render.2 gate calls it after `end()` to observe the node-allocator
+counter.
+
+**Guardrail note.** The v1 pipeline uses SSBO `atomicAdd` (node allocator +
+counter) and `imageAtomicExchange` on the head-pointer texture. Both are
+supported by the gate's llvmpipe driver; bare `atomicExchange`/`atomicCompSwap`
+on SSBOs are **not** (llvmpipe reports `GL_INVALID_OPERATION`), which is why the
+head pointers live in a texture (image atomics), not an SSBO.
+
+**Deterministic shade.** The capture shader does **not** evaluate lighting: it
+stores the material's premultiplied base color directly. For a front-facing
+quad under the v1 opaque-pass light (head-on, shade factor 1, see `MeshRenderer`
+below) this equals the opaque pass's shaded color, so the captured fragment is
+exactly the base color premultiplied — keeping the FR-render.2 acceptance fully
+analytic.
+
+#### Acceptance constants (FR-render.2/3, docs/render.md)
+
+Two full-screen +Z-facing transparent quads at known depths, orthographic
+camera mapping NDC `[-1,1]^2` onto the full 64×64 viewport:
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| Near quad (world z=0) material | `{0.4, 0.2, 0.1, 0.5}` | straight RGBA; premultiplied = `{0.20, 0.10, 0.05, 0.5}` → bytes `{51, 26, 13, 128}` |
+| Far quad (world z=-1) material | `{0.1, 0.6, 0.3, 0.4}` | straight RGBA; premultiplied = `{0.04, 0.24, 0.12, 0.4}` → bytes `{10, 61, 31, 102}` |
+| Center pixel (near-over-far) | `{56, 56, 28, 179}` (±1) | depth-ordered premult "over": `rgb = {0.2,0.1,0.05} + (1-0.5)*{0.04,0.24,0.12} = {0.22,0.22,0.11}`, `a = 0.5 + 0.5*0.4 = 0.7`; `round(0.22*255)=56`, `round(0.11*255)=28`, `round(0.7*255)=179` (FR-render.2, within 1/255) |
+| Wrong order (far-over-near) | `{41, 77, 38, 179}` | `{0.04,0.24,0.12} + (1-0.4)*{0.2,0.1,0.05} = {0.16,0.30,0.15}`, `a=0.7` — outside the 1/255 tolerance, so the test discriminates depth ordering |
+| Captured fragments | `64*64*2 = 8192` | both full-screen quads rasterize every pixel; the node allocator counts exactly 2 fragments per pixel |
+| Opaque-only center alpha | `255` (== 1.0) | opaque material alpha passed through unchanged; pipeline never engaged (FR-render.3) |
+| One transparent quad added | `beginCount == 1`, `drawTransparentCount == 1`, `endCount == 1` | pipeline flips on exactly for the frame (injectable spy, FR-render.3) |
+| Stub pipeline drives renderer | same call counts with a no-op stub | interface is swappable; renderer depends only on the abstraction (FR-render.3) |
 
 ### `MeshGeometry` (`render/mesh_geometry.hpp`, `.cpp`)
 
@@ -92,8 +186,11 @@ Public scene structs (defined in `mesh_renderer.hpp`):
    pipeline is injected, it **engages** the pipeline (brackets the draw with
    `begin()`/`end()`); an opaque-only scene **never** engages it (FR-render.3).
 3. Draws each opaque mesh through the cached shader, using the material's base
-   color. Transparent meshes are skipped by the opaque pass (their compositing
-   is the pipeline's job, T10).
+   color.
+4. When the pipeline is engaged, captures every transparent mesh through the
+   pipeline (`drawTransparent` per transparent instance, using the material's
+   base color + model transform); `end()` then depth-sorts and composites the
+   captured fragments over the opaque pass (FR-render.2).
 
 **The v1 opaque pass is deliberately deterministic** (required by FR-render.1's
 analytic acceptance): it evaluates a fixed head-on directional light from world
@@ -282,7 +379,11 @@ out.rgb = 0.5*(1 + 0.5 + 0.25 + 0.125)     = 0.9375  (along green)
 
 - **GL ownership**: `render/` is GL-call-free. Raw draw-state calls
   (`glViewport`, `glClear`, `glDrawElements`, …) live in `core/draw.cpp`; raw
-  readback (`glReadPixels`) lives in `core/read_pixels.cpp` (both under `core/`).
+  readback (`glReadPixels`) lives in `core/read_pixels.cpp`; SSBO creation/
+  binding/readback lives in `core/storage_buffer.cpp`; image binding + memory
+  barriers live in `core/draw.cpp` (all under `core/`). The only readback
+  consumers are tests (pixel reads, `LinkedListOIT::readCapturedFragmentCount`)
+  — guardrail `no_production_readback`.
 - **Stateless + dependency inversion**: `render()` takes all data per call;
   renderers depend on `IMaterial` / `ITransparencyPipeline` abstractions.
 - **Typed diagnostics**: draw/geometry failures return `data::Result` — no

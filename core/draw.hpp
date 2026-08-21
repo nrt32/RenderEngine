@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "core/texture2d.hpp"
 #include "core/vertex_array.hpp"
 #include "data/result.hpp"
 
@@ -46,5 +47,33 @@ void disableBlend() noexcept;
 /// Returns an error if no GL context is current (the draw function pointer is
 /// not loaded). The program must already be installed (ShaderProgram::use).
 data::Result<void> drawElements(const VertexArray& vao, std::size_t indexCount);
+
+/// Insert a memory barrier so SSBO writes from the capture pass are
+/// visible to the composite pass (glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT
+/// | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)).
+void memoryBarrierShaderStorage() noexcept;
+
+/// Insert a memory barrier so buffer-object writes (the OIT node-allocator
+/// counter) are visible to a subsequent client readback via
+/// glGetBufferSubData (glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT)). Used by
+/// the test-consumed counter readback (guardrail no_production_readback).
+void memoryBarrierBufferUpdate() noexcept;
+
+/// Bind `texture` as a read-write image on `unit` with GL_R32UI format
+/// (glBindImageTexture, level 0, non-layered). Used by the OIT pipeline to
+/// atomically update the per-pixel head pointers from the capture pass
+/// (imageAtomicExchange) and read them in the composite pass (SPEC §3,
+/// render/linked_list_oit.cpp).
+void bindImageR32ui(const Texture2D& texture, std::uint32_t unit) noexcept;
+
+/// Unbind the image on `unit` (glBindImageTexture with texture 0).
+void unbindImage(std::uint32_t unit) noexcept;
+
+/// Enable fixed-function blending configured for the v1 premultiplied-alpha
+/// "over" compositing operator:
+///   dst = src + (1 - src.a) * dst
+/// i.e. GL_ONE, GL_ONE_MINUS_SRC_ALPHA with premultiplied source colors
+/// (SPEC §3 OIT; render/linked_list_oit.cpp composite pass).
+void enablePremultipliedOverBlend() noexcept;
 
 } // namespace re::core

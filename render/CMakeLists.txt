@@ -7,6 +7,7 @@ add_library(re_render STATIC
     phong_material.cpp
     mesh_geometry.cpp
     mesh_renderer.cpp
+    linked_list_oit.cpp
     plane_renderer.cpp
     volume_renderer.cpp
 )

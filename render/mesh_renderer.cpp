@@ -108,8 +108,7 @@ data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
         }
         if (instance.material->isTransparent()) {
             // Transparent meshes are composited by the OIT pipeline, not the
-            // opaque forward pass (FR-render.3; actual compositing lands in
-            // T10). They are skipped here.
+            // opaque forward pass (FR-render.2/3). They are skipped here.
             continue;
         }
         auto geometry = geometryFor(*instance.mesh);
@@ -125,6 +124,34 @@ data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
         auto draw = geometryPtr->draw();
         if (draw.failed()) {
             return draw;
+        }
+    }
+    return data::Result<void>(data::value);
+}
+
+data::Result<void> MeshRenderer::drawTransparent(const MeshScene& scene,
+                                                 const Camera& camera) {
+    if (transparency_ == nullptr) {
+        return data::Result<void>(data::value);
+    }
+    for (const MeshInstance& instance : scene.meshes) {
+        if (instance.material == nullptr || instance.mesh == nullptr) {
+            continue;
+        }
+        if (!instance.material->isTransparent()) {
+            continue;
+        }
+        auto geometry = geometryFor(*instance.mesh);
+        if (geometry.failed()) {
+            return data::makeError<void>(geometry.error().code,
+                                         geometry.error().message);
+        }
+        MeshGeometry* geometryPtr = *geometry;
+        const data::Result<void> capture = transparency_->drawTransparent(
+            *geometryPtr, instance.material->baseColor(), instance.model,
+            camera);
+        if (capture.failed()) {
+            return capture;
         }
     }
     return data::Result<void>(data::value);
@@ -161,13 +188,27 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
     core::disableBlend();
 
     if (anyTransparent && transparency_ != nullptr) {
-        // Engage the OIT pipeline for the transparent portion of the frame.
-        // Actual capture -> depth-sort -> composite lands in T10; here we
-        // bracket the draw so an injected spy observes the engagement.
-        transparency_->begin(camera, target);
+        // Engage the OIT pipeline (capture -> depth-sort -> composite): draw
+        // the opaque meshes first, then capture the transparent meshes through
+        // the pipeline, then let end() composite (FR-render.2/3).
+        const data::Result<void> begin = transparency_->begin(camera, target);
+        if (begin.failed()) {
+            // The pipeline could not be engaged: abort the frame and surface
+            // the typed error to the caller (SPEC §5, never silent). The
+            // target was already cleared and is left unmodified.
+            return begin;
+        }
         const data::Result<void> opaque = drawOpaque(scene, camera, target);
-        transparency_->end(camera, target);
-        return opaque;
+        if (opaque.failed()) {
+            transparency_->end(camera, target);
+            return opaque;
+        }
+        const data::Result<void> transparent = drawTransparent(scene, camera);
+        if (transparent.failed()) {
+            transparency_->end(camera, target);
+            return transparent;
+        }
+        return transparency_->end(camera, target);
     }
 
     return drawOpaque(scene, camera, target);

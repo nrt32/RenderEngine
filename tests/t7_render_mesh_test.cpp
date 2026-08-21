@@ -91,15 +91,26 @@ render::Camera makeCamera() {
     return camera;
 }
 
-/// An injectable transparency-pipeline spy: records begin()/end() calls so a
-/// test can assert the pipeline was NOT engaged for an opaque scene.
+/// An injectable transparency-pipeline spy: records
+/// begin()/end()/drawTransparent() calls so a test can assert the pipeline was
+/// NOT engaged for an opaque scene.
 class SpyTransparencyPipeline final : public render::ITransparencyPipeline {
    public:
-    void begin(const render::Camera&, const render::RenderTarget&) override {
+    data::Result<void> begin(const render::Camera&,
+                             const render::RenderTarget&) override {
         ++beginCount_;
+        return data::Result<void>(data::value);
     }
-    void end(const render::Camera&, const render::RenderTarget&) override {
+    data::Result<void> drawTransparent(const render::MeshGeometry&,
+                                       const glm::vec4&, const glm::mat4&,
+                                       const render::Camera&) override {
+        ++drawTransparentCount_;
+        return data::Result<void>(data::value);
+    }
+    data::Result<void> end(const render::Camera&,
+                           const render::RenderTarget&) override {
         ++endCount_;
+        return data::Result<void>(data::value);
     }
     bool isEngaged() const noexcept override {
         return beginCount_ > endCount_;
@@ -107,9 +118,13 @@ class SpyTransparencyPipeline final : public render::ITransparencyPipeline {
     int beginCount() const noexcept {
         return beginCount_;
     }
+    int drawTransparentCount() const noexcept {
+        return drawTransparentCount_;
+    }
 
    private:
     int beginCount_{0};
+    int drawTransparentCount_{0};
     int endCount_{0};
 };
 

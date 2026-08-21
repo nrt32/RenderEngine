@@ -46,6 +46,18 @@ class Texture2D {
     void upload(std::uint32_t width, std::uint32_t height,
                 const std::uint8_t* rgba8Data) const noexcept;
 
+    /// Allocate storage and upload a GL_R32UI image (one 32-bit unsigned
+    /// integer per pixel) — the head-pointer texture of the OIT pipeline
+    /// (render/linked_list_oit.cpp). Integer textures are sampled with
+    /// GL_NEAREST and wrapped with GL_CLAMP_TO_EDGE. The texture must be bound.
+    void uploadR32UI(std::uint32_t width, std::uint32_t height,
+                     const std::uint32_t* data) const noexcept;
+
+    /// Clear the whole texture's level 0 to `value` (glClearTexImage, GL 4.4+).
+    /// The texture must not be bound to an image unit. Used by the OIT pipeline
+    /// to reset the per-pixel head pointers to the null sentinel each frame.
+    void clearToU32(std::uint32_t value) const noexcept;
+
     /// The GL object name (non-zero for a valid generated name).
     std::uint32_t id() const noexcept {
         return id_;

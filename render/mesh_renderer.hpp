@@ -100,6 +100,12 @@ class MeshRenderer {
     data::Result<void> drawOpaque(const MeshScene& scene, const Camera& camera,
                                   const RenderTarget& target);
 
+    /// Capture every transparent mesh instance through the engaged
+    /// transparency pipeline (FR-render.3). Returns a typed error if a geometry
+    /// upload or pipeline capture cannot be issued (SPEC §5).
+    data::Result<void> drawTransparent(const MeshScene& scene,
+                                       const Camera& camera);
+
     ITransparencyPipeline* transparency_;
 
     std::optional<core::ShaderProgram> opaqueProgram_;

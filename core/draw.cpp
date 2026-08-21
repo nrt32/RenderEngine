@@ -54,4 +54,28 @@ data::Result<void> drawElements(const VertexArray& vao,
     return data::Result<void>(data::value);
 }
 
+void memoryBarrierShaderStorage() noexcept {
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT |
+                    GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+}
+
+void memoryBarrierBufferUpdate() noexcept {
+    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+}
+
+void bindImageR32ui(const Texture2D& texture, std::uint32_t unit) noexcept {
+    glBindImageTexture(static_cast<GLuint>(unit), texture.id(), 0, GL_FALSE, 0,
+                       GL_READ_WRITE, GL_R32UI);
+}
+
+void unbindImage(std::uint32_t unit) noexcept {
+    glBindImageTexture(static_cast<GLuint>(unit), 0u, 0, GL_FALSE, 0,
+                       GL_READ_WRITE, GL_R32UI);
+}
+
+void enablePremultipliedOverBlend() noexcept {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+}
+
 } // namespace re::core

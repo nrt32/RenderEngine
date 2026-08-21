@@ -60,4 +60,19 @@ void Texture2D::upload(std::uint32_t width, std::uint32_t height,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
+void Texture2D::uploadR32UI(std::uint32_t width, std::uint32_t height,
+                            const std::uint32_t* data) const noexcept {
+    glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(GL_R32UI),
+                 static_cast<GLsizei>(width), static_cast<GLsizei>(height), 0,
+                 GL_RED_INTEGER, GL_UNSIGNED_INT, data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+void Texture2D::clearToU32(std::uint32_t value) const noexcept {
+    glClearTexImage(id_, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, &value);
+}
+
 } // namespace re::core
