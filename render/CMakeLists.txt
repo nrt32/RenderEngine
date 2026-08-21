@@ -7,6 +7,7 @@ add_library(re_render STATIC
     phong_material.cpp
     mesh_geometry.cpp
     mesh_renderer.cpp
+    plane_renderer.cpp
 )
 
 target_include_directories(re_render PUBLIC
