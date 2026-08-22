@@ -3,58 +3,22 @@
 
 #include "render/mesh_renderer.hpp"
 
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 #include <string>
 
 #include "core/draw.hpp"
+#include "core/shader_program.hpp"
 
 namespace re::render {
 
-namespace {
-
-// Opaque forward-pass shader, GLSL 450 (SPEC §8: gate/test shaders compile on
-// llvmpipe which caps at 4.50).
-//
-// v1's opaque pass evaluates a deliberately deterministic Phong configuration
-// (docs/render.md): a fixed head-on directional light from +Z with ambient=0,
-// diffuse=1, specular=0. The resulting shade is
-//   color = baseColor.rgb * max(dot(N, (0,0,1)), 0)
-// so a front-facing surface (normal aligned with +Z) renders at exactly the
-// material's base color, and a back-facing surface is black. The material's
-// alpha is passed straight through, so an opaque material writes alpha 1.0.
-// This makes the FR-render.1 center-pixel acceptance fully analytic. The
-// PhongMaterial's ambient/diffuse/specular/shininess parameters are reserved
-// for the future lit path (samples, T12); the v1 gate pass is intentionally
-// unlit-flat for determinism.
-
-constexpr char kOpaqueVertexShader[] =
-    "#version 450 core\n"
-    "layout(location = 0) in vec3 aPos;\n"
-    "layout(location = 1) in vec3 aNormal;\n"
-    "uniform mat4 uModel;\n"
-    "uniform mat4 uView;\n"
-    "uniform mat4 uProj;\n"
-    "out vec3 vNormal;\n"
-    "void main() {\n"
-    "    vNormal = mat3(uModel) * aNormal;\n"
-    "    vec4 worldPos = uModel * vec4(aPos, 1.0);\n"
-    "    gl_Position = uProj * uView * worldPos;\n"
-    "}\n";
-
-constexpr char kOpaqueFragmentShader[] =
-    "#version 450 core\n"
-    "in vec3 vNormal;\n"
-    "uniform vec4 uBaseColor;\n"
-    "layout(location = 0) out vec4 oColor;\n"
-    "void main() {\n"
-    "    vec3 n = normalize(vNormal);\n"
-    "    float shade = max(dot(n, vec3(0.0, 0.0, 1.0)), 0.0);\n"
-    "    oColor = vec4(uBaseColor.rgb * shade, uBaseColor.a);\n"
-    "}\n";
-
-} // namespace
+// Opaque forward-pass shaders live as .glsl files under render/shaders/
+// (SPEC §9 V2.6) and are loaded via core::ShaderProgram's file helpers.
+// The deterministic v1 flat lighting is documented in docs/render.md:
+// a fixed head-on directional light from +Z with ambient=0, diffuse=1,
+// specular=0, so a front-facing surface renders at exactly the base color.
 
 MeshRenderer::MeshRenderer(AssetRegistry* registry,
                            ITransparencyPipeline* transparency)
@@ -64,8 +28,9 @@ data::Result<core::ShaderProgram*> MeshRenderer::opaqueProgram() {
     if (opaqueProgram_.has_value()) {
         return data::makeValue<core::ShaderProgram*>(&*opaqueProgram_);
     }
-    auto program =
-        core::ShaderProgram::create(kOpaqueVertexShader, kOpaqueFragmentShader);
+    const std::filesystem::path dir = RE_SHADER_DIR;
+    auto program = core::ShaderProgram::createFromFiles(
+        dir / "mesh_opaque.vert.glsl", dir / "mesh_opaque.frag.glsl");
     if (program.failed()) {
         return data::makeError<core::ShaderProgram*>(program.error().code,
                                                      program.error().message);

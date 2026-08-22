@@ -18,12 +18,63 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 > the **V2 T1 deliverable** (`render/types.hpp` shared types + the `IRenderer`
 > dispatch contract, SPEC §9 V2.3), the **V2 T2 deliverable** (the
 > multi-view compositor `View`/`ViewRect`/`ViewRenderer` + the new `core::blit`,
-> SPEC §9 V2.4) and the **V2 T3 deliverable** (the generational asset registry
-> `AssetRegistry`/`AssetHandle`, SPEC §9 V2.5). It is part of the
-> `docs/render.md` documentation map (T7/T8/T9/T10/T11 + V2 T1/T2/T3; later
-> tasks extend it).
+> SPEC §9 V2.4), the **V2 T3 deliverable** (the generational asset registry
+> `AssetRegistry`/`AssetHandle`, SPEC §9 V2.5) and the **V2 T7 deliverable**
+> (shader externalization to `.glsl` files + malformed fixture, SPEC §9 V2.6).
+> It is part of the `docs/render.md` documentation map
+> (T7/T8/T9/T10/T11 + V2 T1/T2/T3/T7; later tasks extend it).
 
 ## Components
+
+### Shader files (`.glsl`) — externalized GLSL (SPEC §9 V2.6, V2 T7)
+
+The GLSL that was previously inline `constexpr char[]` in `render/*.cpp` now
+lives as **`.glsl` files under `render/shaders/`** and is loaded at runtime by
+**`core::ShaderProgram`'s file helpers** (`loadSourceFile`,
+`createFromFiles`, `createWithGeometryFromFiles`,
+`createWithTransformFeedbackFromFiles`). This is a **relocation only** — no
+shader logic changed — and it adds syntax highlighting/editor navigation for
+the GLSL (SPEC §9 V2.6). The absolute source path is baked at compile time
+via `RE_SHADER_DIR` (`render/CMakeLists.txt`) so the renderers resolve the
+files regardless of the working directory; the `.glsl` contents are byte-for-byte
+the former `constexpr` literals (including the trailing newline), so **line
+numbers are preserved** and diagnostics keep their golden `ERROR: 0:N` form.
+
+| Shader file | Former inline symbol | Stage | Used by |
+|---|---|---|---|
+| `mesh_opaque.vert.glsl` | `kOpaqueVertexShader` | vertex | `MeshRenderer` |
+| `mesh_opaque.frag.glsl` | `kOpaqueFragmentShader` | fragment | `MeshRenderer` |
+| `plane.vert.glsl` | `kPlaneVertexShader` | vertex | `PlaneRenderer` |
+| `plane.frag.glsl` | `kPlaneFragmentShader` | fragment | `PlaneRenderer` |
+| `volume_raycast.vert.glsl` | `kRayCastVertexShader` | vertex | `VolumeRenderer` |
+| `volume_raycast.frag.glsl` | `kRayCastFragmentShader` | fragment | `VolumeRenderer` |
+| `oit_capture.vert.glsl` | `kCaptureVertexShader` | vertex | `LinkedListOIT` (capture) |
+| `oit_capture.frag.glsl` | `kCaptureFragmentShader` | fragment | `LinkedListOIT` (capture) |
+| `oit_composite.vert.glsl` | `kCompositeVertexShader` | vertex | `LinkedListOIT` (composite) |
+| `oit_composite.frag.glsl` | `kCompositeFragmentShader` | fragment | `LinkedListOIT` (composite) |
+| `slice.vert.glsl` | `kSliceVertexShader` | vertex | `SliceRenderer` (shared) |
+| `slice_clip.geom.glsl` | `kClipGeometryShader` | geometry | `SliceRenderer` (clip) |
+| `slice_clip.frag.glsl` | `kClipFragmentShader` | fragment | `SliceRenderer` (clip) |
+| `slice_capture.geom.glsl` | `kCaptureGeometryShader` | geometry | `SliceRenderer` (capture) |
+| `slice_capture.frag.glsl` | `kCaptureFragmentShader` | fragment | `SliceRenderer` (capture) |
+
+**Malformed-shader fixture (T3 golden substring).** The completed-loop T3 gate's
+intentionally-malformed shader (`glibberish` on line 7, golden substring
+`ERROR: 0:7`) is now reproducible via a **fixture file**
+`render/shaders/fixtures/malformed.vert.glsl` (and
+`malformed.frag.glsl` for the fragment-stage variant at line 5). Loading that
+file through `core::ShaderProgram::loadSourceFile` + `create` yields the same
+typed error (`ShaderError::VertexCompile`, code 1, message containing
+`glibberish` and `ERROR: 0:7`, no crash) as the former inline literal — the
+line number is pinned by the file's preserved newlines. The existing inline
+T3 gate (`tests/t3_core_gl_test.cpp`) stays green (it still embeds the same
+source for the direct-string path); the fixture is the file-backed reproduction
+required by V2.6.
+
+**Guardrail note.** `render/` remains GL-call-free (guardrail
+`gpu_api_ownership`): it loads GLSL text via `core::ShaderProgram` and draws
+through `core::Draw`/`core::ShaderProgram`; the raw `glCreateShader`/
+`glCompileShader`/`glLinkProgram` calls stay under `core/shader_program.cpp`.
 
 ### `render/types.hpp` and the `IRenderer` contract (SPEC §9 V2.3, V2 T1)
 

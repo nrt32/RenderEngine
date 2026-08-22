@@ -320,4 +320,55 @@ TEST(T3CoreGl, ShaderProgramMalformedFragmentReportsFragmentCode) {
     EXPECT_NE(message.find("ERROR: 0:5"), std::string::npos) << message;
 }
 
+// V2.6 relocation: the same malformed vertex shader now also lives as a
+// fixture file render/shaders/fixtures/malformed.vert.glsl. Loading it via
+// core::ShaderProgram::loadSourceFile + create must reproduce the identical
+// golden substring ERROR: 0:7 (line numbers preserved through file I/O).
+TEST(T3CoreGl, ShaderProgramMalformedFixtureFileReproducesGoldenSubstring) {
+    const std::string fixturePath =
+        std::string(TEST_SOURCE_DIR) + "/render/shaders/fixtures/malformed.vert.glsl";
+    auto source = core::ShaderProgram::loadSourceFile(fixturePath);
+    ASSERT_TRUE(source.ok()) << source.error().message;
+    // Line 7 still contains the known-bad token glibberish (explainable:
+    // fixture is byte-for-byte the former constexpr, see docs/render.md).
+    EXPECT_NE(source->find("glibberish"), std::string::npos);
+
+    auto program =
+        core::ShaderProgram::create(*source, kValidFragmentShader);
+    ASSERT_TRUE(program.failed());
+    EXPECT_EQ(program.error().code,
+              static_cast<int>(core::ShaderError::VertexCompile));
+    const std::string& message = program.error().message;
+    EXPECT_NE(message.find("glibberish"), std::string::npos) << message;
+    EXPECT_NE(message.find("ERROR: 0:7"), std::string::npos) << message;
+    EXPECT_FALSE(core::hasPendingGlError());
+
+    // File helper createFromFiles must also preserve the line number.
+    // Both fixture files are malformed (vertex at line 7, fragment at line 5);
+    // vertex fails first so the golden ERROR: 0:7 must be present.
+    auto programFromFiles = core::ShaderProgram::createFromFiles(
+        fixturePath,
+        std::string(TEST_SOURCE_DIR) + "/render/shaders/fixtures/malformed.frag.glsl");
+    ASSERT_TRUE(programFromFiles.failed());
+    EXPECT_EQ(programFromFiles.error().code,
+              static_cast<int>(core::ShaderError::VertexCompile));
+    EXPECT_NE(programFromFiles.error().message.find("ERROR: 0:7"),
+              std::string::npos)
+        << programFromFiles.error().message;
+    EXPECT_NE(programFromFiles.error().message.find("glibberish"),
+              std::string::npos)
+        << programFromFiles.error().message;
+    // Re-assert via vertex+valid fragment file helper to prove the error comes
+    // from the vertex stage, not the fragment fixture:
+    auto vertexOnlyProgram = core::ShaderProgram::createFromFiles(
+        fixturePath,
+        std::string(TEST_SOURCE_DIR) + "/render/shaders/mesh_opaque.frag.glsl");
+    ASSERT_TRUE(vertexOnlyProgram.failed());
+    EXPECT_EQ(vertexOnlyProgram.error().code,
+              static_cast<int>(core::ShaderError::VertexCompile));
+    EXPECT_NE(vertexOnlyProgram.error().message.find("ERROR: 0:7"),
+              std::string::npos)
+        << vertexOnlyProgram.error().message;
+}
+
 } // namespace re::tests

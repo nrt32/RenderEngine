@@ -6,18 +6,22 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <glm/mat4x4.hpp>
 #include <string>
 #include <vector>
 
 #include "core/draw.hpp"
+#include "core/shader_program.hpp"
 #include "render/mesh_geometry.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
 
 namespace re::render {
 
-namespace {
+// Shaders live as .glsl files under render/shaders/ (SPEC §9 V2.6) and are
+// loaded via core::ShaderProgram's file helpers. See docs/render.md and the
+// .glsl files themselves for the GLSL source.
 
 // Maximum nodes the composite shader sorts per pixel (its fixed local array
 // size). The constructor enforces maxFragmentsPerPixel_ <= this.
@@ -32,106 +36,6 @@ constexpr std::uint32_t kHeadImageUnit = 2u;  // layout(r32ui, binding=2)
 // this value so an empty pixel's linked list terminates immediately.
 constexpr std::uint32_t kNullNode = 0xFFFFFFFFu;
 
-// Capture vertex shader: transforms the mesh's position (attribute 0) by
-// model/view/proj. The capture pass installs this program and draws each
-// transparent mesh's MeshGeometry (which declares attribute 0 = position).
-constexpr char kCaptureVertexShader[] =
-    "#version 450 core\n"
-    "layout(location = 0) in vec3 aPos;\n"
-    "uniform mat4 uModel;\n"
-    "uniform mat4 uView;\n"
-    "uniform mat4 uProj;\n"
-    "void main() {\n"
-    "    gl_Position = uProj * uView * uModel * vec4(aPos, 1.0);\n"
-    "}\n";
-
-// Capture fragment shader: premultiplies the straight RGBA base color,
-// atomically allocates a node, links it into the pixel's head pointer
-// (imageAtomicExchange on the R32UI head-pointer image), and stores the node
-// into the node buffer. It writes NO color output, so the target framebuffer's
-// (opaque) contents are preserved. The capture shader writes via
-// imageAtomicExchange + SSBO atomics (both supported by the gate's llvmpipe
-// driver); see docs/render.md. `uCapacity` bounds the node allocator so a scene
-// that exceeds the pipeline's per-pixel fragment budget cannot write out of
-// bounds (the fragment is dropped instead).
-constexpr char kCaptureFragmentShader[] =
-    "#version 450 core\n"
-    "struct OITNode {\n"
-    "    vec4 color;\n" // premultiplied rgba
-    "    float depth;\n"
-    "    uint next;\n"
-    "};\n"
-    "layout(std430, binding = 0) coherent buffer NodeBuffer { OITNode nodes[]; "
-    "};\n"
-    "layout(std430, binding = 1) coherent buffer CounterBuffer { uint counter; "
-    "};\n"
-    "layout(r32ui, binding = 2) uniform coherent uimage2D uHead;\n"
-    "uniform vec4 uBaseColor;\n" // straight (non-premultiplied) RGBA
-    "uniform int uCapacity;\n"
-    "void main() {\n"
-    "    uint idx = atomicAdd(counter, 1u);\n"
-    "    if (idx >= uint(uCapacity)) {\n"
-    "        return;\n" // node budget exhausted: drop the fragment
-    "    }\n"
-    "    uint prev = imageAtomicExchange(uHead, ivec2(gl_FragCoord.xy), idx);\n"
-    "    vec4 c = vec4(uBaseColor.rgb * uBaseColor.a, uBaseColor.a);\n"
-    "    nodes[idx].color = c;\n"
-    "    nodes[idx].depth = gl_FragCoord.z;\n"
-    "    nodes[idx].next = prev;\n"
-    "}\n";
-
-// Composite vertex shader: full-screen quad in NDC.
-constexpr char kCompositeVertexShader[] =
-    "#version 450 core\n"
-    "layout(location = 0) in vec2 aPos;\n"
-    "void main() {\n"
-    "    gl_Position = vec4(aPos, 0.0, 1.0);\n"
-    "}\n";
-
-// Composite fragment shader: reads each pixel's linked list, insertion-sorts by
-// depth (near -> far), composites back-to-front with the premultiplied-alpha
-// "over" operator, and outputs the accumulated premultiplied color. The fixed
-// blend state (ONE, ONE_MINUS_SRC_ALPHA) blends this over the target's existing
-// opaque contents, so transparent is composited over opaque.
-constexpr char kCompositeFragmentShader[] =
-    "#version 450 core\n"
-    "struct OITNode {\n"
-    "    vec4 color;\n"
-    "    float depth;\n"
-    "    uint next;\n"
-    "};\n"
-    "layout(std430, binding = 0) coherent buffer NodeBuffer { OITNode nodes[]; "
-    "};\n"
-    "layout(r32ui, binding = 2) uniform coherent uimage2D uHead;\n"
-    "uniform int uMaxNodes;\n"
-    "layout(location = 0) out vec4 oColor;\n"
-    "void main() {\n"
-    "    OITNode list[16];\n"
-    "    int count = 0;\n"
-    "    uint cur = imageLoad(uHead, ivec2(gl_FragCoord.xy)).r;\n"
-    "    while (cur != 0xFFFFFFFFu && count < uMaxNodes) {\n"
-    "        list[count] = nodes[cur];\n"
-    "        count++;\n"
-    "        cur = nodes[cur].next;\n"
-    "    }\n"
-    "    for (int i = 1; i < count; ++i) {\n"
-    "        OITNode key = list[i];\n"
-    "        int j = i - 1;\n"
-    "        while (j >= 0 && list[j].depth > key.depth) {\n"
-    "            list[j + 1] = list[j];\n"
-    "            j--;\n"
-    "        }\n"
-    "        list[j + 1] = key;\n"
-    "    }\n"
-    "    vec4 acc = vec4(0.0);\n"
-    "    for (int i = count - 1; i >= 0; --i) {\n"
-    "        vec4 s = list[i].color;\n"
-    "        acc.rgb = s.rgb + (1.0 - s.a) * acc.rgb;\n"
-    "        acc.a = s.a + (1.0 - s.a) * acc.a;\n"
-    "    }\n"
-    "    oColor = acc;\n"
-    "}\n";
-
 // Full-screen quad vertices in NDC (x,y): two triangles sharing a diagonal.
 constexpr std::array<float, 8> kScreenQuadVerts = {
     -1.0f, -1.0f, // corner 0
@@ -139,8 +43,6 @@ constexpr std::array<float, 8> kScreenQuadVerts = {
     1.0f,  1.0f,  // corner 2
     -1.0f, 1.0f,  // corner 3
 };
-
-} // namespace
 
 LinkedListOIT::LinkedListOIT(std::uint32_t maxFragmentsPerPixel)
     : maxFragmentsPerPixel_(
@@ -174,8 +76,9 @@ data::Result<core::ShaderProgram*> LinkedListOIT::captureProgram() {
     if (captureProgram_.has_value()) {
         return data::makeValue<core::ShaderProgram*>(&*captureProgram_);
     }
-    auto program = core::ShaderProgram::create(kCaptureVertexShader,
-                                               kCaptureFragmentShader);
+    const std::filesystem::path dir = RE_SHADER_DIR;
+    auto program = core::ShaderProgram::createFromFiles(
+        dir / "oit_capture.vert.glsl", dir / "oit_capture.frag.glsl");
     if (program.failed()) {
         return data::makeError<core::ShaderProgram*>(program.error().code,
                                                      program.error().message);
@@ -188,8 +91,9 @@ data::Result<core::ShaderProgram*> LinkedListOIT::compositeProgram() {
     if (compositeProgram_.has_value()) {
         return data::makeValue<core::ShaderProgram*>(&*compositeProgram_);
     }
-    auto program = core::ShaderProgram::create(kCompositeVertexShader,
-                                               kCompositeFragmentShader);
+    const std::filesystem::path dir = RE_SHADER_DIR;
+    auto program = core::ShaderProgram::createFromFiles(
+        dir / "oit_composite.vert.glsl", dir / "oit_composite.frag.glsl");
     if (program.failed()) {
         return data::makeError<core::ShaderProgram*>(program.error().code,
                                                      program.error().message);

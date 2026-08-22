@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <string>
 #include <utility>
@@ -12,48 +13,17 @@
 
 #include "core/draw.hpp"
 #include "core/element_buffer.hpp"
+#include "core/shader_program.hpp"
 #include "core/vertex_array.hpp"
 #include "core/vertex_buffer.hpp"
 
 namespace re::render {
 
-namespace {
-
-// Textured-plane shaders, GLSL 450 (SPEC §8: gate/test shaders compile on
-// llvmpipe which caps at 4.50).
-//
-// The plane is drawn as a plain textured quad with the UV interpolated across
-// the two triangles; the fragment samples the texture directly (no shading),
-// so a plane whose UV space maps the image exactly onto the viewport
-// reproduces the source texels (FR-render.5). The model matrix is applied to
-// the (unit-quad) corners and, via the normal matrix mat3(model), to the
-// normal (used by future lit passes; not consumed by the v1 textured pass).
-
-constexpr char kPlaneVertexShader[] =
-    "#version 450 core\n"
-    "layout(location = 0) in vec3 aPos;\n"
-    "layout(location = 1) in vec2 aUV;\n"
-    "layout(location = 2) in vec3 aNormal;\n"
-    "uniform mat4 uModel;\n"
-    "uniform mat4 uView;\n"
-    "uniform mat4 uProj;\n"
-    "out vec2 vUV;\n"
-    "out vec3 vNormal;\n"
-    "void main() {\n"
-    "    vUV = aUV;\n"
-    "    vNormal = mat3(uModel) * aNormal;\n"
-    "    vec4 worldPos = uModel * vec4(aPos, 1.0);\n"
-    "    gl_Position = uProj * uView * worldPos;\n"
-    "}\n";
-
-constexpr char kPlaneFragmentShader[] =
-    "#version 450 core\n"
-    "in vec2 vUV;\n"
-    "uniform sampler2D uTex;\n"
-    "layout(location = 0) out vec4 oColor;\n"
-    "void main() {\n"
-    "    oColor = texture(uTex, vUV);\n"
-    "}\n";
+// Textured-plane shaders live as .glsl files under render/shaders/
+// (SPEC §9 V2.6) and are loaded via core::ShaderProgram's file helpers.
+// The plane is drawn as a plain textured quad; fragment samples the texture
+// directly so a plane whose UV maps the image exactly onto the viewport
+// reproduces the source texels (FR-render.5).
 
 // Interleaved vertex layout: position (3 floats) + UV (2 floats) + normal
 // (3 floats) = 8 floats per vertex.
@@ -74,8 +44,6 @@ bool supportedChannels(std::int32_t channels) noexcept {
     }
     return false;
 }
-
-} // namespace
 
 PlaneGeometry PlaneGeometry::unitQuadXY() {
     PlaneGeometry g;
@@ -137,8 +105,9 @@ data::Result<core::ShaderProgram*> PlaneRenderer::planeProgram() {
     if (planeProgram_.has_value()) {
         return data::makeValue<core::ShaderProgram*>(&*planeProgram_);
     }
-    auto program =
-        core::ShaderProgram::create(kPlaneVertexShader, kPlaneFragmentShader);
+    const std::filesystem::path dir = RE_SHADER_DIR;
+    auto program = core::ShaderProgram::createFromFiles(
+        dir / "plane.vert.glsl", dir / "plane.frag.glsl");
     if (program.failed()) {
         return data::makeError<core::ShaderProgram*>(program.error().code,
                                                      program.error().message);

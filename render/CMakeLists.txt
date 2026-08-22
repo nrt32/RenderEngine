@@ -28,3 +28,10 @@ target_link_libraries(re_render PUBLIC
     spdlog::spdlog
     re_project_warnings
 )
+
+# Shaders live as .glsl files under render/shaders/ (SPEC §9 V2.6). The
+# absolute source path is baked at compile time so the renderers can load
+# them via core::ShaderProgram's file helpers regardless of cwd.
+target_compile_definitions(re_render PRIVATE
+    RE_SHADER_DIR="${CMAKE_SOURCE_DIR}/render/shaders"
+)

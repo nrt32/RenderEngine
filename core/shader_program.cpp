@@ -4,6 +4,9 @@
 
 #include <glad/gl.h>
 
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -233,6 +236,75 @@ data::Result<ShaderProgram> ShaderProgram::createWithTransformFeedback(
                                               program.error().message);
     }
     return data::makeValue<ShaderProgram>(ShaderProgram(*program));
+}
+
+data::Result<std::string> ShaderProgram::loadSourceFile(
+    const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::in | std::ios::binary);
+    if (!file) {
+        return data::makeError<std::string>(
+            1, "ShaderProgram: failed to open shader file: " + path.string());
+    }
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+    if (file.bad()) {
+        return data::makeError<std::string>(
+            1, "ShaderProgram: failed to read shader file: " + path.string());
+    }
+    return data::makeValue<std::string>(buffer.str());
+}
+
+data::Result<ShaderProgram> ShaderProgram::createFromFiles(
+    const std::filesystem::path& vertexPath,
+    const std::filesystem::path& fragmentPath) {
+    auto vs = loadSourceFile(vertexPath);
+    if (vs.failed()) {
+        return data::makeError<ShaderProgram>(vs.error().code, vs.error().message);
+    }
+    auto fs = loadSourceFile(fragmentPath);
+    if (fs.failed()) {
+        return data::makeError<ShaderProgram>(fs.error().code, fs.error().message);
+    }
+    return create(*vs, *fs);
+}
+
+data::Result<ShaderProgram> ShaderProgram::createWithGeometryFromFiles(
+    const std::filesystem::path& vertexPath,
+    const std::filesystem::path& geometryPath,
+    const std::filesystem::path& fragmentPath) {
+    auto vs = loadSourceFile(vertexPath);
+    if (vs.failed()) {
+        return data::makeError<ShaderProgram>(vs.error().code, vs.error().message);
+    }
+    auto gs = loadSourceFile(geometryPath);
+    if (gs.failed()) {
+        return data::makeError<ShaderProgram>(gs.error().code, gs.error().message);
+    }
+    auto fs = loadSourceFile(fragmentPath);
+    if (fs.failed()) {
+        return data::makeError<ShaderProgram>(fs.error().code, fs.error().message);
+    }
+    return createWithGeometry(*vs, *gs, *fs);
+}
+
+data::Result<ShaderProgram> ShaderProgram::createWithTransformFeedbackFromFiles(
+    const std::filesystem::path& vertexPath,
+    const std::filesystem::path& geometryPath,
+    const std::filesystem::path& fragmentPath,
+    const std::vector<std::string>& varyings) {
+    auto vs = loadSourceFile(vertexPath);
+    if (vs.failed()) {
+        return data::makeError<ShaderProgram>(vs.error().code, vs.error().message);
+    }
+    auto gs = loadSourceFile(geometryPath);
+    if (gs.failed()) {
+        return data::makeError<ShaderProgram>(gs.error().code, gs.error().message);
+    }
+    auto fs = loadSourceFile(fragmentPath);
+    if (fs.failed()) {
+        return data::makeError<ShaderProgram>(fs.error().code, fs.error().message);
+    }
+    return createWithTransformFeedback(*vs, *gs, *fs, varyings);
 }
 
 ShaderProgram::ShaderProgram(ShaderProgram&& other) noexcept : id_(other.id_) {

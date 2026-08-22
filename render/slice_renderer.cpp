@@ -6,176 +6,20 @@
 #include <glad/gl.h>
 
 #include <cstddef>
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "core/draw.hpp"
+#include "core/shader_program.hpp"
 
 namespace re::render {
 
-namespace {
-
-// ---------------------------------------------------------------------------
-// Shaders, GLSL 450 (SPEC §8: gate/test shaders compile on llvmpipe which caps
-// at 4.50).
-//
-// All positions are transformed to WORLD space in the vertex shader. The plane
-// is defined in world space by a unit normal + point; the kept side is
-// `dot(normal, p - point) >= 0`.
-// ---------------------------------------------------------------------------
-
-// Vertex shader shared by the clip (render) and capture programs: passes the
-// world-space position + world-space normal through to the geometry stage.
-constexpr char kSliceVertexShader[] =
-    "#version 450 core\n"
-    "layout(location = 0) in vec3 aPos;\n"
-    "layout(location = 1) in vec3 aNormal;\n"
-    "uniform mat4 uModel;\n"
-    "out vec3 vWorldPos;\n"
-    "out vec3 vNormal;\n"
-    "void main() {\n"
-    "    vec4 world = uModel * vec4(aPos, 1.0);\n"
-    "    vWorldPos = world.xyz;\n"
-    "    vNormal = mat3(uModel) * aNormal;\n"
-    "}\n";
-
-// Clip (render) geometry shader: Sutherland-Hodgman clip of each triangle
-// against the plane, keeping the half-space `d >= 0`, and emit the resulting
-// 3- or 4-vertex polygon as a triangle fan. The fragment shader shades with
-// the triangle's geometric (face) normal (computed from the world-space
-// winding, so it is exact for a flat face regardless of smooth per-vertex
-// normals) under the deterministic v1 flat lighting (docs/render.md). A kept
-// surface whose geometric normal is +Z therefore renders at exactly the
-// material's base color.
-constexpr char kClipGeometryShader[] =
-    "#version 450 core\n"
-    "layout(triangles) in;\n"
-    "layout(triangle_strip, max_vertices = 6) out;\n"
-    "in vec3 vWorldPos[];\n"
-    "uniform mat4 uView;\n"
-    "uniform mat4 uProj;\n"
-    "uniform vec3 uPlaneNormal;\n"
-    "uniform vec3 uPlanePoint;\n"
-    "flat out vec3 fNormal;\n"
-    "void emitVertex(vec3 pos) {\n"
-    "    gl_Position = uProj * uView * vec4(pos, 1.0);\n"
-    "    EmitVertex();\n"
-    "}\n"
-    "void main() {\n"
-    "    vec3 P[3] = vec3[](vWorldPos[0], vWorldPos[1], vWorldPos[2]);\n"
-    "    fNormal = normalize(cross(P[1] - P[0], P[2] - P[0]));\n"
-    "    float d[3];\n"
-    "    d[0] = dot(uPlaneNormal, P[0] - uPlanePoint);\n"
-    "    d[1] = dot(uPlaneNormal, P[1] - uPlanePoint);\n"
-    "    d[2] = dot(uPlaneNormal, P[2] - uPlanePoint);\n"
-    "    vec3 CP[4];\n"
-    "    int k = 0;\n"
-    "    for (int i = 0; i < 3; ++i) {\n"
-    "        int j = (i + 1) % 3;\n"
-    "        bool keepI = d[i] >= 0.0;\n"
-    "        bool keepJ = d[j] >= 0.0;\n"
-    "        if (keepI) {\n"
-    "            CP[k++] = P[i];\n"
-    "        }\n"
-    "        if (keepI != keepJ) {\n"
-    "            float t = d[i] / (d[i] - d[j]);\n"
-    "            CP[k++] = P[i] + t * (P[j] - P[i]);\n"
-    "        }\n"
-    "    }\n"
-    "    if (k >= 3) {\n"
-    "        for (int i = 1; i + 1 < k; ++i) {\n"
-    "            emitVertex(CP[0]);\n"
-    "            emitVertex(CP[i]);\n"
-    "            emitVertex(CP[i + 1]);\n"
-    "        }\n"
-    "        EndPrimitive();\n"
-    "    }\n"
-    "}\n";
-
-// Fragment shader of the clip (render) program: deterministic v1 flat lighting
-// (identical to the MeshRenderer opaque pass, docs/render.md): a fixed head-on
-// light from +Z with ambient=0, diffuse=1, specular=0, so a surface whose
-// normal is aligned with +Z renders at exactly the material's base color.
-constexpr char kClipFragmentShader[] =
-    "#version 450 core\n"
-    "flat in vec3 fNormal;\n"
-    "uniform vec4 uBaseColor;\n"
-    "layout(location = 0) out vec4 oColor;\n"
-    "void main() {\n"
-    "    vec3 n = normalize(fNormal);\n"
-    "    float shade = max(dot(n, vec3(0.0, 0.0, 1.0)), 0.0);\n"
-    "    oColor = vec4(uBaseColor.rgb * shade, uBaseColor.a);\n"
-    "}\n";
-
-// Cross-section capture geometry shader: emits ONLY the on-plane cross-section
-// polygon of each triangle (all emitted vertices lie exactly on the plane,
-// FR-render.4). For a triangle whose plane intersection is a strict segment the
-// polygon is degenerate (emitted as a zero-area triangle) so the emitted vertex
-// count is deterministic. The world position is written to `gWorldPos`, which
-// the transform-feedback capture reads back (test-consumed).
-constexpr char kCaptureGeometryShader[] =
-    "#version 450 core\n"
-    "layout(triangles) in;\n"
-    "layout(triangle_strip, max_vertices = 6) out;\n"
-    "in vec3 vWorldPos[];\n"
-    "uniform vec3 uPlaneNormal;\n"
-    "uniform vec3 uPlanePoint;\n"
-    "flat out vec3 gWorldPos;\n"
-    "const float EPS = 1e-5;\n"
-    "void emitVertex(vec3 p) {\n"
-    "    gWorldPos = p;\n"
-    "    gl_Position = vec4(p, 1.0);\n"
-    "    EmitVertex();\n"
-    "}\n"
-    "void main() {\n"
-    "    vec3 P[3] = vec3[](vWorldPos[0], vWorldPos[1], vWorldPos[2]);\n"
-    "    float d[3];\n"
-    "    d[0] = dot(uPlaneNormal, P[0] - uPlanePoint);\n"
-    "    d[1] = dot(uPlaneNormal, P[1] - uPlanePoint);\n"
-    "    d[2] = dot(uPlaneNormal, P[2] - uPlanePoint);\n"
-    "    bool allPos = d[0] >= -EPS && d[1] >= -EPS && d[2] >= -EPS;\n"
-    "    bool allNeg = d[0] <= EPS && d[1] <= EPS && d[2] <= EPS;\n"
-    "    if (allPos || allNeg) {\n"
-    "        if (abs(d[0]) <= EPS && abs(d[1]) <= EPS && abs(d[2]) <= EPS) {\n"
-    "            emitVertex(P[0]); emitVertex(P[1]); emitVertex(P[2]);\n"
-    "        }\n"
-    "        return;\n"
-    "    }\n"
-    "    vec3 C[4];\n"
-    "    int k = 0;\n"
-    "    if (abs(d[0]) <= EPS) { C[k++] = P[0]; }\n"
-    "    if (abs(d[1]) <= EPS) { C[k++] = P[1]; }\n"
-    "    if (abs(d[2]) <= EPS) { C[k++] = P[2]; }\n"
-    "    if (d[0] > EPS && d[1] < -EPS || d[0] < -EPS && d[1] > EPS) {\n"
-    "        float t = d[0] / (d[0] - d[1]);\n"
-    "        C[k++] = P[0] + t * (P[1] - P[0]);\n"
-    "    }\n"
-    "    if (d[1] > EPS && d[2] < -EPS || d[1] < -EPS && d[2] > EPS) {\n"
-    "        float t = d[1] / (d[1] - d[2]);\n"
-    "        C[k++] = P[1] + t * (P[2] - P[1]);\n"
-    "    }\n"
-    "    if (d[2] > EPS && d[0] < -EPS || d[2] < -EPS && d[0] > EPS) {\n"
-    "        float t = d[2] / (d[2] - d[0]);\n"
-    "        C[k++] = P[2] + t * (P[0] - P[2]);\n"
-    "    }\n"
-    "    if (k == 2) {\n"
-    "        emitVertex(C[0]); emitVertex(C[1]); emitVertex(C[1]);\n"
-    "    } else if (k == 3) {\n"
-    "        emitVertex(C[0]); emitVertex(C[1]); emitVertex(C[2]);\n"
-    "    } else if (k >= 4) {\n"
-    "        emitVertex(C[0]); emitVertex(C[1]); emitVertex(C[2]);\n"
-    "        emitVertex(C[0]); emitVertex(C[2]); emitVertex(C[3]);\n"
-    "    }\n"
-    "    EndPrimitive();\n"
-    "}\n";
-
-// Fragment shader of the capture program: discards (the capture pass must not
-// write to the framebuffer; only the transform-feedback buffer is meaningful).
-constexpr char kCaptureFragmentShader[] =
-    "#version 450 core\n"
-    "void main() { discard; }\n";
+// Shaders live as .glsl files under render/shaders/ (SPEC §9 V2.6) and are
+// loaded via core::ShaderProgram's file helpers. The plane is defined in
+// world space by a unit normal + point; kept side is dot(normal, p-point)>=0.
 
 // A sentinel coordinate written into the capture buffer before capture; after
 // capture, entries still equal to this sentinel were never written (the
@@ -188,16 +32,16 @@ constexpr float kCaptureSentinel = 1.0e30f;
 // geometry shader declares max_vertices = 6).
 constexpr std::size_t kMaxVerticesPerTriangle = 6u;
 
-} // namespace
-
 SliceRenderer::SliceRenderer(AssetRegistry* registry) : registry_(registry) {}
 
 data::Result<core::ShaderProgram*> SliceRenderer::clipProgram() {
     if (clipProgram_.has_value()) {
         return data::makeValue<core::ShaderProgram*>(&*clipProgram_);
     }
-    auto program = core::ShaderProgram::createWithGeometry(
-        kSliceVertexShader, kClipGeometryShader, kClipFragmentShader);
+    const std::filesystem::path dir = RE_SHADER_DIR;
+    auto program = core::ShaderProgram::createWithGeometryFromFiles(
+        dir / "slice.vert.glsl", dir / "slice_clip.geom.glsl",
+        dir / "slice_clip.frag.glsl");
     if (program.failed()) {
         return data::makeError<core::ShaderProgram*>(program.error().code,
                                                      program.error().message);
@@ -214,9 +58,10 @@ data::Result<core::ShaderProgram*> SliceRenderer::captureProgram() {
     // vertex). Capture is begun with GL_TRIANGLES (the geometry stage outputs
     // triangle_strip) via core::TransformFeedback::begin at draw time.
     const std::vector<std::string> varyings = {"gWorldPos"};
-    auto program = core::ShaderProgram::createWithTransformFeedback(
-        kSliceVertexShader, kCaptureGeometryShader, kCaptureFragmentShader,
-        varyings);
+    const std::filesystem::path dir = RE_SHADER_DIR;
+    auto program = core::ShaderProgram::createWithTransformFeedbackFromFiles(
+        dir / "slice.vert.glsl", dir / "slice_capture.geom.glsl",
+        dir / "slice_capture.frag.glsl", varyings);
     if (program.failed()) {
         return data::makeError<core::ShaderProgram*>(program.error().code,
                                                      program.error().message);

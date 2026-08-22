@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
@@ -75,6 +76,34 @@ class ShaderProgram {
     static data::Result<ShaderProgram> createWithTransformFeedback(
         std::string_view vertexSource, std::string_view geometrySource,
         std::string_view fragmentSource,
+        const std::vector<std::string>& varyings);
+
+    /// Load a GLSL source file from disk. On success returns the file's
+    /// exact contents (used by the `.glsl` shader files in `render/shaders/`,
+    /// SPEC §9 V2.6). Preserves line numbers so diagnostics keep their
+    /// `ERROR: 0:N` form. On failure returns a typed error (code 1).
+    static data::Result<std::string> loadSourceFile(
+        const std::filesystem::path& path);
+
+    /// Load GLSL source from `.glsl` files and compile/link them into a
+    /// program. Convenience wrappers around `loadSourceFile` + `create*`
+    /// (SPEC §9 V2.6: shaders live in `.glsl` files for syntax highlighting).
+    static data::Result<ShaderProgram> createFromFiles(
+        const std::filesystem::path& vertexPath,
+        const std::filesystem::path& fragmentPath);
+
+    /// Load GLSL source from `.glsl` files (including geometry) and link.
+    static data::Result<ShaderProgram> createWithGeometryFromFiles(
+        const std::filesystem::path& vertexPath,
+        const std::filesystem::path& geometryPath,
+        const std::filesystem::path& fragmentPath);
+
+    /// Load GLSL source from `.glsl` files and link with transform-feedback
+    /// varyings. File-backed variant of `createWithTransformFeedback`.
+    static data::Result<ShaderProgram> createWithTransformFeedbackFromFiles(
+        const std::filesystem::path& vertexPath,
+        const std::filesystem::path& geometryPath,
+        const std::filesystem::path& fragmentPath,
         const std::vector<std::string>& varyings);
 
     ShaderProgram(const ShaderProgram&) = delete;
