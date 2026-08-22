@@ -18,6 +18,7 @@
 | Unit tests | **GoogleTest v1.15.x** | Strong enforcement-style assertions (user requirement) |
 | Logging | **spdlog v1.14.1** | Lightweight OSS logging: trace/debug/info/warn/error/fatal; console/file sinks |
 | Textures | **stb_image** (single-header, pinned commit) | Public domain; loads textures and can write outputs |
+| Serialization | **nlohmann/json 3.11.x** (header-only, pinned GIT_TAG commit SHA) | JSON text wire for `SceneStore::serialize()` + `LayoutSpec` + `MaterialDesc`/`LightDesc` variant JSON; binary NRRD raw blob + SHA-256 `contentHash` beside it — see `assets.md:64` §7 addendum decision Q47:A (2026-08-23) |
 | Dependency acquisition | **CMake FetchContent, pinned GIT_TAG** | Self-contained, reproducible; feeds dependency-lock guardrail |
 | Test binary | **ASan + UBSan** enabled | Memory-leak + UB detection in the gate |
 | GL-touching tests | **Offscreen GL context** (hidden GLFW window; EGL-surfaceless fallback) | Unit tests exercise real GL paths headless, under sanitizers |

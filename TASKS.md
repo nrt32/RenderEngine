@@ -46,7 +46,7 @@ Active backlog is the **pure-redesign V3 iteration** (no new FRs — OpenGL/C++/
 
 ## V3 backlog — pure-redesign `scene`/`broker`/View/List/Persistence overhaul (SPEC §10–§12)
 
-Pure-redesign iteration (no new FRs). Priority order **redesign-first** (foundations before composition): `scene/` value lib → `CompositeKey`/`TranslateContext`/`DrawContext` skeletons → `broker/` SRP-split → `Camera`/`View` → persistence → asset `SceneStore`-owned `AssetId` → RE-minimal. Each task is **one session, one reason to change** (SRP) and maps to `SPEC §9.1` V3.x. Accepted standard `T1..Tn` per iteration — V2 `V2-T1..V2-T8` archived, V3 now `T1..T10` (not `T9..T18`).
+Pure-redesign iteration (no new FRs). Priority order **redesign-first** (foundations before composition): `scene/` value lib → `CompositeKey`/`TranslateContext`/`DrawContext` skeletons → `broker/` SRP-split → `Camera`/`View` → persistence → asset `SceneStore`-owned `AssetId` → RE-minimal. Each task is **one session, one reason to change** (SRP) and maps to `SPEC §9.1` V3.x. Accepted standard `T1..Tn` per iteration — V2 `V2-T1..V2-T8` archived, V3 now `T1..T10` (not `T9..T18`). **All 13 ★ `SPEC §13` open questions resolved binding 2026-08-23 Sr. Principal review (Q3/Q9/Q27/Q28/Q32f/Q39-Q47) — `open_questions.md:11` header; no ★ blocks V3 kickoff.**
 
 ## V3 documentation map (T-map, R9) — to be filled per task
 
@@ -77,7 +77,7 @@ Pure-redesign iteration (no new FRs). Priority order **redesign-first** (foundat
 
 ## T2: `CompositeKey` + `TranslateContext` + `DrawContext` skeletons (SPEC §10.1, §10.4, §11.4 — V3.2a)
 
-**D** — Land the cross-cutting skeletons **before any cached mapper**: `CompositeKey{Version,LayoutId,Id,Gen,Hash}` type (hash of stable bytes, not pointer), `TranslateContext{viewPlane,view,volumeModel,dims,meshBounds}` minimal struct (ISP — not God `ReView*`), and `DrawContext{Viewport,ClearColor,Depth,Blend,spy}` instance replacing `core/draw.cpp` static cache (SRP — per `FrameContext`, not global). All three are value types, header-only, no behavior change yet — they unblock `T3`/`T5`/`T6`.
+**D** — Land the cross-cutting skeletons **before any cached mapper**: `CompositeKey{Version,LayoutId,Id,Gen,Hash}` type (hash of stable bytes, not pointer), `TranslateContext{ViewContext{viewPlane,viewMatrix,projMatrix}, optional<VolumeContext{volumeModel,dims,voxelSpacing,meshBounds}>}` ISP-segregated (Q40:B — not flat `viewPlane+view+volumeModel` fat, not God `ReView*`), and `DrawContext{Viewport,ClearColor,Depth,Blend,spy}` instance per `FrameContext` replacing `core/draw.cpp` static `invalidateDrawCache()` global (SRP via instance — Q43:B). All three are value types, header-only, no behavior change yet — they unblock `T3`/`T5`/`T6`.
 
 **T** — suite green + audit green: `CompositeKey` equality/hash stable; `TranslateContext` with null `viewPlane` valid for 3D (LSP — `hasPlane()`); `DrawContext` per-frame `setViewport(cached)` spy shows exactly 1 `glViewport` for duplicate call (replaces global `invalidateDrawCache()` — N>=1).
 
