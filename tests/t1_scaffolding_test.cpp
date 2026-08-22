@@ -59,11 +59,12 @@ TEST(T1Scaffolding, OffscreenContextIsGl46Core) {
 // ---------------------------------------------------------------------------
 TEST(T1Scaffolding, GateEnvironmentSourced) {
     // AUDIT_SOURCE_DIRS must equal the project's non-default layout (SPEC S8),
-    // including the utils/ module added in V2.1.
+    // including the utils/ module added in V2.1 and the scene/broker modules
+    // added in V3 (SPEC §3).
     const char* auditDirs = std::getenv("AUDIT_SOURCE_DIRS");
     ASSERT_NE(auditDirs, nullptr) << "AUDIT_SOURCE_DIRS is unset. Launch with: "
                                      "source tools/env.sh (SPEC S8, R15).";
-    EXPECT_STREQ(auditDirs, "io data volume core render app utils tests");
+    EXPECT_STREQ(auditDirs, "io data volume scene core broker render app utils tests");
 
     // LOOP_BUILD_TEST_CMD must be set (the runner uses it to run the gate).
     const char* buildCmd = std::getenv("LOOP_BUILD_TEST_CMD");

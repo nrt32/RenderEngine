@@ -5,57 +5,114 @@
 
 ## 3. Module blueprint
 
-Layer-first, not capability-first. Everything drawable is an `IRenderer`;
-views compose renderers. **MPR is app-level composition, not a module.**
+Layer-first, not capability-first. **Views compose a list of items, each item
+knows its own renderer; a View owns one `FBO` per screen section** (no
+`ViewRenderer` with `N` `FBO`s). **MPR is app-level composition, not a module.**
+**`app` data structures and the `app→RE` bridge are each their own library**
+(SPEC §10/§11).
 
 ```
 io/          loaders ONLY, no GL        (mesh/ volume/ image/)
-data/        CPU containers, no GL      (Mesh, VolumeDataset, Image, TransferFunction)
-             + GL-free typed Result<T,E> (data/result.hpp, shared by all layers)
+data/        CPU containers, no GL      (Mesh, VolumeDataset, Image)
+               + GL-free typed Result<T,E> (data/result.hpp, shared by all layers)
 volume/      pure math: dataset sampling/interp, transfer function,
-             ray-cast compositing math  <- NO GL, headless-testable
+               ray-cast compositing math  <- NO GL, headless-testable
+scene/       app-side scene description — GL-free, RE-free   (SPEC §3.1, NEW)
+               |- View { rect, clear, Camera (manipulable), optional PlaneDesc, itemIds }
+               |    Camera { pan/rotate/zoom/orbit, sends view matrix to RE }  (view.matrix = lookAt)
+               |    PlaneDesc { normal, point, Space::World|VoxelIndex } — plane lives on View, not on item
+               |- SceneObject family { MeshObject, MeshSliceObject, VolumeObject,
+               |    VolumeSliceObject, PlaneObject } — each = { asset ref, transform, presentation }
+               |- Presentation { MaterialDesc variant, VolumePresentation { VolumeMaterial+TransferFunction, stepLength, shading } }  // TF separate per §12.5 decision
+               |- LightDesc variant<Directional,Point,Spot> per-View, per-View LightConfigs — vector<LightDesc> inline default
+               |- SceneStore { stable handles + per-field generation + ContentHash per object/View/Layout } // CompositeKey{Version,LayoutId,Id,Gen,Hash}
 core/        GL foundation: GLFW context, RAII GL objects, ShaderProgram,
-             thin core::Draw API, raw-GL anchors (core::loadCoreGl,
-             core::readRgba8)           <- SOLE owner of raw GL calls
+               thin core::Draw API, raw-GL anchors (core::loadCoreGl,
+               core::readRgba8)           <- SOLE owner of raw GL calls
+               + RHI abstraction for EOL (NEW): core/rhi/ { IRHIContext, IRHIFramebuffer, IRHITexture, IRHIShader, IRHIBuffer } — core's concrete GL (GLTexture2D, GLFramebuffer, …) is ONE RHI implementation; Vulkan/Metal are drop-in replacements
+               + core/draw is façade over IRHIContext (no raw gl* outside core/rhi/gl/)
 utils/       test-support + windowing, NO raw GL (offscreen GL context via
-             GLFW/EGL, pixel reader facade) — delegates the raw parts to the
-             core/ anchors (SPEC §9 V2.1)
-render/      ONE class per rendering technique, unified IRenderer interface
-             |- IMaterial + PhongMaterial      (transparency = material property)
-             |- ITransparencyPipeline + LinkedListOIT  (swappable OIT impl)
-             |- MeshRenderer   (opaque forward pass + AUTO-engaged OIT for
-             |                  transparent materials; single mesh entry point)
-             |- SliceRenderer  (mesh-family, GEOMETRY-SHADER plane clip; GPU-only;
-             |                  reuses mesh geometry handling + materials; NO OIT in v1)
-             |- PlaneRenderer  (textured quads/planes — feeds MPR)
-             |- VolumeRenderer (ray-cast GL draw; volume/ provides the pure math)
-app/         compositions + samples + ImGui overlay
-             |- SceneView  (composes MeshRenderer + VolumeRenderer +
-             |              optional Slice/Plane)
-             |- MPRView    (composes 3x PlaneRenderer for T/C/S + 1x SceneView 3D)
-tests/       headless unit tests (consume core/ wrappers + the utils/ fixture)
+               GLFW/EGL, pixel reader facade) — delegates the raw parts to the
+               core/ anchors (SPEC §9 V2.1); utils::OffscreenContext now depends on core::IRHIContext (DIP)
+render/      ONE class per rendering technique, RE-minimal types only   (SPEC §3.2)
+               |- render::View (ReView) — one ViewTarget{IRHIFramebuffer} per screen section, list<IRenderable>, render()+present() via IRHIContext::blit (core::blit façade)
+               |- IMaterial hierarchy (render::IMaterial minimal isTransparent only → IColorMaterial/IVolumeMaterial/ILineMaterial → MeshMaterial→Phong/PBR, VolumeMaterial, SliceMaterial, ContourMaterial) — LSP/ISP fixed per §12.2
+               |- ILight variant<Directional,Point,Spot> — per-View, many per View, role-segregated — LSP/ISP fixed per §12.3
+               |- ITransparencyPipeline + LinkedListOIT (swappable OCP; per-view lifecycle owned by ReView)
+               |- MeshRenderer / SliceRenderer / PlaneRenderer / VolumeRenderer / VolumeSliceRenderer
+               |    each adds drawLayer(SceneT, Camera, targetNoClear) for View compositing; render() keeps bind+clear for tests — drawLayer depends on ITransparencyPipeline/ ILight abstractions (DIP)
+               |- ReSceneObjects { ReMeshObject{AssetHandle,ReMaterial*,model,bounds}, ... } — RE-direct types only (IRHIFramebuffer/IRHITexture via core/rhi)
+               |- IRenderable type-erased draw (concept Renderable<T>: drawLayer(camera, targetNoClear)) — OCP via View's vector<IRenderable> (new technique = new IRenderable impl, no edit to View)
+broker/      `app → RE` mediation — heavily abstracted per-type Mappers, NOT a god Translator  (SPEC §11, NEW)
+               |- IMapper<AppT,ReT> { map(const AppT&, TranslateContext) } pure; ICachedMapper<AppT,ReT> : IMapper { mapCached/invalidate } cached (ISP segregation)
+               |- Per-type: MeshObjectMapper, VolumeObjectMapper, MeshSliceObjectMapper, VolumeSliceObjectMapper,
+               |  PlaneObjectMapper, MaterialMapper (+ per-subtype PhongMapper,PBRMapper,VolumeMaterialMapper,SliceMaterialMapper,ContourMaterialMapper) via visitor,
+               |  CameraMapper, PlaneMapper (TranslateContext{volumeModel,dims,bounds}), LightMapper (+ per-subtype), TransferFunctionMapper
+               |- Broker (type_index → unique_ptr<IMapperBase>) + per-field generation/contentHash cache — OCP via registerMapper
+               |- ViewMapper (orchestrator: composes CameraMapper, PlaneMapper, per-item Mappers → ReView; single responsibility)
+               |- ViewSynchronizer (single responsibility: poll+push dirty, drive ICachedMapper::mapCached, owns CompositeKey cache)
+               |- ViewCompositor (single responsibility: renderAll()/presentAll(dst) via IRHIContext, owns ReView map LayoutId→ReView)
+               |- IViewBridge abstraction; ViewBridge : IViewBridge façade composing Synchronizer+Compositor (SRP via composition; app depends on IViewBridge — DIP)
+               |  App never holds a mapper handle; app only touches app::View / SceneStore / IViewBridge
+app/         compositions + samples + ImGui overlay — now THIN, consumes scene/ + broker/ via IViewBridge (DIP: app never includes render/ or core/ directly)
+               |- SceneView  (composes AppVolume+AppMesh per-View lists)
+               |- MPRView    (4× AppView: 3× 2D VolumeSlice+MeshSlice + 1× 3D Volume+Mesh)
+               |- AppContext { SceneStore, Broker, IViewBridge } — composition root (DIP)
+tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; broker/ and scene/ headless-translation tests too; RHI tests via utils::OffscreenContext→IRHIContext)
 ```
 
-### Design principles (SOLID)
-- **OIT is a characteristic, not a peer renderer.** Transparency lives on
-  `IMaterial`; `MeshRenderer` auto-engages the injected `ITransparencyPipeline`
-  (v1: per-pixel linked list, capture → depth-sort → composite) when any mesh's
-  material is transparent. The pipeline interface is swappable (open/closed,
-  dependency inversion) so future OIT variants need no renderer changes.
-- **Slicing is geometry, not compositing.** `SliceRenderer` is a mesh-family
-  technique using a geometry shader to clip against a plane (pure GPU). It
-  shares mesh geometry handling and the material system but does **not** use
-  OIT in v1.
-- **Stateless renderers.** `IRenderer::render(scene, camera, target)` receives
-  its data per call; renderers own only GL resources. One mesh can be drawn by
-  both SceneView and MPR views without duplication. Data lives in `data/` +
-  app-level scene structs.
-- **Dependency inversion:** renderers depend on `IMaterial` /
-  `ITransparencyPipeline` abstractions, never concrete material/OIT classes.
-- **GL ownership:** raw `glXxx(...)` calls appear ONLY under `core/` (RAII GL
-  objects + thin `core::Draw` API). `render/` draw passes, `app/`, `tests/`,
-  and `utils/` use `core/` wrappers; `utils/` additionally hosts the offscreen
-  context + pixel reader, delegating their raw parts to the `core/` anchors
-  (`core::loadCoreGl`, `core::readRgba8`). `io/`, `data/`, `volume/` are
-  GL-free. This makes the GL-ownership audit rule mechanically enforceable
-  (single-dir anchor).
+### 3.1 `scene/` — app-side scene library (GL-free, RE-free)
+
+- **Purpose:** every type an `app` author touches: `View`, `Camera` (manipulable
+  `pan/rotate/zoom/orbit` plus `viewMatrix()` that RE consumes — app sends the
+  **view matrix**, not eye/target up), `PlaneDesc` (abstract plane equation,
+  `Space::World|VoxelIndex`, lives on `View` for `2D` — item slice objects do
+  **not** carry their own plane unless an explicit per-item override is needed),
+  `MaterialDesc` hierarchy, `LightDesc` hierarchy (`Directional/Point/Spot` per
+  view, many per view), and the `SceneObject` family. No `GL`, no
+  `AssetHandle`, no `core::` types; only `glm` + `data/` + `volume/`.
+- **Naming:** types are **unprefixed** inside `re::app` — e.g. `app::MeshObject`,
+  `app::Camera`, `app::View` — the namespace **is** the prefix (your
+  requirement). `render::View` is the RE mirror (`render::ReView` alias kept for
+  grep distinctness where both are included — `translate/`).
+- **SceneStore + ViewStore:** stable `uint64_t` handles + `generation` per
+  object/view/layout, **but `id` is never the sole persistence key** (SPEC §10).
+  The store is the source of truth for `id → Object` and is page/layout-scoped
+  or global per asset visibility design (see SPEC §10.2).
+
+### 3.2 `render/` — RE-minimal types (SPEC §12)
+
+- **RE keeps only what it can directly use.** Any field that needs conversion
+  (voxel-index → world, `MaterialDesc → IMaterial`, TF → uniforms) is
+  translated. `Re*Object`s carry `AssetHandle`/`Texture3D*`/`ReMaterial*`/`model`/
+  `ClipPlane`/`ReLight[]`/`worldBounds`, not `app::MaterialDesc`.
+- **Hierarchies mirror `scene/` disposition but are RE-shaped:**
+  `render::IMaterial → MeshMaterial → {PhongMaterial,PBRMaterial}` plus
+  `VolumeMaterial/SliceMaterial/ContourMaterial` siblings (SPEC §12), and
+  `render::ILight → {DirectionalLight,PointLight,SpotLight}` per `ReView`
+  (SPEC §12). Concrete renderers (`MeshRenderer` etc.) gain `drawLayer`
+  for `ReView` list compositing; the single-item `render()` stays for direct
+  tests (regression lock).
+
+### 3.3 `broker/` — `app→RE` mediation (heavily abstracted, separate library)
+
+- **Why a separate library/folder:** like `scene/`, the broker owns no `GL` and
+  no app rendering logic — only translation + generation/contentHash cache +
+  persistence (SPEC §10). It is the only place that may include **both**
+  `scene/` and `render/` (`app/` never includes `render/`, `render/` never
+  includes `scene/`). See `docs/spec/broker.md` (SPEC §11) for the
+  `IMapper<AppT,ReT>` + `Registry` + `ViewBridge` + per-type
+  `*Mapper` inventory and the `View` contextual-plane translation rule.
+
+### Design principles (SOLID — V3 audit, EOL-hardened, web-verified 2026-08-23)
+
+- **SRP (Single Responsibility — "one actor, one reason to change"):** One actor per class/module (Martin Clean Architecture Ch.7; StackOverflow 39079694 Facade SRP tension). `ViewSynchronizer` (cache/dirty + CompositeKey; actor: persistence), `ViewCompositor` (dispatch/present + ReView map; actor: composition), and `ViewBridge` (orchestration: `sync→renderAll→presentAll` workflow; actor: coordination) are three SRP-split collaborators, not one God Facade (§11.3 SRP-1). `ViewBridge` owns no state beyond its two collaborators — its single responsibility is *orchestration*; it changes only when the workflow changes. `ViewMapper` is an orchestrator, not a God mapper: it holds `Broker::get<T>()` refs and delegates per-field to `CameraMapper/PlaneMapper/LightMapper/*ObjectMapper`, owns no cache (cache lives in `ViewSynchronizer` + `ICachedMapper` implementations — see 11.3.1). `ReView` delegates FBO lifecycle to `ViewTarget{IRHIFramebuffer}` (SRP via composition) and `ViewTarget` owns size/clear/attachment; `ReView` owns only view semantics (rect+camera+plane+lights+IRenderable list). Each `*Mapper` has one responsibility (translate one `AppT→ReT`). **SceneStore bounded context (SRP God-object guard):** `SceneStore` appears large (AssetId+gen+hash+scope) but is a single *aggregate root* per DDD bounded context (one owning team/layout, one reason to change: scene identity/lifecycle). Splitting into HandleRegistry+GenTracker+HashCache would multiply indirection without actor separation; the spec keeps one store per page with `LayoutId`-scoped arenas (§10.2/10.5) and documents the `bump(FieldId)` single entry point. Research: Clean Architecture SRP "one actor", NDepend SRP cohesion, DDD Bounded Context (Software Patterns Lexicon), God Object anti-pattern (dilankam 2024-12-07).
+- **OCP (Open/Closed — "open for extension, closed for modification", Meyer 1988):** Open for extension (new `ToonMaterial`, `AreaLight`, `PointCloudObject` = one new `*Mapper` file + one `registerMapper` call), closed for modification — achieved via `Broker` `type_index` factory registry (no `enum` switch — enum violates OCP; adding a kind edits enum+switches — see §11.3.2 PV) + `MaterialDesc`/`LightDesc` variant visitor overload set. **Variant vs polymorphic hierarchy trade-off (web-verified, binding):** `MaterialDesc`/`LightDesc`/`ReLight` use `std::variant` + `std::visit` (Here Be Braces 2020-06-26: variant is open for adding *operations* via new visitors, closed for adding *types* via variant type list; polymorphic hierarchy is opposite — open for types, closed for operations). V3 chooses *variant* because the type set is closed/small (4 materials, 3 lights, bounded per SPEC §1 non-goal Phong-only) while operations vary more (shading, culling, TF, visitor dispatch). Adding `ToonMaterial` edits the variant alias + visitor overload once (one file edit) but zero edits to existing *concrete* mapper files; the stable boundary is `Broker::registerMapper` + visitor dispatch. A future EOL with many material kinds can migrate to polymorphic `IMaterial` hierarchy without touching `ViewMapper` (OCP via factory). Research: Meyer OCP, NDepend OCP PV principle, LogRocket OCP, Here Be Braces variant vs virtuals.
+- **LSP (Liskov Substitution — "subtype preserves supertype contract; preconditions cannot be strengthened, postconditions cannot be weakened"):** `IMaterial` root holds only `isTransparent()` (V3.2.1 fix) — so `VolumeMaterial` (TF-driven) safely substitutes for `IMaterial` where `isTransparent` is queried; no `baseColor()` on volume breaks postcondition (Rectangle-Square violation per TechWayFit/Baeldung/Stackify; Wikipedia LSP history). Similarly `ILight` is marker (`kind()+isEnabled()` only), per-type data only in concrete. `IMapper<AppT,ReT>` is uniform `(AppT,TranslateContext)→ReT` so any mapper substitutes (ISP keeps preconditions weak). `IRenderer<T>` is concept-constrained `IRenderer<SceneT>` or type-erased `IRenderable` on `ReView` (V3.8) to avoid strengthened-precondition LSP break of `IRenderer::render(SceneVariant)` which would throw on wrong variant alternative (precondition strengthening). `TranslateContext` with `null viewPlane` is LSP-safe for 3D: `hasPlane()==false` keeps preconditions weak; 3D mappers ignore `viewPlane` without `UnsupportedOperation` (LSP exception rule). Renderers take *concrete* `MeshMaterial*`/`VolumeMaterial*` not downcast `IMaterial*` — avoids `dynamic_cast` LSP anti-pattern.
+- **ISP (Interface Segregation — "no client forced to depend on methods it does not use"):** No fat interface. `IMapper` (pure `map`) vs `ICachedMapper : IMapper` (`mapCached`+`invalidate`) segregation (fat `IMultiFunction` printer anti-pattern per code-note-vr ISP); `IMaterial` split into `IMaterial`/`IColorMaterial`/`IVolumeMaterial`/`ILineMaterial` (fat `Worker` anti-pattern per Baeldung/NDepend ISP); `IViewBridge` → `ISyncBridge`+`IRenderBridge` (headless sync test depends only on `ISyncBridge`). Fixes: `PlaneMapper` (stateless) implements only `IMapper` — not forced to carry `invalidate`; `VolumeMaterial` not forced to carry `baseColor`. **TranslateContext ISP (V3.2a patch):** the single `TranslateContext{viewPlane,view,volumeModel,dims,meshBounds}` is *cohesive* for slice mapping (plane+volume+mesh share one 2D→3D context) but to avoid fat-context ISP violation it is composed of two role structs: `ViewContext{viewPlane, viewMatrix}` (needed by every mapper) + optional `VolumeContext{volumeModel,dims,voxelSpacing}` (only where `Space::VoxelIndex→world` conversion is needed — `PlaneMapper`/`VolumeSliceObjectMapper`). Mappers take `const TranslateContext&` but touch only their role; `PlaneMapper` depending on `volumeModel` is *not* forced to depend on `lights/items` (unlike God `ReView*`). Documented as §11.4.1 ISP-segregated minimal struct; future `NormalizedDevice` space adds `SpaceConverter` extension, not scatter.
+- **DIP (Dependency Inversion — "high-level policy owns abstraction; details depend on abstraction; abstractions not dependent on details"):** High-level policy (`scene/` values + `broker/` orchestration) owns `IMapper`/`IViewBridge`/`TranslateContext` interfaces; low-level details (`render/` concrete `Re*Object`, `core/` GL) implement via adapters/factories. `app` depends on `IViewBridge` abstraction injected from `AppContext` composition root, never on concrete `ViewBridge` or `render/`/`core/`. `render/` draw passes depend on `IMaterial`/`ILight`/`ITransparencyPipeline` abstractions, never concrete `PhongMaterial`/`LinkedListOIT` (Baeldung DIP, Wikipedia DIP, c2 DIP; Oleksii Tymoshchenko 2026-01-15: "policy owns interface, detail implements"). `core/rhi/IRHI*` is the stable RHI abstraction owned by `core/rhi/` (policy); `core/rhi/gl/` and future `core/rhi/vulkan/` are interchangeable `IRHIContext` implementations — DIP inverts the graphics-API dependency (one audit anchor, OCP for Vulkan/Metal). **Broker ↔ render DIP (anti-corruption layer, binding):** `broker/` is the *only* library that may include both `scene/` and `render/` headers (SPEC §3/§11). It depends on concrete `ReMeshObject` type names for `IMapper<AppT,ReT>` template instantiation, but this is an *ACL* (anti-corruption layer), not a DIP violation of the policy → detail arrow: `broker/` *defines* `IMapperBrokerConcept` (the mapper contract + `TranslateContext`); `render/` provides concrete `ReT` types that *satisfy* the concept via factory registration (`Broker::registerMapper<AppT,ReT>(make_unique<ConcreteMapper>())`). The dependency direction is `broker` *knows* `ReT` names but `ReT` construction is via `Broker` factory — the stable abstraction (`IMapper` interface + `Broker` registry) lives in `broker/`; `render/` does not depend on `broker/` internals beyond the concept. Alternative pure inversion (broker defines `RenderableHandle` opaque handle, render maps handle) is deferred to EOL IRHI migration where `IRHIFramebuffer/IRHITexture` opaque handles replace `Re*Object` concrete.
+- **OIT is a characteristic, not a peer renderer.** Transparency lives on `IColorMaterial`/`IMaterial::isTransparent`; `MeshRenderer` auto-engages the injected `ITransparencyPipeline` via `ReView::needsOIT` (derived from material flags) when any mesh's material is transparent. The pipeline interface is swappable (OCP/DIP) so future OIT variants (`PerPixelWeightedOIT`, `AdaptiveOIT`) are new `ITransparencyPipeline` impls, no renderer edits. Pipeline is per-`ReView`, not global (future EOL: adaptive quality per view). The `ITransparencyPipeline::begin/end` may dispatch via `IJobExecutor` (see NFR §5) — pipeline owns no thread, executor is injected (DIP).
+- **Slicing is geometry, not compositing.** `SliceRenderer` is a mesh-family technique using a geometry shader to clip against a plane (pure GPU). It shares mesh geometry handling and the material system but does **not** use OIT in v1; `View::plane` presence is the 2D/3D discriminator, not a material flag (SRP). Capability `IRHIContext::capabilities().geometryShader==false` degrades to CPU clipping + `MeshRenderer` fallback (see NFR §5 RHI capability contract, §13 Q32).
+- **Stateless renderers with `drawLayer` + type-erased `IRenderable` (OCP/EOL).** `IRenderer::render(scene,camera,target)` still receives its data per call and owns only GL resources, but `ReView` composites a **list** `vector<IRenderable>` where `IRenderable` is a type-erased draw (`ITypeErasedDraw{virtual void drawLayer(const Camera&, IRHIFramebuffer&, DrawContext&)=0}` — header `render/i_renderable.hpp` — vs `std::function<void(...)>` alternative rejected for `std::function`'s per-draw allocation + lack of `AssetRegistry*` ownership). Each renderer adds `drawLayer(SceneT,Camera,targetNoClear,DrawContext&)` that assumes `ReView` already `bind+setViewport+clear`; the single-item `render()` keeps its own `clear` for direct tests. No second layer ever `clear`es away the first. `ReView::addItem<SceneT>(SceneT)` enforces `requires Renderable<SceneT>` at `addItem` time (compile-fail) per §13 Q38 — runtime `Broker::get` typed error only for the untyped `addItemVariant` legacy path. **EOL:** new technique `PointCloudRenderer` adds `PointCloudRenderable : IRenderable` — OCP, no edit to `ReView`.
+- **RHI ownership & EOL sustainment (web-verified):** raw `glXxx(...)` calls appear ONLY under `core/rhi/gl/` (RAII GL objects + thin `core::Draw` façade over `IRHIContext`). `render/` draw passes, `app/`, `tests/`, `utils/`, **and `broker/`** use `core/` `IRHI*` wrappers (broker forwards through `render/` helpers, never calls `gl*` directly); `utils/` additionally hosts the offscreen context + pixel reader, delegating raw parts to the `core/rhi/` anchors (`core::loadCoreGl`, `core::readRgba8` remain anchors until IRHI migration). `io/`, `data/`, `volume/`, `scene/` are GL-free. This single-dir RHI anchor both enforces `gpu_api_ownership` mechanically (audit `forbid_outside core/rhi/gl|`) and preserves OCP for a Vulkan/Metal/WebGPU port: adding `core/rhi/vulkan/` = new `IRHIContext` impl, **zero** edits to `render/`/`broker`/`app`. Concrete `IRHIContext` surface (binding, §13 Q31): `{createTexture2D/createTexture3D/createFramebuffer/createBuffer/createShader, setViewport/setClearColor/enableDepth/enableBlend, drawElements/dispatchCompute, blit(src,dst,filter), memoryBarrier, capabilities()->Caps, getError()→Result}` — one per API concept; `IRHIShaderDesc{ stages, SPIRV|GLSL, defines, entryPoint}` so Vulkan ingests SPIR-V without GLSL→SPIR-V recompilation (Qt QRhi / O3DE RHI / Adept RHI design). GLSL single-language until `core/rhi/` lands (SPEC §8 `RE_GLSL_VERSION`); cross-compilation via SPIRV-Cross is allowed as preprocessing step, not runtime. Future capability queries (`IRHIContext::capabilities().geometryShader`, `.ssboAtomics`, `.maxTexture2DSize`, `.bindlessTextures`) allow graceful degradation (see §13 EOL-4, Q32).
+- **Persistence (EOL cache-key versioning):** `id` is a handle, not a key (SPEC §10); `ReView`/`Re*Object` persist by `CompositeKey{Version,LayoutId,ViewId,Type,Generation,ContentHash}` where `Version` is schema/asset version (SHA-256 of stable bytes, hash at load time not per-frame — System Overflow cache-key design, Dev Genius 2025-12-25 "version your cache keys to survive rolling deployments"). A `Camera::rotate` dirties only `CameraMapper` (per-field `viewGen`), not `MaterialMapper` — per-field generations, not per-object dumps. `broker/` `ViewSynchronizer` is the *only* layer that holds the generation caches (`Broker` holds mapper registry, not generation cache — SRP split, see §11.3). Schema `Version` bump (spec/asset hash change) invalidates entire cache via `Version` prefix; hierarchical key `Version:LayoutId:Type:Hash` enables granular invalidation without full flush. `generation` is `uint64_t` with `!=` wrap-safe equality (documented for EOL, §10.4).

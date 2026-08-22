@@ -36,8 +36,23 @@ project.
 
 ## 6. Namespaces
 - One namespace per module under root namespace `re`:
-  `re::io::`, `re::data::`, `re::volume::`, `re::core::`, `re::render::`,
-  `re::app::`.
+  `re::io::`, `re::data::`, `re::volume::`, `re::scene::`, `re::core::`,
+  `re::broker::`, `re::render::`, `re::app::`.
+- **`scene/` naming:** types inside `re::app::` carry **no `App` prefix**
+  (`app::MeshObject`, `app::Camera`, `app::View` — the namespace **is** the
+  prefix). The RE mirror in `re::render::` uses `Re` where needed for grep
+  distinctness (`ReMeshObject`, `ReView`) or keeps `render::` qualification
+  where both are included (only `broker/` includes both).
+- **`broker/` naming:** per-type translators are **`Mapper<AppT,ReT>`**
+  (`IMapper` interface, `Broker` registry, `ViewBridge` façade — see
+  `docs/spec/broker.md` SPEC §11 for the naming table). Aliases `Binder`,
+  `Exchange`, `Adapter`, `Converter`, `Synchronizer` are recorded as
+  alternatives but **one** name is chosen on the implementing branch and
+  bulk-updated.
+- **`render/` naming:** material hierarchy is
+  `IMaterial → MeshMaterial/VolumeMaterial/SliceMaterial/ContourMaterial → PhongMaterial/PBRMaterial`
+  (SPEC §12); light hierarchy is `ILight → DirectionalLight/PointLight/SpotLight`
+  per-`View` (many per `View`).
 
 ## 7. Formatting & hygiene
 - clang-format enforced; 4-space indent; 80-column soft limit.

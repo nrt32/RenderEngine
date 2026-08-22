@@ -19,12 +19,17 @@
   `GIT_TAG` (SPEC §2). Build+test gate uses CMake; the loop MUST be launched
   with `source tools/env.sh` first (exports `LOOP_BUILD_TEST_CMD` +
   `AUDIT_SOURCE_DIRS`, SPEC §8).
-- **Layout:** `io/` `data/` `volume/` `core/` `utils/` `render/` `app/`
-  `tests/`. Because this differs from the audit default source dirs, the loop
-  MUST be launched with `source tools/env.sh` (sets `AUDIT_SOURCE_DIRS="io
-  data volume core render app utils tests"`) or the ownership/forbidden audit
-  rules in `tools/audit.rules` will not see the source files. (audit.sh:42
-  default is `src include lib engine tests app`.)
+- **Layout:** `io/` `data/` `volume/` `scene/` `core/` `broker/` `utils/`
+  `render/` `app/` `tests/`. `scene/` is the GL/RE-free app-side scene
+  description library (View, Camera, SceneObject, Material/Light descs — no
+  `App` prefix, the namespace is the prefix) and `broker/` is the heavily
+  abstracted per-type `scene → render` mediation library (`IMapper<AppT,ReT>`
+  per file, `ViewBridge` façade — app never holds a mapper handle)
+  (SPEC §3/§11). Because this differs from the audit default source dirs, the
+  loop MUST be launched with `source tools/env.sh` (sets `AUDIT_SOURCE_DIRS="io
+  data volume scene core broker render app utils tests"`) or the ownership/
+  disposition audit rules in `tools/audit.rules` will not see the new `scene/`
+  + `broker/` files. (audit.sh:42 default is `src include lib engine tests app`.)
 - **Guardrails:** see `tools/audit.rules` (raw GL calls ONLY under core/ via
   RAII objects + core::Draw API; render/app/tests use core/ wrappers; `utils/`
   holds the offscreen context + pixel reader and delegates to the core/ raw-GL

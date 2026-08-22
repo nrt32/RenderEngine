@@ -37,10 +37,13 @@ no_secrets	forbid_grep	(api[_-]?key|password|secret)\s*=\s*["'][A-Za-z0-9+/]{12,
 deps_pinned	require_grep	FetchContent_Declare\([^)]*GIT_TAG	dependencies must be pinned via FetchContent GIT_TAG
 deps_pinned_no_branch	forbid_flag	GIT_TAG\s+["']?(master|main|HEAD|develop)\b	dependencies must pin a release tag or commit SHA, never a branch name
 
-# --- GL ownership: raw GL calls ONLY under core/ (RAII + core::Draw API) -------
-# render/, app/, and tests/ must go through core/ wrappers; io/, data/,
-# volume/ are GL-free. Single-dir anchor (forbid_outside supports one dir).
-gpu_api_ownership	forbid_outside	core|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/
+# --- GL ownership & RHI: raw GL calls ONLY under core/rhi/gl/ via IRHIContext (SPEC §3/§6 EOL) -------
+# render/, app/, tests/, broker/, scene/, and utils/ must go through core/rhi/ wrappers (IRHIContext); io/, data/, volume/ are GL-free.
+# V3 tightens the anchor: raw gl* must be confined to core/rhi/gl/ (one RHI impl); core/ outside that (e.g., core/window.cpp, core/load_core_gl.cpp keep their probes) is now allow-listed as anchor; todo: after V3.2a RHI lands, switch this to `core/rhi/gl|` anchor.
+# For incremental migration, the gate keeps `core|` anchor until core/rhi/gl/ exists — `rhi_ownership` is the V3 hard anchor.
+gpu_api_ownership	forbid_outside	core|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/ (until core/rhi/gl/ lands, then tightens to core/rhi/gl/)
+# rhi_ownership	forbid_outside	core/rhi/gl|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/rhi/gl/ via IRHIContext (enable when core/rhi/ exists; SOLID DIP + OCP for Vulkan)
+# New audit anchor: no raw gl* outside core/ at all (already covered) AND no core/rhi/gl/*.hpp include outside broker/render/core (DIP — scene/io/data/volume may never include RHI)
 
 # --- Legacy fixed-function API must never appear anywhere ----------------------
 # glBegin is word-boundary anchored so the legacy immediate-mode entry point
@@ -59,6 +62,42 @@ no_raw_diagnostics	forbid_grep	std::cout|std::cerr|\bprintf\(	logging discipline
 # --- Asset licensing: every dataset dir must carry a LICENSE file --------------
 # (grep is a floor; the T2 gate enforces one LICENSE per dataset dir)
 assets_licensed	require_grep	LICENSE	at least one LICENSE present (floor); per-dataset-dir LICENSE enforced by T2 gate (SPEC section 7)
+
+# --- Disposition / layer isolation (SPEC §3/§6) ----------------------------------
+# scene/ is RE-free + GL-free; render/ never includes scene/; broker/ is the
+# only library that may include both scene/ and render/.
+# scene/ may include data/ + volume/ + glm only — never render/ or core/ GL.
+# NOTE: enforced after V3.1 lands (scene/ + broker/ created); until then the
+# concrete forbid is review-only to avoid false positives on docs/examples.
+# disposition_scene	forbid_grep	#include.*render/	re::app/scene must never include render/ (broker owns the mediation)
+# disposition_render	forbid_grep	#include.*scene/	re::render must never include scene/ (broker owns the mediation)
+
+# --- Broker mediation: one file per mapper + ISP segregation (SPEC §11 SOLID) ----------
+# The broker/ mediation is heavily abstracted — one IMapper<AppT,ReT> (pure) or ICachedMapper<AppT,ReT> per file
+# (camera_mapper, plane_mapper, *material_mapper, *object_mapper, view_bridge, view_synchronizer, view_compositor).
+# IMapper vs ICachedMapper is ISP segregation: a pure mapper must not expose mapCached/invalidate (fat interface).
+# A single header that defines translate/mapper for more than one AppT is forbidden. ViewBridge is a SRP-split coordinator
+# (ViewSynchronizer + ViewCompositor), not a God mapper.
+# This floor rule greps for two distinct "Mapper" class names in one file; the review gate enforces the full one-file-per-type policy.
+# broker_per_type	forbid_grep	class.*Mapper.*\n.*class.*Mapper	broker/ must be one IMapper/ICachedMapper per file (heavily abstracted per-type mappers, ISP-segregated; ViewBridge is coordinator)
+# isp_mapper_forbid	forbid_grep	class\s+\w+Mapper\s*:\s*public\s+IMapper[^{]*\{[^}]*mapCached	IMapper must not expose mapCached (ISP — use ICachedMapper)
+# srp_viewbridge	forbid_grep	class\s+ViewBridge[^{]*\{[^}]*(sync|renderAll|presentAll)[^}]*sync[^}]*renderAll[^}]*presentAll.*\{	(optional RHI review check — ViewBridge should delegate to ViewSynchronizer/ViewCompositor, not own both caches)
+
+# --- Persistence: never id-only or size-dump sync (SPEC §10) -----------------
+# See SPEC §10.1 — CompositeKey{LayoutId,Id,Gen,Hash}, not bare id/size.
+# Mechanical floor (recreateAll/dumpAll) is review-only until V3.5 lands.
+# no_dump_sync	forbid_grep	recreateAll|dumpAll	never use id-only or size-dump recreate-all sync (use generation/contentHash cache)
+
+# --- RE-minimal / asset indirection (SPEC §7/§12) ---------------------------
+# render/re_scene must not store verbatim copies of data::Mesh voxels/positions or
+# data::VolumeDataset voxels — only derived handles (AssetHandle, Texture3D*, ReMaterial*).
+# Review-only until V3.1/V3.6 create render/re_scene/.
+# asset_indirection	forbid_grep	data::Mesh.*positions|data::VolumeDataset.*voxels	render/re_scene must not store verbatim app asset data (RE-minimal, use handles)
+
+# --- Broker app-reach rule (SPEC §11) ---------------------------------------
+# app/ must not hold a broker mapper handle directly (must go through ViewBridge).
+# Review-only until V3.2 ViewBridge lands.
+# broker_app_reach	forbid_grep	broker.*IMapper|broker.*Mapper.*translate	app must not hold a broker mapper handle directly (use ViewBridge façade)
 
 # --- Build hygiene (generic, reinforce here) -----------------------------------
 # (built-in checks already cover warning-suppression flags/pragmas)
