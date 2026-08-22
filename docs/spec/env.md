@@ -36,7 +36,7 @@
   set explicitly). `tools/env.sh` sets it to `tools/configure.sh && cmake
   --build build -j$(nproc) && ctest --test-dir build --output-on-failure`,
   i.e. conditional configure + incremental build + full suite.
-- `AUDIT_SOURCE_DIRS="io data volume core render app tests"` — required for
+- `AUDIT_SOURCE_DIRS="io data volume core render app utils tests"` — required for
   audit ownership rules to see our non-default layout.
 
 ### Convenience scripts (tools/)
@@ -75,14 +75,39 @@ truth.
   — the portable level that compiles on both llvmpipe and d3d12. GLSL 460 remains
   the target for hardware-driven sample shaders on the native d3d12 path.
 - **Leak-gate driver is llvmpipe, not d3d12.** The native d3d12 driver
-  `dlclose()`s its closed DSOs (`libd3d12core`, `libdxcore`, `libnvwgf2umx`,
-  `/dev/zero` pages) before LeakSanitizer attributes leaks, so attribution is
-  nondeterministic and its ~66 KB driver pool surfaces as `<unknown module>`,
-  which cannot be suppressed without also masking real engine leaks (an
-  allocation made from an `lp::` frame is still reported). The leak gate
-  therefore runs on `GALLIUM_DRIVER=llvmpipe` (driver DSOs stay mapped;
-  attribution is stable), where only third-party windowing/runtime allocations
-  are suppressed. The T1 gate asserts the 4.6-core target on that llvmpipe env
-  via `MESA_GL_VERSION_OVERRIDE=4.6`.
-- Tests create an offscreen GL context (hidden GLFW window; EGL-surfaceless
-  fallback) so the gate never needs a display.
+   `dlclose()`s its closed DSOs (`libd3d12core`, `libdxcore`, `libnvwgf2umx`,
+   `/dev/zero` pages) before LeakSanitizer attributes leaks, so attribution is
+   nondeterministic and its ~66 KB driver pool surfaces as `<unknown module>`,
+   which cannot be suppressed without also masking real engine leaks (an
+   allocation made from an `lp::` frame is still reported). The leak gate
+   therefore runs on `GALLIUM_DRIVER=llvmpipe` (driver DSOs stay mapped;
+   attribution is stable), where only third-party windowing/runtime allocations
+   are suppressed. The T1 gate asserts the 4.6-core target on that llvmpipe env
+   via `MESA_GL_VERSION_OVERRIDE=4.6`.
+- Tests create an offscreen GL context (hidden GLFW window; per-OS no-display
+   fallback — see below) so the gate never needs a display.
+
+### Offscreen context backend selection (utils::OffscreenContext, SPEC §9 V2.2)
+
+`utils::OffscreenContext::create()` always tries the hidden GLFW window first
+(primary on every OS). When no display server is available the no-display
+fallback is chosen **deterministically at compile time via platform macros**
+(SPEC §9 V2.2; replaces the former Mesa-only `EGL_PLATFORM_SURFACELESS_MESA`
+hardcode). The selection is exposed for testing through
+`OffscreenContext::platformNoDisplayBackend()` — the same constant controls the
+actual fallback path in `utils/offscreen_context.cpp`.
+
+| OS | Primary (always tried) | No-display fallback (when GLFW fails) |
+|---|---|---|
+| **Linux** | GLFW hidden window (1×1, GL 4.6 core) | **EGL surfaceless** via `EGL_PLATFORM_SURFACELESS_MESA` (Mesa/llvmpipe) |
+| **Windows** | GLFW hidden window (1×1, GL 4.6 core) | **ANGLE-EGL** (EGL via ANGLE) or **WGL** no-display (native) — deterministic primary is `Wgl` |
+| **macOS** | GLFW hidden window (1×1, GL 4.6 core) | **CGL** (Core OpenGL) no-display |
+
+On Linux the path is unchanged: the EGL-surfaceless backend creates a GL 4.6
+core context (the llvmpipe `MESA_GL_VERSION_OVERRIDE=4.6` override still reports
+4.6; the probe via `core::loadCoreGl` asserts `major==4 && minor==6 && core
+profile`). The per-OS factory keeps the `EGL_PLATFORM_SURFACELESS_MESA` token
+scoped to the Linux build, while Windows and macOS builds compile their
+respective WGL/CGL/ANGLE-EGL paths. The gate `T5` asserts that
+`platformNoDisplayBackend()` equals the expected enum for the macros active on
+the build host and that the llvmpipe context is still GL 4.6 core.

@@ -1,16 +1,18 @@
 // utils/offscreen_context.cpp — offscreen GL 4.6 core context implementation
 // (moved from core/ by V2.1, SPEC §9: test-support + windowing live in utils/;
 // raw GL stays under core/ — GL entry-point loading and the version/profile
-// probe are delegated to core::loadCoreGl).
+// probe are delegated to core::loadCoreGl; extended by V2.2 to pick the
+// no-display backend per-OS).
 
 #include "utils/offscreen_context.hpp"
 
 #include <cstdint>
+#include <string>
 
-// GLFW is the primary context-creation backend.
+// GLFW is the primary context-creation backend (every OS).
 #include <GLFW/glfw3.h>
 
-// EGL surfaceless is the no-display fallback.
+// EGL surfaceless is the no-display fallback on Linux (Mesa).
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <spdlog/spdlog.h>
@@ -68,6 +70,21 @@ OffscreenContext::~OffscreenContext() {
     release();
 }
 
+const char* OffscreenContext::backendName(ContextBackend backend) noexcept {
+    switch (backend) {
+        case ContextBackend::Glfw:
+            return "GLFW";
+        case ContextBackend::Egl:
+            return "EGL";
+        case ContextBackend::Wgl:
+            return "WGL";
+        case ContextBackend::Cgl:
+            return "CGL";
+        default:
+            return "unknown";
+    }
+}
+
 void OffscreenContext::release() noexcept {
     if (backend_ == ContextBackend::Glfw && window_ != nullptr) {
         glfwMakeContextCurrent(nullptr);
@@ -81,19 +98,60 @@ void OffscreenContext::release() noexcept {
         eglTerminate(static_cast<EGLDisplay>(eglDisplay_));
         eglDisplay_ = nullptr;
         eglContext_ = nullptr;
+    } else if ((backend_ == ContextBackend::Wgl ||
+                backend_ == ContextBackend::Cgl) &&
+               eglContext_ != nullptr) {
+        // WGL/CGL stubs on this host allocate no native handle; clear the
+        // placeholder so move semantics remain idempotent.
+        eglDisplay_ = nullptr;
+        eglContext_ = nullptr;
     }
 }
 
 data::Result<OffscreenContext> OffscreenContext::create() {
-    // Prefer GLFW; fall back to EGL-surfaceless on failure (e.g. no display).
+    // Prefer GLFW (hidden window) on every OS; the no-display fallback is
+    // chosen deterministically per-OS (SPEC §9 V2.2) and must not hardcode the
+    // Mesa-only `EGL_PLATFORM_SURFACELESS_MESA` path on other platforms.
     auto glfwResult = createGlfw();
     if (glfwResult.ok()) {
         return glfwResult;
     }
+    spdlog::warn("offscreen context: GLFW backend failed ({}); trying {} fallback",
+                 glfwResult.error().message,
+                 backendName(platformNoDisplayBackend()));
+    return createPlatformFallback();
+}
+
+data::Result<OffscreenContext> OffscreenContext::createPlatformFallback() {
+#if defined(__APPLE__)
+    spdlog::warn("offscreen context: no-display fallback is CGL (macOS)");
+    return createCgl();
+#elif defined(_WIN32) || defined(_WIN64)
     spdlog::warn(
-        "offscreen context: GLFW backend failed ({}); trying EGL-surfaceless",
-        glfwResult.error().message);
+        "offscreen context: no-display fallback is ANGLE-EGL/WGL (Windows)");
+    // Prefer ANGLE-EGL (still EGL) where the runtime is present; fall back to
+    // WGL. On this (Linux) host both will report not-available, but the
+    // branching proves the selection is per-OS.
+    auto angle = createEgl();
+    if (angle.ok()) {
+        return angle;
+    }
+    return createWgl();
+#else
+    spdlog::warn(
+        "offscreen context: no-display fallback is EGL-surfaceless (Linux/Mesa)");
     return createEgl();
+#endif
+}
+
+data::Result<OffscreenContext> OffscreenContext::createWgl() {
+    return data::makeError<OffscreenContext>(
+        11, "WGL fallback: not available on this host (Windows-only)");
+}
+
+data::Result<OffscreenContext> OffscreenContext::createCgl() {
+    return data::makeError<OffscreenContext>(
+        12, "CGL fallback: not available on this host (macOS-only)");
 }
 
 data::Result<OffscreenContext> OffscreenContext::createGlfw() {

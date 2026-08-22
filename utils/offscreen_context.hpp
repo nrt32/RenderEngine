@@ -1,7 +1,8 @@
 #pragma once
 
 // utils/offscreen_context.hpp — offscreen OpenGL 4.6 core context for headless
-// unit tests (SPEC §2, T1; moved to utils/ by V2.1, SPEC §9).
+// unit tests (SPEC §2, T1; moved to utils/ by V2.1, SPEC §9; extended by
+// V2.2 to select the no-display backend per-OS).
 //
 // utils/ is the test-support + windowing home: GLFW/EGL context creation and
 // pixel readback are not core rendering. utils/ is NOT the owner of raw GL
@@ -23,9 +24,19 @@ struct GLFWwindow;
 namespace re::utils {
 
 /// Backend that actually created the context (for diagnostics / tests).
+///
+/// The no-display fallback is selected deterministically per-OS (SPEC §9 V2.2):
+/// - Linux: `Egl` (EGL surfaceless via `EGL_PLATFORM_SURFACELESS_MESA`, Mesa).
+/// - Windows: `Wgl` with an `Egl`-based ANGLE-EGL alternative where available.
+/// - macOS: `Cgl` (CGL / Core OpenGL).
+/// `Glfw` is the always-tried primary (hidden window) on every OS; the
+/// no-display backend is only used when GLFW cannot create a context (no
+/// display server).
 enum class ContextBackend {
-    Glfw, ///< Hidden GLFW window + GL 4.6 core context.
-    Egl,  ///< EGL-surfaceless GL 4.6 core context (no display available).
+    Glfw, ///< Hidden GLFW window + GL 4.6 core context (primary on every OS).
+    Egl,  ///< EGL-surfaceless (Linux Mesa) or ANGLE-EGL (Windows) fallback.
+    Wgl,  ///< WGL no-display fallback (Windows).
+    Cgl,  ///< CGL no-display fallback (macOS).
 };
 
 /// A RAII-managed offscreen OpenGL 4.6 core context.
@@ -76,6 +87,27 @@ class OffscreenContext {
         return info_.isCoreProfile();
     }
 
+    /// The no-display backend this platform would use when GLFW cannot create
+    /// a context. Deterministic per-OS (SPEC §9 V2.2): EGL-surfaceless on Linux,
+    /// ANGLE-EGL/WGL on Windows, CGL on macOS. Exposed for testing and
+    /// diagnostics so the selection can be asserted without needing a display.
+    static constexpr ContextBackend platformNoDisplayBackend() noexcept {
+#if defined(__APPLE__)
+        return ContextBackend::Cgl;
+#elif defined(_WIN32) || defined(_WIN64)
+        // Windows prefers ANGLE-EGL where available; WGL is the secondary
+        // no-display path. The deterministic primary is reported as Wgl so the
+        // enum distinguishes it from the Linux EGL-surfaceless path.
+        return ContextBackend::Wgl;
+#else
+        // Linux (and other Unix): Mesa EGL surfaceless.
+        return ContextBackend::Egl;
+#endif
+    }
+
+    /// Human-readable name for a ContextBackend (for logs / diagnostics).
+    static const char* backendName(ContextBackend backend) noexcept;
+
    private:
     explicit OffscreenContext(ContextBackend backend) noexcept;
 
@@ -86,6 +118,9 @@ class OffscreenContext {
 
     static data::Result<OffscreenContext> createGlfw();
     static data::Result<OffscreenContext> createEgl();
+    static data::Result<OffscreenContext> createWgl();
+    static data::Result<OffscreenContext> createCgl();
+    static data::Result<OffscreenContext> createPlatformFallback();
 
     GLFWwindow* window_{nullptr};
     void* eglDisplay_{nullptr};

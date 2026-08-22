@@ -12,6 +12,7 @@ add_executable(${RE_TEST_TARGET}
     t3_core_gl_test.cpp
     t4_io_data_test.cpp
     t4_v2_utils_test.cpp
+    t5_v2_platform_backend_test.cpp
     t5_volume_test.cpp
     t6_volume_math_test.cpp
     t7_render_mesh_test.cpp
