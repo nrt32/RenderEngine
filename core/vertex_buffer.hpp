@@ -24,7 +24,7 @@ enum class BufferUsage {
 /// RAII wrapper for a GL vertex buffer object (VBO, GL_ARRAY_BUFFER).
 ///
 /// Movable but not copyable; the GL object is deleted on destruction. Requires
-/// a current GL context (provided by core::OffscreenContext in tests).
+/// a current GL context (provided by utils::OffscreenContext in tests).
 class VertexBuffer {
    public:
     /// Create a VBO (glGenBuffers). Returns an error if no GL context is

@@ -11,13 +11,21 @@ the GL-ownership audit rule mechanically enforceable.
 
 ## Components
 
-### Offscreen GL context
+### Raw-GL anchors
 
-`core::OffscreenContext` (T1) creates a hidden GLFW window + GL 4.6 core
+The offscreen GL context itself moved to `utils/` in V2.1 (SPEC §9):
+`utils::OffscreenContext` (T1) creates a hidden GLFW window + GL 4.6 core
 context, falling back to an EGL-surfaceless context when no display is
-available. The version/profile are probed via `glGetIntegerv` (not the
-unreliable `glGetString` text) and surfaced through the wrapper. Unit tests get
-one shared context via the `tests/` fixture. See `offscreen_context.hpp`.
+available. What stays in `core/` are the **raw-GL anchors** the context (and
+`core::Window`) delegate to:
+
+- `core::loadCoreGl` — loads GL entry points (glad) and probes the
+  version/profile via `glGetIntegerv` (not the unreliable `glGetString` text);
+- `core::readRgba8` — the raw pixel-readback anchor (SPEC §6,
+  `no_production_readback`), surfaced to tests via `utils::PixelReader`.
+
+Unit tests get one shared context via the `tests/` fixture (see
+`utils/offscreen_context.hpp`).
 
 ### GL error state
 

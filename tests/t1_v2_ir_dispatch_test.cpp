@@ -25,7 +25,7 @@
 //       typed error (SPEC §5, no exceptions), never a crash.
 //
 // Per the GL-ownership + readback guardrails this file uses ONLY core/
-// wrappers (including core::readRgba8 for pixel readback) — no raw glXxx calls.
+// wrappers (including utils::PixelReader for pixel readback) — no raw glXxx calls.
 
 #include <gtest/gtest.h>
 
@@ -41,7 +41,7 @@
 
 #include "core/framebuffer.hpp"
 #include "core/gl_error.hpp"
-#include "core/read_pixels.hpp"
+#include "utils/pixel_reader.hpp"
 #include "core/texture2d.hpp"
 #include "data/image.hpp"
 #include "data/mesh.hpp"
@@ -237,7 +237,8 @@ std::vector<std::uint8_t> dispatchAndReadPixel(render::IRenderer& renderer,
     EXPECT_TRUE(result.ok()) << result.error().message;
 
     std::vector<std::uint8_t> pixels;
-    auto read = core::readRgba8(x, y, 1u, 1u, pixels);
+    re::utils::PixelReader reader;
+    auto read = reader.read(x, y, 1u, 1u, pixels);
     EXPECT_TRUE(read.ok()) << read.error().message;
     EXPECT_EQ(pixels.size(), 4u);
     return pixels;

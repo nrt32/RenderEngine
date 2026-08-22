@@ -5,7 +5,9 @@
 // Guardrail no_production_readback: raw readback calls (glReadPixels) live
 // ONLY under core/, consumed by tests to verify rendered output (SPEC §6).
 // This wrapper reads RGBA8 pixels from the currently-bound read framebuffer,
-// so a test binds its target Framebuffer and then calls readRgba8.
+// so a test binds its target Framebuffer and then calls readRgba8. The
+// utils/ facade (utils::PixelReader, V2.1) delegates to this raw-GL anchor so
+// higher layers never touch raw GL.
 
 #include <cstddef>
 #include <cstdint>

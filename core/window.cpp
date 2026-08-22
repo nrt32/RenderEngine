@@ -6,12 +6,11 @@
 #include <string>
 #include <utility>
 
-// glad2 GL 4.6 core loader (generated; raw GL entry points live under core/).
-#include <glad/gl.h>
-
 // GLFW is the windowing / context-creation backend.
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
+
+#include "core/load_core_gl.hpp"
 
 namespace re::core {
 
@@ -19,27 +18,6 @@ namespace {
 
 constexpr int kMajor = 4;
 constexpr int kMinor = 6;
-
-/// Load GL entry points and query the context's version via glGetIntegerv
-/// (the reliable path, matching core/offscreen_context.cpp).
-data::Result<void> loadAndProbeGl(GLADloadfunc getProcAddr, int* outMajor,
-                                  int* outMinor) {
-    if (getProcAddr == nullptr) {
-        return data::makeError<void>(1, "window: no GL proc-address function");
-    }
-    if (gladLoadGL(getProcAddr) == 0) {
-        return data::makeError<void>(
-            2, "window: glad failed to load GL entry points");
-    }
-
-    std::int32_t major = 0;
-    std::int32_t minor = 0;
-    glGetIntegerv(GL_MAJOR_VERSION, &major);
-    glGetIntegerv(GL_MINOR_VERSION, &minor);
-    *outMajor = static_cast<int>(major);
-    *outMinor = static_cast<int>(minor);
-    return data::Result<void>(data::value);
-}
 
 } // namespace
 
@@ -145,15 +123,19 @@ data::Result<Window> Window::create(int width, int height,
 
     Window win(window, width, height);
 
-    auto load = loadAndProbeGl(&glfwGetProcAddress, &win.major_, &win.minor_);
-    if (load.failed()) {
-        spdlog::error("window: {}", load.error().message);
+    // GL entry-point loading + version probe (raw GL) happen in the core/
+    // anchor; glfwGetProcAddress matches core::GlLoadProc exactly.
+    auto loaded = core::loadCoreGl(&glfwGetProcAddress);
+    if (loaded.failed()) {
+        spdlog::error("window: {}", loaded.error().message);
         glfwMakeContextCurrent(nullptr);
         glfwDestroyWindow(window);
         glfwTerminate();
         win.window_ = nullptr;
-        return data::makeError<Window>(3, load.error().message);
+        return data::makeError<Window>(3, loaded.error().message);
     }
+    win.major_ = loaded->major;
+    win.minor_ = loaded->minor;
 
     spdlog::info("window: {}x{} GL {}.{} core", width, height, win.major_,
                  win.minor_);

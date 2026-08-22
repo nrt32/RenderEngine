@@ -15,11 +15,12 @@ with per-sample driving instructions (FR-app.1, complete). It is part of the
 
 A **core/** component (the T12 samples need a *visible* window; the offscreen
 fixture creates a hidden one): an RAII visible GLFW window with a GL 4.6 core
-context. Like `core::OffscreenContext` it is the SOLE owner of the raw
-context-creation and GL-loader (glad) calls on the interactive sample path
-(guardrail `gpu_api_ownership`). The context is made current on construction
-and GL entry points are loaded via glad, so the `core/` wrappers and the
-`render/` renderers work unchanged.
+context. Like `utils::OffscreenContext` it owns the raw context-creation calls
+on the interactive sample path, with the raw GL-loader anchor (`core::loadCoreGl`,
+shared with `utils/`) under `core/` (guardrail `gpu_api_ownership`). The
+context is made current on construction and GL entry points are loaded via
+`core::loadCoreGl`, so the `core/` wrappers and the `render/` renderers work
+unchanged.
 
 - `Window::create(width, height, title)` — visible window + GL 4.6 core
   context; returns a typed error on GLFW/GL-load failure.

@@ -2,13 +2,13 @@
 
 // tests/offscreen_fixture.hpp — shared fixture for headless GL unit tests.
 //
-// Creates a single offscreen GL 4.6 core context (core::OffscreenContext) and
+// Creates a single offscreen GL 4.6 core context (utils::OffscreenContext) and
 // keeps it alive for the duration of the test program. Tests consume GL only
-// through core/ wrappers; the context itself is a core/ component.
+// through core/ wrappers; the context itself lives in utils/ (SPEC §9 V2.1).
 
 #include <gtest/gtest.h>
 
-#include "core/offscreen_context.hpp"
+#include "utils/offscreen_context.hpp"
 
 namespace re::tests {
 
@@ -20,7 +20,7 @@ class OffscreenEnvironment : public ::testing::Environment {
     void TearDown() override;
 
     /// The shared offscreen context (valid during the whole test program).
-    static core::OffscreenContext* context();
+    static utils::OffscreenContext* context();
 };
 
 } // namespace re::tests

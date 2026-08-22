@@ -1,24 +1,26 @@
 #pragma once
 
-// core/offscreen_context.hpp — offscreen OpenGL 4.6 core context for headless
-// unit tests (SPEC S2, T1). This is a core/ component: it is the SOLE owner of
-// raw context-creation / GL-loader calls in the project. render/, app/ and
-// tests/ consume it only through this wrapper.
+// utils/offscreen_context.hpp — offscreen OpenGL 4.6 core context for headless
+// unit tests (SPEC §2, T1; moved to utils/ by V2.1, SPEC §9).
 //
-// Strategy:
-//   1. GLFW primary: create a hidden (never shown) window and a GL 4.6 core
-//      context, then load GL entry points with glad.
-//   2. EGL-surfaceless fallback (no display): create a surfaceless EGL display
-//      and a GL 4.6 core context, then load GL entry points with glad from the
-//      EGL proc-address function.
+// utils/ is the test-support + windowing home: GLFW/EGL context creation and
+// pixel readback are not core rendering. utils/ is NOT the owner of raw GL
+// calls — the raw-GL anchors stay under core/ (guardrails gpu_api_ownership /
+// no_production_readback):
+//   - core::loadCoreGl  loads GL entry points (glad) and probes the
+//     version/profile via glGetIntegerv;
+//   - core::readRgba8   is the raw pixel-readback anchor (SPEC §6).
+// render/, app/ and tests/ consume GL only through core/ wrappers; this class
+// is the offscreen-context facade they share.
 
 #include <cstdint>
 
+#include "core/load_core_gl.hpp"
 #include "data/result.hpp"
 
 struct GLFWwindow;
 
-namespace re::core {
+namespace re::utils {
 
 /// Backend that actually created the context (for diagnostics / tests).
 enum class ContextBackend {
@@ -32,6 +34,10 @@ enum class ContextBackend {
 /// object. Creating a new OffscreenContext while another is alive is supported
 /// only if the GL implementation allows it; the expected usage is one context
 /// per test fixture.
+///
+/// GL entry points are loaded and the version/profile probed by the core/
+/// raw-GL anchor core::loadCoreGl (guardrail gpu_api_ownership); the probe
+/// values are surfaced through this wrapper, not the GL_VERSION string text.
 class OffscreenContext {
    public:
     /// Create and make current an offscreen GL 4.6 core context.
@@ -52,21 +58,23 @@ class OffscreenContext {
 
     /// The context's GL major version (specifically GL_MAJOR_VERSION).
     int majorVersion() const noexcept {
-        return major_;
+        return info_.major;
     }
 
     /// The context's GL minor version (specifically GL_MINOR_VERSION).
     int minorVersion() const noexcept {
-        return minor_;
+        return info_.minor;
     }
 
     /// The GL_CONTEXT_PROFILE_MASK value.
     std::uint32_t profileMask() const noexcept {
-        return profileMask_;
+        return info_.profileMask;
     }
 
     /// True if the context's profile mask has the core-profile bit set.
-    bool isCoreProfile() const noexcept;
+    bool isCoreProfile() const noexcept {
+        return info_.isCoreProfile();
+    }
 
    private:
     explicit OffscreenContext(ContextBackend backend) noexcept;
@@ -83,9 +91,7 @@ class OffscreenContext {
     void* eglDisplay_{nullptr};
     void* eglContext_{nullptr};
     ContextBackend backend_{ContextBackend::Glfw};
-    int major_{0};
-    int minor_{0};
-    std::uint32_t profileMask_{0};
+    core::GlContextInfo info_{};
 };
 
-} // namespace re::core
+} // namespace re::utils

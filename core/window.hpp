@@ -4,12 +4,12 @@
 //
 // The sample harness (app/, T12) needs a *visible* window and a GL 4.6 core
 // context to render the mesh/plane/volume samples into. The offscreen
-// fixture (core/offscreen_context.hpp) deliberately creates a hidden window,
-// so this module provides the visible-window counterpart. Like OffscreenContext
-// it is a core/ component: it is the SOLE owner of the raw context-creation and
-// GL-loader (glad) calls for the interactive sample path (guardrail
-// gpu_api_ownership). app/ and the samples consume it only through this
-// wrapper.
+// fixture (utils/offscreen_context.hpp) deliberately creates a hidden window,
+// so this module provides the visible-window counterpart. It is a core/
+// component: it is the SOLE owner of the raw context-creation calls for the
+// interactive sample path, with the raw GL-loader anchor (core::loadCoreGl)
+// shared with utils/ (guardrail gpu_api_ownership). app/ and the samples
+// consume it only through this wrapper.
 //
 // The created context is made current on the constructing thread and stays
 // current for the lifetime of the object; render/, app/ draw through core/

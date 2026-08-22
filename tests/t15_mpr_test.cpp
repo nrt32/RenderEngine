@@ -57,7 +57,7 @@
 // rectangles) — so the center pixel is the base color {51, 102, 204}.
 //
 // Per the GL-ownership + readback guardrails this file uses ONLY core/
-// wrappers (including core::readRgba8 for pixel readback) — no raw glXxx
+// wrappers (including utils::PixelReader for pixel readback) — no raw glXxx
 // calls. The contour/camera tests are pure CPU scaffolding; the 3D-view test
 // renders through render::MeshRenderer under the offscreen fixture; the smoke
 // test spawns a subprocess only.
@@ -88,7 +88,7 @@
 #include "app/mpr_slice.hpp"
 #include "core/framebuffer.hpp"
 #include "core/gl_error.hpp"
-#include "core/read_pixels.hpp"
+#include "utils/pixel_reader.hpp"
 #include "core/texture2d.hpp"
 #include "data/image.hpp"
 #include "data/mesh.hpp"
@@ -507,7 +507,8 @@ TEST(T15Mpr, ThreeDViewDrawsMesh) {
 
     // Read back the center pixel from the still-bound target framebuffer.
     std::vector<std::uint8_t> pixels;
-    auto read = core::readRgba8(kCenterX, kCenterY, 1u, 1u, pixels);
+    re::utils::PixelReader reader;
+    auto read = reader.read(kCenterX, kCenterY, 1u, 1u, pixels);
     ASSERT_TRUE(read.ok()) << read.error().message;
     ASSERT_EQ(pixels.size(), 4u);
 

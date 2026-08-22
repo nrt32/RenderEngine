@@ -1,11 +1,11 @@
-// core/offscreen_context.cpp — offscreen GL 4.6 core context implementation.
+// utils/offscreen_context.cpp — offscreen GL 4.6 core context implementation
+// (moved from core/ by V2.1, SPEC §9: test-support + windowing live in utils/;
+// raw GL stays under core/ — GL entry-point loading and the version/profile
+// probe are delegated to core::loadCoreGl).
 
-#include "core/offscreen_context.hpp"
+#include "utils/offscreen_context.hpp"
 
 #include <cstdint>
-
-// glad2 GL 4.6 core loader (generated; raw GL entry points live under core/).
-#include <glad/gl.h>
 
 // GLFW is the primary context-creation backend.
 #include <GLFW/glfw3.h>
@@ -17,7 +17,7 @@
 
 #include <utility>
 
-namespace re::core {
+namespace re::utils {
 
 // EGL surfaceless platform identifier (Mesa extension).
 #ifndef EGL_PLATFORM_SURFACELESS_MESA
@@ -29,51 +29,17 @@ namespace {
 constexpr int kMajor = 4;
 constexpr int kMinor = 6;
 
-/// Load GL entry points and query the context's version/profile via
-/// glGetIntegerv (the reliable path; not the glGetString(GL_VERSION) text).
-data::Result<void> loadAndProbeGl(GLADloadfunc getProcAddr, int* outMajor,
-                                  int* outMinor,
-                                  std::uint32_t* outProfileMask) {
-    if (getProcAddr == nullptr) {
-        return data::makeError<void>(
-            1, "offscreen context: no GL proc-address function");
-    }
-    if (gladLoadGL(getProcAddr) == 0) {
-        return data::makeError<void>(
-            2, "offscreen context: glad failed to load GL entry points");
-    }
-
-    std::int32_t major = 0;
-    std::int32_t minor = 0;
-    std::int32_t profile = 0;
-    glGetIntegerv(GL_MAJOR_VERSION, &major);
-    glGetIntegerv(GL_MINOR_VERSION, &minor);
-    glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &profile);
-
-    *outMajor = static_cast<int>(major);
-    *outMinor = static_cast<int>(minor);
-    *outProfileMask = static_cast<std::uint32_t>(profile);
-    return data::Result<void>(data::value);
-}
-
 } // namespace
 
 OffscreenContext::OffscreenContext(ContextBackend backend) noexcept
     : backend_(backend) {}
-
-bool OffscreenContext::isCoreProfile() const noexcept {
-    return (profileMask_ &
-            static_cast<std::uint32_t>(GL_CONTEXT_CORE_PROFILE_BIT)) != 0u;
-}
 
 OffscreenContext::OffscreenContext(OffscreenContext&& other) noexcept
     : window_(other.window_),
       eglDisplay_(other.eglDisplay_),
       eglContext_(other.eglContext_),
       backend_(other.backend_),
-      major_(other.major_),
-      minor_(other.minor_),
-      profileMask_(other.profileMask_) {
+      info_(other.info_) {
     other.window_ = nullptr;
     other.eglDisplay_ = nullptr;
     other.eglContext_ = nullptr;
@@ -89,9 +55,7 @@ OffscreenContext& OffscreenContext::operator=(
         eglDisplay_ = other.eglDisplay_;
         eglContext_ = other.eglContext_;
         backend_ = other.backend_;
-        major_ = other.major_;
-        minor_ = other.minor_;
-        profileMask_ = other.profileMask_;
+        info_ = other.info_;
 
         other.window_ = nullptr;
         other.eglDisplay_ = nullptr;
@@ -159,19 +123,21 @@ data::Result<OffscreenContext> OffscreenContext::createGlfw() {
     OffscreenContext ctx(ContextBackend::Glfw);
     ctx.window_ = window;
 
-    auto load = loadAndProbeGl(&glfwGetProcAddress, &ctx.major_, &ctx.minor_,
-                               &ctx.profileMask_);
-    if (load.failed()) {
-        spdlog::error("offscreen context: {}", load.error().message);
+    // GL entry-point loading + version/profile probe (raw GL) happen in the
+    // core/ anchor; glfwGetProcAddress matches core::GlLoadProc exactly.
+    auto loaded = core::loadCoreGl(&glfwGetProcAddress);
+    if (loaded.failed()) {
+        spdlog::error("offscreen context: {}", loaded.error().message);
         glfwMakeContextCurrent(nullptr);
         glfwDestroyWindow(window);
         glfwTerminate();
         ctx.window_ = nullptr;
-        return data::makeError<OffscreenContext>(3, load.error().message);
+        return data::makeError<OffscreenContext>(3, loaded.error().message);
     }
+    ctx.info_ = *loaded;
 
     spdlog::info("offscreen context: GLFW hidden window, GL {}.{} core",
-                 ctx.major_, ctx.minor_);
+                 ctx.info_.major, ctx.info_.minor);
     return data::makeValue<OffscreenContext>(std::move(ctx));
 }
 
@@ -236,22 +202,25 @@ data::Result<OffscreenContext> OffscreenContext::createEgl() {
     ctx.eglDisplay_ = display;
     ctx.eglContext_ = context;
 
-    auto load = loadAndProbeGl(reinterpret_cast<GLADloadfunc>(
-                                   reinterpret_cast<void*>(&eglGetProcAddress)),
-                               &ctx.major_, &ctx.minor_, &ctx.profileMask_);
-    if (load.failed()) {
-        spdlog::error("offscreen context: {}", load.error().message);
+    // eglGetProcAddress has the same shape as core::GlLoadProc; keep the
+    // explicit conversion for clarity.
+    auto loaded = core::loadCoreGl(
+        reinterpret_cast<core::GlLoadProc>(
+            reinterpret_cast<void*>(&eglGetProcAddress)));
+    if (loaded.failed()) {
+        spdlog::error("offscreen context: {}", loaded.error().message);
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         eglDestroyContext(display, context);
         eglTerminate(display);
         ctx.eglDisplay_ = nullptr;
         ctx.eglContext_ = nullptr;
-        return data::makeError<OffscreenContext>(10, load.error().message);
+        return data::makeError<OffscreenContext>(10, loaded.error().message);
     }
+    ctx.info_ = *loaded;
 
     spdlog::info("offscreen context: EGL surfaceless, GL {}.{} core",
-                 ctx.major_, ctx.minor_);
+                 ctx.info_.major, ctx.info_.minor);
     return data::makeValue<OffscreenContext>(std::move(ctx));
 }
 
-} // namespace re::core
+} // namespace re::utils

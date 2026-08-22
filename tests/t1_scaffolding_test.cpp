@@ -6,8 +6,9 @@
 //   (2) a trivial explainable constant passes (2+2==4);
 //   (3) the offscreen fixture creates a GL 4.6 core context — the version and
 //       profile are probed via glGetIntegerv inside core/ (NOT the unreliable
-//       glGetString text) and surfaced through the core::OffscreenContext
-//       wrapper; no GL errors are reported;
+//       glGetString text) and surfaced through the utils::OffscreenContext
+//       wrapper (V2.1 moved the context to utils/; the raw probe anchor
+//       core::loadCoreGl stays under core/); no GL errors are reported;
 //   (4) the gate environment is correctly sourced (R15): AUDIT_SOURCE_DIRS and
 //       LOOP_BUILD_TEST_CMD must be set by `source tools/env.sh`;
 //   (5) audit passes with our source-dir override (enforced by the runner gate;
@@ -22,8 +23,8 @@
 #include <cstring>
 
 #include "core/gl_error.hpp"
-#include "core/offscreen_context.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "utils/offscreen_context.hpp"
 
 namespace re::tests {
 
@@ -39,7 +40,7 @@ TEST(T1Scaffolding, TrivialArithmeticConstant) {
 // (3) Offscreen GL 4.6 core context.
 // ---------------------------------------------------------------------------
 TEST(T1Scaffolding, OffscreenContextIsGl46Core) {
-    core::OffscreenContext* ctx = OffscreenEnvironment::context();
+    utils::OffscreenContext* ctx = OffscreenEnvironment::context();
     ASSERT_NE(ctx, nullptr);
 
     // The version/profile are probed inside core/ via the integer queries (the
@@ -57,11 +58,12 @@ TEST(T1Scaffolding, OffscreenContextIsGl46Core) {
 // (4) Gate environment correctly sourced (R15).
 // ---------------------------------------------------------------------------
 TEST(T1Scaffolding, GateEnvironmentSourced) {
-    // AUDIT_SOURCE_DIRS must equal the project's non-default layout (SPEC S8).
+    // AUDIT_SOURCE_DIRS must equal the project's non-default layout (SPEC S8),
+    // including the utils/ module added in V2.1.
     const char* auditDirs = std::getenv("AUDIT_SOURCE_DIRS");
     ASSERT_NE(auditDirs, nullptr) << "AUDIT_SOURCE_DIRS is unset. Launch with: "
                                      "source tools/env.sh (SPEC S8, R15).";
-    EXPECT_STREQ(auditDirs, "io data volume core render app tests");
+    EXPECT_STREQ(auditDirs, "io data volume core render app utils tests");
 
     // LOOP_BUILD_TEST_CMD must be set (the runner uses it to run the gate).
     const char* buildCmd = std::getenv("LOOP_BUILD_TEST_CMD");

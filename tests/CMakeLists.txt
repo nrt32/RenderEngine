@@ -11,6 +11,7 @@ add_executable(${RE_TEST_TARGET}
     t3_v2_asset_registry_test.cpp
     t3_core_gl_test.cpp
     t4_io_data_test.cpp
+    t4_v2_utils_test.cpp
     t5_volume_test.cpp
     t6_volume_math_test.cpp
     t7_render_mesh_test.cpp
@@ -26,6 +27,7 @@ add_executable(${RE_TEST_TARGET}
 target_link_libraries(${RE_TEST_TARGET}
     PRIVATE
         re_core
+        re_utils
         re_data
         re_io
         re_volume
@@ -82,7 +84,8 @@ add_test(NAME ${RE_TEST_TARGET} COMMAND ${RE_TEST_TARGET})
 #    SPEC S2 target. The WSL D3D12 gallium driver exposes GL 4.6 core natively
 #    (verified via glxinfo -l); llvmpipe caps at 4.5, so the override reports
 #    the project's target 4.6. The version/profile probe happens inside core/
-#    and is surfaced through the core::OffscreenContext wrapper.
+#    (core::loadCoreGl) and is surfaced through the utils::OffscreenContext
+#    wrapper (V2.1 moved the context to utils/).
 set_tests_properties(${RE_TEST_TARGET} PROPERTIES
     ENVIRONMENT
         "GALLIUM_DRIVER=llvmpipe;MESA_GL_VERSION_OVERRIDE=4.6;ASAN_OPTIONS=detect_leaks=1"

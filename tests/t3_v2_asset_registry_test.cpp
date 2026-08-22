@@ -47,7 +47,7 @@
 //     on reuse — so every outstanding handle to a freed slot is stale.
 //
 // Per the GL-ownership + readback guardrails this file uses ONLY core/
-// wrappers (including core::readRgba8 for pixel readback) — no raw glXxx
+// wrappers (including utils::PixelReader for pixel readback) — no raw glXxx
 // calls.
 
 #include <gtest/gtest.h>
@@ -63,7 +63,7 @@
 
 #include "core/framebuffer.hpp"
 #include "core/gl_error.hpp"
-#include "core/read_pixels.hpp"
+#include "utils/pixel_reader.hpp"
 #include "core/texture2d.hpp"
 #include "data/mesh.hpp"
 #include "render/asset_registry.hpp"
@@ -164,7 +164,8 @@ RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
 /// (y = 0 is the bottom scanline).
 std::vector<std::uint8_t> readPixel(std::uint32_t x, std::uint32_t y) {
     std::vector<std::uint8_t> pixels;
-    auto read = core::readRgba8(x, y, 1u, 1u, pixels);
+    re::utils::PixelReader reader;
+    auto read = reader.read(x, y, 1u, 1u, pixels);
     EXPECT_TRUE(read.ok()) << read.error().message;
     EXPECT_EQ(pixels.size(), 4u);
     return pixels;

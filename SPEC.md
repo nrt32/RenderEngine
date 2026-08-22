@@ -29,8 +29,8 @@ section files directly.
   slices, and OIT; the MPR sample shows T/C/S + 3D views in one window (§1).
 - **Stack:** GLFW 3.4, glad2 v2.0.8, GLM 1.0.1, Dear ImGui v1.92.9, GoogleTest
   v1.15.x, spdlog v1.14.1, stb — all pinned via FetchContent `GIT_TAG` (§2, §6).
-- **Modules:** `io/ data/ volume/ core/ render/ app/ tests/` — `core/` is the
-  sole owner of raw GL calls (§3).
+- **Modules:** `io/ data/ volume/ core/ utils/ render/ app/ tests/` — `core/`
+  is the sole owner of raw GL calls (§3).
 - **FRs:** analytic acceptance constants; tolerances 1/255 (color), 1e-6
   (math), ε=1e-4 (plane geometry) (§4).
 - **Guardrails:** dependency lock, GL ownership, forbidden patterns, evidence +

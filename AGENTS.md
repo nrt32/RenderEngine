@@ -19,20 +19,22 @@
   `GIT_TAG` (SPEC §2). Build+test gate uses CMake; the loop MUST be launched
   with `source tools/env.sh` first (exports `LOOP_BUILD_TEST_CMD` +
   `AUDIT_SOURCE_DIRS`, SPEC §8).
-- **Layout:** `io/` `data/` `volume/` `core/` `render/` `app/` `tests/`.
-  Because this differs from the audit default source dirs, the loop MUST be
-  launched with `source tools/env.sh` (sets `AUDIT_SOURCE_DIRS="io data
-  volume core render app tests"`) or the ownership/forbidden audit rules in
-  `tools/audit.rules` will not see the source files. (audit.sh:42 default is
-  `src include lib engine tests app`.)
+- **Layout:** `io/` `data/` `volume/` `core/` `utils/` `render/` `app/`
+  `tests/`. Because this differs from the audit default source dirs, the loop
+  MUST be launched with `source tools/env.sh` (sets `AUDIT_SOURCE_DIRS="io
+  data volume core render app utils tests"`) or the ownership/forbidden audit
+  rules in `tools/audit.rules` will not see the source files. (audit.sh:42
+  default is `src include lib engine tests app`.)
 - **Guardrails:** see `tools/audit.rules` (raw GL calls ONLY under core/ via
-  RAII objects + core::Draw API; render/app/tests use core/ wrappers; deps
-  pinned; no legacy GL; **raw readback calls ONLY under core/, consumed by
-  tests/** — never in render/, app/, or tests/; spdlog not printf/cout;
-  datasets carry a LICENSE beside each dataset dir). Evidence rule (R4): every
-  test asserts an explainable constant — never "non-empty/non-black/>0".
-  Regression lock (R3): prior tests are never weakened. SPEC §6 is the source
-  of truth.
+  RAII objects + core::Draw API; render/app/tests use core/ wrappers; `utils/`
+  holds the offscreen context + pixel reader and delegates to the core/ raw-GL
+  anchors `core::loadCoreGl` / `core::readRgba8`; deps pinned; no legacy GL;
+  **raw readback calls ONLY under core/, consumed by tests via
+  utils::PixelReader** — never in render/, app/, tests/, or utils/; spdlog not
+  printf/cout; datasets carry a LICENSE beside each dataset dir). Evidence rule
+  (R4): every test asserts an explainable constant — never
+  "non-empty/non-black/>0". Regression lock (R3): prior tests are never
+  weakened. SPEC §6 is the source of truth.
 - **GL/display:** samples need WSLg display; unit tests run headless with an
   offscreen GL context and are built with ASan+UBSan.
 - **Build & test:** always `source tools/env.sh` first (exports

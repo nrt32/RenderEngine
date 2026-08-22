@@ -2,7 +2,7 @@
 # render/, app/, tests/ use core/ wrappers. io/, data/, volume/ are GL-free.
 
 add_library(re_core STATIC
-    offscreen_context.cpp
+    load_core_gl.cpp
     window.cpp
     gl_error.cpp
     logging.cpp
@@ -33,10 +33,9 @@ target_link_libraries(re_core PUBLIC
     re_project_warnings
 )
 
-# EGL is used by the surfaceless fallback in offscreen_context.cpp.
+# EGL is used by the surfaceless fallback in utils/offscreen_context.cpp (the
+# offscreen context moved out of core/ in V2.1); core/ itself only needs GLFW.
 find_package(Threads REQUIRED)
-find_library(RE_EGL_LIBRARY NAMES EGL REQUIRED)
 target_link_libraries(re_core PUBLIC Threads::Threads)
-target_link_libraries(re_core PRIVATE ${RE_EGL_LIBRARY})
 
 # Raw GL / EGL loader symbols live only under core/.

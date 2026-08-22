@@ -23,7 +23,7 @@
 // the plane (docs/render.md).
 //
 // Per the GL-ownership + readback guardrails this file uses ONLY core/
-// wrappers (including core::readRgba8 for pixel readback and
+// wrappers (including utils::PixelReader for pixel readback and
 // core::TransformFeedback for the cross-section capture) — no raw glXxx calls.
 
 #include <gtest/gtest.h>
@@ -38,7 +38,7 @@
 
 #include "core/framebuffer.hpp"
 #include "core/gl_error.hpp"
-#include "core/read_pixels.hpp"
+#include "utils/pixel_reader.hpp"
 #include "core/texture2d.hpp"
 #include "data/mesh.hpp"
 #include "render/asset_registry.hpp"
@@ -239,7 +239,8 @@ TEST(T11RenderSlice, ClippedMeshRendersCorrectly) {
 
     // Read back the center pixel from the still-bound target framebuffer.
     std::vector<std::uint8_t> pixels;
-    auto read = core::readRgba8(kCenterX, kCenterY, 1u, 1u, pixels);
+    re::utils::PixelReader reader;
+    auto read = reader.read(kCenterX, kCenterY, 1u, 1u, pixels);
     ASSERT_TRUE(read.ok()) << read.error().message;
     ASSERT_EQ(pixels.size(), 4u);
 

@@ -30,13 +30,13 @@ guardrails, NAMING_CONVENTIONS.md for style.
   forever.
 - R15 Launch prerequisite (SPEC §8): the loop MUST be launched with
   `source tools/env.sh` first — it exports
-  `AUDIT_SOURCE_DIRS="io data volume core render app tests"` and
+  `AUDIT_SOURCE_DIRS="io data volume core render app utils tests"` and
   `LOOP_BUILD_TEST_CMD` into the runner's environment. The T1 gate test
   already in the suite (COMPLETED_TASKS.md T1, gate item 4) makes this
   enforceable: a forgotten source must FAIL the gate loudly, never silently
   audit the wrong dirs.
 - Every gate also runs the mechanical audit (`tools/audit.sh`) with
-  `AUDIT_SOURCE_DIRS="io data volume core render app tests"` (via
+  `AUDIT_SOURCE_DIRS="io data volume core render app utils tests"` (via
   `source tools/env.sh`).
 - Unit tests build with ASan+UBSan; GL-touching tests use the offscreen GL
   fixture (headless). No exceptions in v1; typed `Result` errors (SPEC §5).

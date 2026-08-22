@@ -15,7 +15,11 @@ data/        CPU containers, no GL      (Mesh, VolumeDataset, Image, TransferFun
 volume/      pure math: dataset sampling/interp, transfer function,
              ray-cast compositing math  <- NO GL, headless-testable
 core/        GL foundation: GLFW context, RAII GL objects, ShaderProgram,
-             thin core::Draw API, offscreen GL test fixture  <- SOLE owner of raw GL calls
+             thin core::Draw API, raw-GL anchors (core::loadCoreGl,
+             core::readRgba8)           <- SOLE owner of raw GL calls
+utils/       test-support + windowing, NO raw GL (offscreen GL context via
+             GLFW/EGL, pixel reader facade) — delegates the raw parts to the
+             core/ anchors (SPEC §9 V2.1)
 render/      ONE class per rendering technique, unified IRenderer interface
              |- IMaterial + PhongMaterial      (transparency = material property)
              |- ITransparencyPipeline + LinkedListOIT  (swappable OIT impl)
@@ -29,7 +33,7 @@ app/         compositions + samples + ImGui overlay
              |- SceneView  (composes MeshRenderer + VolumeRenderer +
              |              optional Slice/Plane)
              |- MPRView    (composes 3x PlaneRenderer for T/C/S + 1x SceneView 3D)
-tests/       headless unit tests (consume core/ wrappers + the core/ fixture)
+tests/       headless unit tests (consume core/ wrappers + the utils/ fixture)
 ```
 
 ### Design principles (SOLID)
@@ -49,6 +53,9 @@ tests/       headless unit tests (consume core/ wrappers + the core/ fixture)
 - **Dependency inversion:** renderers depend on `IMaterial` /
   `ITransparencyPipeline` abstractions, never concrete material/OIT classes.
 - **GL ownership:** raw `glXxx(...)` calls appear ONLY under `core/` (RAII GL
-  objects + thin `core::Draw` API). `render/` draw passes, `app/`, and `tests/`
-  use `core/` wrappers. `io/`, `data/`, `volume/` are GL-free. This makes the
-  GL-ownership audit rule mechanically enforceable (single-dir anchor).
+  objects + thin `core::Draw` API). `render/` draw passes, `app/`, `tests/`,
+  and `utils/` use `core/` wrappers; `utils/` additionally hosts the offscreen
+  context + pixel reader, delegating their raw parts to the `core/` anchors
+  (`core::loadCoreGl`, `core::readRgba8`). `io/`, `data/`, `volume/` are
+  GL-free. This makes the GL-ownership audit rule mechanically enforceable
+  (single-dir anchor).
