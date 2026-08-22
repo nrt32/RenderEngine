@@ -1,5 +1,6 @@
 // app/mpr_sample.cpp — Multi-Planar Reconstruction (MPR) sample (T14/T15,
-// FR-app.2/3).
+// FR-app.2/3; V2 T2 drives its composition through the multi-view workstream,
+// SPEC §9 V2.4).
 //
 // Demonstrates the MPR capability (SPEC §1 goal 6): a single 1280x960 window
 // with a 2x2 viewport grid (four 640x480 viewports; T top-left, C top-right,
@@ -18,17 +19,18 @@
 //   - the contour overlay and the 3D-view camera come from the shared
 //     app/mpr_contour scaffolding (meshPlaneContour / overlayContour /
 //     make3dCamera), which the T15 gate tests headlessly;
-//   - each of the three slice views is rendered into its own 640x480 offscreen
-//     FBO via render::PlaneRenderer: a per-view orthographic camera maps the
-//     slice image's pixel space [0,imgW]x[0,imgH] onto the full viewport, and
-//     the shared unit quad is scaled onto that pixel rectangle (so the whole
-//     slice fills the view);
-//   - the 3D view FBO is rendered via render::MeshRenderer with the golden box
-//     and the make3dCamera camera, whose look-at target is the slice-state
-//     crosshair — the intersection point of the three slice planes (the
-//     slice-state ↔ 3D-view camera interplay);
-//   - a small present pass (core/ wrappers only) composites the FBOs onto the
-//     window's default framebuffer in their viewport regions.
+//   - the sample shares ONLY per-view window-section handles (render::ViewRect
+//     from mprViewports) + abstract scene objects (render::View, holding Scene
+//     dispatch variants) with the engine: render::ViewRenderer (SPEC §9 V2.4)
+//     dispatches each view's scene through IRenderer (V2 T1) — the three
+//     slice views are PlaneScenes, the 3D view is a MeshScene — renders each
+//     into its OWN 640x480 core::Framebuffer, then blits each FBO into its
+//     window rect via core::blit. There is NO app-side viewport blending: the
+//     textured-quad present pass is gone, the engine present is the whole
+//     composition (V2 T2).
+//   - the only app-side window state is the clear of the window's default
+//     framebuffer behind the viewport grid (a background, not a viewport
+//     blend).
 //
 // The sample exits cleanly (code 0) after RE_SAMPLE_MAX_FRAMES frames (default
 // 300) so the gate can run it headlessly under Xvfb within a timeout
@@ -43,7 +45,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/mat4x4.hpp>
 #include <memory>
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,20 +53,15 @@
 #include "app/mpr_slice.hpp"
 #include "app/sample_harness.hpp"
 #include "core/draw.hpp"
-#include "core/element_buffer.hpp"
-#include "core/framebuffer.hpp"
-#include "core/shader_program.hpp"
-#include "core/texture2d.hpp"
-#include "core/vertex_array.hpp"
-#include "core/vertex_buffer.hpp"
 #include "core/window.hpp"
 #include "data/image.hpp"
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
 #include "io/volume/nrrd_volume_loader.hpp"
-#include "render/mesh_renderer.hpp" // render::Camera / render::RenderTarget
+#include "render/mesh_renderer.hpp" // render::MeshScene / render::Camera
 #include "render/phong_material.hpp"
 #include "render/plane_renderer.hpp"
+#include "render/view_renderer.hpp"
 #include "volume/transfer_function.hpp"
 
 #ifndef RE_SOURCE_DIR
@@ -87,7 +83,8 @@ constexpr int kWindowWidth = 1280;
 constexpr int kWindowHeight = 960;
 // Default number of frames before the sample exits cleanly.
 constexpr int kDefaultFrames = 300;
-// The offscreen slice-view resolution (SPEC FR-app.2: each viewport is 640x480).
+// The offscreen slice-view resolution (SPEC FR-app.2: each viewport is
+// 640x480).
 constexpr std::uint32_t kViewportWidth = 640u;
 constexpr std::uint32_t kViewportHeight = 480u;
 
@@ -138,16 +135,15 @@ app::MprSliceState makeInitialSliceState(const data::VolumeDataset& dataset) {
 /// image's pixel space [0,imgW]x[0,imgH] onto the full 640x480 viewport. The
 /// camera looks down -Z from +Z at the quad (which sits at z = 0), so the
 /// slice displays with the image's top-left at the viewport's top-left (the
-/// PlaneRenderer orientation convention, FR-render.5 / render/plane_renderer.hpp).
+/// PlaneRenderer orientation convention, FR-render.5 /
+/// render/plane_renderer.hpp).
 render::Camera makeSliceCamera(const data::Image& image) {
     render::Camera camera;
     camera.position = glm::vec3(0.0f, 0.0f, 5.0f);
-    camera.view =
-        glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f),
-                    glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj =
-        glm::ortho(0.0f, static_cast<float>(image.width()), 0.0f,
-                   static_cast<float>(image.height()), 0.1f, 10.0f);
+    camera.view = glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f),
+                              glm::vec3(0.0f, 1.0f, 0.0f));
+    camera.proj = glm::ortho(0.0f, static_cast<float>(image.width()), 0.0f,
+                             static_cast<float>(image.height()), 0.1f, 10.0f);
     return camera;
 }
 
@@ -161,82 +157,25 @@ glm::mat4 makeSliceModel(const data::Image& image) {
            glm::scale(glm::mat4(1.0f), glm::vec3(halfW, halfH, 1.0f));
 }
 
-/// Present shaders (GLSL 450, SPEC §8): draw a fullscreen textured quad in the
-/// current viewport, sampling an RGBA8 texture 1:1.
-constexpr char kPresentVertexShader[] =
-    "#version 450 core\n"
-    "layout(location = 0) in vec2 aPos;\n"
-    "layout(location = 1) in vec2 aUV;\n"
-    "out vec2 vUV;\n"
-    "void main() {\n"
-    "    vUV = aUV;\n"
-    "    gl_Position = vec4(aPos, 0.0, 1.0);\n"
-    "}\n";
-
-constexpr char kPresentFragmentShader[] =
-    "#version 450 core\n"
-    "in vec2 vUV;\n"
-    "uniform sampler2D uTex;\n"
-    "layout(location = 0) out vec4 oColor;\n"
-    "void main() {\n"
-    "    oColor = texture(uTex, vUV);\n"
-    "}\n";
-
-/// A view FBO: its color attachment texture + the framebuffer that renders to
-/// it. The color texture is needed for the present pass (sampled as a quad).
-struct ViewFramebuffer {
-    core::Texture2D color;
-    core::Framebuffer framebuffer;
-    ViewFramebuffer(core::Texture2D c, core::Framebuffer f)
-        : color(std::move(c)), framebuffer(std::move(f)) {}
-};
-
-/// Create a 640x480 color-only offscreen FBO for one slice view.
-data::Result<ViewFramebuffer> makeViewFramebuffer() {
-    auto color = core::Texture2D::create();
-    if (color.failed()) {
-        return data::makeError<ViewFramebuffer>(color.error().code,
-                                                color.error().message);
-    }
-    auto framebuffer = core::Framebuffer::create();
-    if (framebuffer.failed()) {
-        return data::makeError<ViewFramebuffer>(framebuffer.error().code,
-                                                framebuffer.error().message);
-    }
-    std::vector<std::uint8_t> zeros(
-        static_cast<std::size_t>(kViewportWidth) * kViewportHeight * 4u, 0u);
-    color->bind(0u);
-    color->upload(kViewportWidth, kViewportHeight, zeros.data());
-    color->unbind(0u);
-    framebuffer->bind();
-    framebuffer->attachColor(*color);
-    if (!framebuffer->isComplete()) {
-        framebuffer->unbind();
-        return data::makeError<ViewFramebuffer>(
-            1, "MPR: slice-view framebuffer incomplete");
-    }
-    framebuffer->unbind();
-    return data::makeValue<ViewFramebuffer>(
-        ViewFramebuffer(std::move(*color), std::move(*framebuffer)));
-}
-
 /// The MPR sample: owns the volume + transfer function + the slice-view
 /// scaffold and renders one frame of the 2x2 grid into the window's default
-/// framebuffer.
+/// framebuffer, composed by the engine multi-view compositor (SPEC §9 V2.4).
 class MPRView final : public app::ISample {
    public:
     MPRView(data::VolumeDataset dataset, volume::TransferFunction tf)
         : dataset_(std::move(dataset)),
           tf_(std::move(tf)),
           sliceState_(makeInitialSliceState(dataset_)),
-          transverseImage_(makeSliceImage(dataset_, tf_, app::MprAxis::Transverse,
+          transverseImage_(makeSliceImage(dataset_, tf_,
+                                          app::MprAxis::Transverse,
                                           sliceState_.transverseZ)),
           coronalImage_(makeSliceImage(dataset_, tf_, app::MprAxis::Coronal,
                                        sliceState_.coronalY)),
           sagittalImage_(makeSliceImage(dataset_, tf_, app::MprAxis::Sagittal,
                                         sliceState_.sagittalX)),
           box_(app::makeBoxMesh(kGoldenBoxMin, kGoldenBoxMax)),
-          boxMaterial_(kBoxMaterialColor) {
+          boxMaterial_(kBoxMaterialColor),
+          composer_(4u, kViewportWidth, kViewportHeight) {
         // One shared unit quad, scaled per slice view onto that view's image
         // pixel rectangle (makeSliceModel) and viewed through a per-view
         // orthographic camera (makeSliceCamera) — the shared 2D-view camera
@@ -269,18 +208,61 @@ class MPRView final : public app::ISample {
             *images[i] =
                 app::overlayContour(*images[i], curve, app::kContourColor);
         }
+
+        // Register the technique renderers with the engine compositor (SPEC
+        // §9 V2.3): the three slice views are PlaneScenes rendered by
+        // PlaneRenderer, the 3D view is a MeshScene rendered by MeshRenderer.
+        composer_.setRenderer(render::SceneKind::Mesh, &boxRenderer_);
+        composer_.setRenderer(render::SceneKind::Plane, &sliceRenderer_);
     }
 
     data::Result<void> renderFrame(int width, int height) override {
-        auto ensure = ensureTargets();
-        if (ensure.failed()) {
-            return ensure;
+        // Clear the window's default framebuffer behind the viewport grid
+        // (a background, not a viewport blend — the views themselves are
+        // placed by the engine blit in composer_.render).
+        core::bindDefaultFramebuffer();
+        core::setViewport(0, 0, width, height);
+        core::setClearColor(0.02f, 0.02f, 0.03f, 1.0f);
+        core::clearColor();
+
+        // Build the four views: per-view window-section handles (ViewRects
+        // from app::mprViewports, SPEC FR-app.2) + abstract scene objects
+        // (render::View). The three slice scenes are locals kept alive for the
+        // whole frame: the Scene variant holds pointers into them, valid until
+        // composer_.render below returns.
+        const std::array<app::MprViewport, 4> grid =
+            app::mprViewports(width, height);
+        const std::array<const data::Image*, 3> sliceImages = {
+            &transverseImage_, &coronalImage_, &sagittalImage_};
+
+        std::array<render::View, 4> views;
+        std::array<render::PlaneScene, 3> sliceScenes;
+        for (std::size_t i = 0u; i < 3u; ++i) {
+            // The slice view (T/C/S): the shared unit quad scaled onto the
+            // slice image's pixel rectangle, seen through the per-view camera.
+            sliceScenes[i].planes.push_back(render::PlaneInstance{
+                &quad_, sliceImages[i], makeSliceModel(*sliceImages[i])});
+            views[i].scene = &sliceScenes[i];
+            views[i].camera = makeSliceCamera(*sliceImages[i]);
+            views[i].clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+            views[i].rect = render::ViewRect{grid[i].x, grid[i].y,
+                                             grid[i].width, grid[i].height};
         }
-        auto slices = renderSlices();
-        if (slices.failed()) {
-            return slices;
-        }
-        return present(width, height);
+        // The 3D view (bottom-right): the golden box mesh (FR-app.3) through
+        // the slice-state-driven camera (make3dCamera).
+        views[3].scene = &boxScene_;
+        views[3].camera = boxCamera_;
+        views[3].clearColor = glm::vec4(0.10f, 0.10f, 0.14f, 1.0f);
+        views[3].rect = render::ViewRect{grid[3].x, grid[3].y, grid[3].width,
+                                         grid[3].height};
+
+        // Engine composition (SPEC §9 V2.4, Model B: per-view FBO + engine
+        // blit): renderViews() dispatches each scene through IRenderer into
+        // its own 640x480 FBO, then present() blits each FBO into its window
+        // rect via core::blit (destination nullptr = the window's default
+        // framebuffer). No app-side viewport blending.
+        const std::vector<render::View> viewList(views.begin(), views.end());
+        return composer_.render(viewList, nullptr);
     }
 
     const char* title() const override {
@@ -303,133 +285,6 @@ class MPRView final : public app::ISample {
     }
 
    private:
-    /// Create the four 640x480 view FBOs and the present-pass GL resources,
-    /// once. Returns a typed error on any GL failure.
-    data::Result<void> ensureTargets() {
-        if (targetsReady_) {
-            return data::Result<void>(data::value);
-        }
-        for (std::size_t i = 0u; i < viewFramebuffers_.size(); ++i) {
-            auto fb = makeViewFramebuffer();
-            if (fb.failed()) {
-                return data::makeError<void>(fb.error().code,
-                                             fb.error().message);
-            }
-            viewFramebuffers_[i] = std::move(*fb);
-        }
-
-        // Present pass: a fullscreen textured quad.
-        auto program = core::ShaderProgram::create(kPresentVertexShader,
-                                                   kPresentFragmentShader);
-        if (program.failed()) {
-            return data::makeError<void>(program.error().code,
-                                         program.error().message);
-        }
-        presentProgram_ = std::move(*program);
-
-        auto vao = core::VertexArray::create();
-        auto vbo = core::VertexBuffer::create();
-        auto ebo = core::ElementBuffer::create();
-        if (vao.failed() || vbo.failed() || ebo.failed()) {
-            return data::makeError<void>(
-                1, "MPR: present-pass buffer creation failed");
-        }
-        const std::vector<float> verts = {
-            -1.0f, -1.0f, 0.0f, 0.0f, // bottom-left
-            1.0f,  -1.0f, 1.0f, 0.0f, // bottom-right
-            1.0f,  1.0f,  1.0f, 1.0f, // top-right
-            -1.0f, 1.0f,  0.0f, 1.0f, // top-left
-        };
-        const std::vector<std::uint32_t> indices = {0u, 1u, 2u, 0u, 2u, 3u};
-        vao->bind();
-        vbo->bind();
-        vbo->upload(verts.data(), verts.size() * sizeof(float),
-                    core::BufferUsage::StaticDraw);
-        ebo->bind();
-        ebo->upload(indices.data(), indices.size(),
-                    core::BufferUsage::StaticDraw);
-        vao->setAttribute(0u, 2, /*normalized=*/false, 4u * sizeof(float), 0u);
-        vao->setAttribute(1u, 2, /*normalized=*/false, 4u * sizeof(float),
-                          2u * sizeof(float));
-        vao->unbind();
-        presentVao_ = std::move(*vao);
-        presentVbo_ = std::move(*vbo);
-        presentEbo_ = std::move(*ebo);
-        presentIndexCount_ = indices.size();
-
-        targetsReady_ = true;
-        return data::Result<void>(data::value);
-    }
-
-    /// Render the three slice views (T/C/S) into their own 640x480 FBOs via
-    /// PlaneRenderer, and the 3D view (the golden box mesh, FR-app.3) via
-    /// MeshRenderer into its FBO.
-    data::Result<void> renderSlices() {
-        const std::array<const data::Image*, 3> sliceImages = {
-            &transverseImage_, &coronalImage_, &sagittalImage_};
-
-        for (std::size_t i = 0u; i < 3u; ++i) {
-            const data::Image* image = sliceImages[i];
-            // Per-view camera + model (the shared 2D-view camera scaffolding):
-            // the ortho maps the image's pixel space onto the viewport and the
-            // quad is scaled onto the image's pixel rectangle, so the whole
-            // slice fills the 640x480 view.
-            const render::Camera viewCamera = makeSliceCamera(*image);
-            const glm::mat4 viewModel = makeSliceModel(*image);
-            render::PlaneScene scene;
-            scene.planes.push_back(
-                render::PlaneInstance{&quad_, image, viewModel});
-            render::RenderTarget target;
-            target.framebuffer = &viewFramebuffers_[i]->framebuffer;
-            target.width = kViewportWidth;
-            target.height = kViewportHeight;
-            target.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-            auto result = sliceRenderer_.render(scene, viewCamera, target);
-            if (result.failed()) {
-                return result;
-            }
-        }
-
-        // Render the 3D view (bottom-right): the golden box mesh through
-        // MeshRenderer, seen through the slice-state-driven camera whose
-        // target is the intersection point of the three slice planes
-        // (FR-app.3, "the 3D view draws the mesh").
-        render::RenderTarget target3d;
-        target3d.framebuffer = &viewFramebuffers_[3]->framebuffer;
-        target3d.width = kViewportWidth;
-        target3d.height = kViewportHeight;
-        target3d.clearColor = glm::vec4(0.10f, 0.10f, 0.14f, 1.0f);
-        return boxRenderer_.render(boxScene_, boxCamera_, target3d);
-    }
-
-    /// Composite the four view FBOs onto the window's default framebuffer in
-    /// their viewport regions (SPEC FR-app.2 grid). The 3D viewport is drawn
-    /// from its FBO (the golden box mesh, FR-app.3).
-    data::Result<void> present(int width, int height) {
-        const std::array<app::MprViewport, 4> views = app::mprViewports(width, height);
-        core::bindDefaultFramebuffer();
-        core::setViewport(0, 0, width, height);
-        core::setClearColor(0.02f, 0.02f, 0.03f, 1.0f);
-        core::clearColor();
-        core::disableDepthTest();
-        core::disableBlend();
-
-        presentProgram_->use();
-        presentProgram_->setUniformInt("uTex", 0);
-
-        for (std::size_t i = 0u; i < views.size(); ++i) {
-            const app::MprViewport& vp = views[i];
-            core::setViewport(vp.x, vp.y, vp.width, vp.height);
-            viewFramebuffers_[i]->color.bind(0u);
-            auto draw = core::drawElements(*presentVao_, presentIndexCount_);
-            if (draw.failed()) {
-                return draw;
-            }
-            viewFramebuffers_[i]->color.unbind(0u);
-        }
-        return data::Result<void>(data::value);
-    }
-
     data::VolumeDataset dataset_;
     volume::TransferFunction tf_;
     app::MprSliceState sliceState_;
@@ -448,14 +303,10 @@ class MPRView final : public app::ISample {
     render::PlaneGeometry quad_;
     render::PlaneRenderer sliceRenderer_;
 
-    bool targetsReady_{false};
-    std::array<std::optional<ViewFramebuffer>, 4> viewFramebuffers_;
-
-    std::optional<core::ShaderProgram> presentProgram_;
-    std::optional<core::VertexArray> presentVao_;
-    std::optional<core::VertexBuffer> presentVbo_;
-    std::optional<core::ElementBuffer> presentEbo_;
-    std::size_t presentIndexCount_{0u};
+    // The engine multi-view compositor (SPEC §9 V2.4): owns the four per-view
+    // 640x480 FBOs and performs the render-into-FBO + blit-into-window-rect
+    // composition (core::blit).
+    render::ViewRenderer composer_;
 };
 
 } // namespace
@@ -470,9 +321,8 @@ int main() {
         return 1;
     }
 
-    auto windowResult =
-        re::core::Window::create(kWindowWidth, kWindowHeight,
-                                 "RenderEngine - MPR Sample");
+    auto windowResult = re::core::Window::create(kWindowWidth, kWindowHeight,
+                                                 "RenderEngine - MPR Sample");
     if (windowResult.failed()) {
         spdlog::error("mpr sample: {}", windowResult.error().message);
         return 1;

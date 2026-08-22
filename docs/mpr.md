@@ -178,8 +178,12 @@ and scene (box + opaque Phong material). Per frame it:
 2. renders the **3D view FBO** (the golden box) via `render::MeshRenderer`
    with the slice-state-driven camera;
 3. presents the four FBOs onto the window's default framebuffer in their
-   viewport regions via a small textured-quad pass built from `core/` wrappers
-   (a GLSL 450 fullscreen-quad shader + one shared unit-quad VAO/VBO/EBO).
+   viewport regions via the **engine multi-view compositor**
+   (`render::ViewRenderer` + `core::blit`, SPEC §9 V2.4 / V2 T2, docs/render.md):
+   the sample shares only the per-view `ViewRect`s + `Scene` objects, the engine
+   dispatches each through `IRenderer` into the view's own FBO and blits each
+   FBO into its window rect — **no app-side viewport blending** (the old
+   textured-quad present pass is gone).
 
 The sample exits cleanly (code 0) after `RE_SAMPLE_MAX_FRAMES` frames (default
 300) so the gate can run it headlessly under Xvfb within a timeout (FR-app.1).

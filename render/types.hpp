@@ -72,6 +72,37 @@ struct SliceScene;
 using Scene = std::variant<const MeshScene*, const PlaneScene*,
                            const VolumeScene*, const SliceScene*>;
 
+/// A window-section rectangle in GL pixel coordinates (origin bottom-left,
+/// matching core::setViewport): the per-view window-section handle the app
+/// front-end shares with the engine compositor (SPEC §9 V2.4). `x`/`y` are the
+/// rectangle's bottom-left corner in pixels from the window's left/bottom;
+/// `width`/`height` are the rectangle's size. The multi-view gate (V2 T2)
+/// pins two rects of a 1280x480 window: View A = (0, 0, 640, 480) and
+/// View B = (640, 0, 640, 480).
+struct ViewRect {
+    int x{0};      ///< Left edge, in pixels from the window's left.
+    int y{0};      ///< Bottom edge, in pixels from the window's bottom.
+    int width{0};  ///< Width in pixels.
+    int height{0}; ///< Height in pixels.
+};
+
+/// One view of a multi-view window (SPEC §9 V2.4, Model B: per-view FBO +
+/// engine blit): the abstract scene object, the camera it is rendered from,
+/// the per-view clear color, and the window-section rectangle its FBO is
+/// blitted into.
+///
+/// The front-end (app/) builds these: it shares the abstract scene object
+/// (the `Scene` dispatch variant, SPEC §9 V2.3) and the per-view window-section
+/// handle (`rect`); the engine compositor (render::ViewRenderer) dispatches
+/// the scene through the IRenderer registered for its technique, renders it
+/// into the view's own core::Framebuffer, and blits that FBO into `rect`.
+struct View {
+    Scene scene;   ///< The abstract scene object to render (dispatch payload).
+    Camera camera; ///< Per-view camera (view/projection matrices + eye).
+    glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 0.0f}; ///< Per-view clear color.
+    ViewRect rect; ///< The window rect this view's FBO is blitted into.
+};
+
 /// Pure abstract renderer contract (SPEC §9 V2.3): the single narrow dispatch
 /// method implemented by every per-technique renderer (MeshRenderer,
 /// PlaneRenderer, VolumeRenderer, SliceRenderer). The renderer validates that

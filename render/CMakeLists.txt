@@ -11,6 +11,7 @@ add_library(re_render STATIC
     plane_renderer.cpp
     volume_renderer.cpp
     slice_renderer.cpp
+    view_renderer.cpp
 )
 
 target_include_directories(re_render PUBLIC

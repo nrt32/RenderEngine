@@ -7,6 +7,7 @@ add_executable(${RE_TEST_TARGET}
     t1_scaffolding_test.cpp
     t1_v2_ir_dispatch_test.cpp
     t2_assets_test.cpp
+    t2_v2_multiview_test.cpp
     t3_core_gl_test.cpp
     t4_io_data_test.cpp
     t5_volume_test.cpp

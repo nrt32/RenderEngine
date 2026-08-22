@@ -2,8 +2,8 @@
 //
 // This module is the SOLE owner of the raw draw-state GL calls
 // (glViewport / glClearColor / glClear / glEnable / glDisable /
-// glDrawElements). render/, app/, and tests/ consume GL only through these
-// wrappers (guardrail gpu_api_ownership).
+// glDrawElements / glBlitFramebuffer). render/, app/, and tests/ consume GL
+// only through these wrappers (guardrail gpu_api_ownership).
 
 #include "core/draw.hpp"
 
@@ -80,6 +80,26 @@ void unbindImage(std::uint32_t unit) noexcept {
 void enablePremultipliedOverBlend() noexcept {
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+data::Result<void> blit(const Framebuffer& source, int srcX, int srcY,
+                        int srcWidth, int srcHeight,
+                        const Framebuffer* destination, int dstX, int dstY,
+                        int dstWidth, int dstHeight) {
+    if (glBlitFramebuffer == nullptr) {
+        return data::makeError<void>(
+            1, "blit: no GL context (glBlitFramebuffer not loaded)");
+    }
+    // Bind the read and draw framebuffer targets explicitly: the source is
+    // always an FBO (v1 never blits from the default framebuffer), the
+    // destination is either an FBO or the window's default framebuffer (0).
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, source.id());
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER,
+                      destination == nullptr ? 0u : destination->id());
+    glBlitFramebuffer(srcX, srcY, srcX + srcWidth, srcY + srcHeight, dstX, dstY,
+                      dstX + dstWidth, dstY + dstHeight, GL_COLOR_BUFFER_BIT,
+                      GL_NEAREST);
+    return data::Result<void>(data::value);
 }
 
 } // namespace re::core

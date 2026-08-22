@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "core/framebuffer.hpp"
 #include "core/texture2d.hpp"
 #include "core/vertex_array.hpp"
 #include "data/result.hpp"
@@ -81,5 +82,27 @@ void unbindImage(std::uint32_t unit) noexcept;
 /// i.e. GL_ONE, GL_ONE_MINUS_SRC_ALPHA with premultiplied source colors
 /// (SPEC §3 OIT; render/linked_list_oit.cpp composite pass).
 void enablePremultipliedOverBlend() noexcept;
+
+/// Copy a `srcWidth` x `srcHeight` color pixel rectangle from the bottom-left
+/// corner `(srcX, srcY)` of the `source` framebuffer into the `destination`
+/// framebuffer (nullptr = the window's default framebuffer 0) at the
+/// bottom-left corner `(dstX, dstY)`, scaled to `dstWidth` x `dstHeight`
+/// (glBlitFramebuffer with GL_COLOR_BUFFER_BIT and GL_NEAREST). Coordinates are
+/// in GL pixel convention (y = 0 is the bottom scanline), matching
+/// core::setViewport and the ViewRect convention of the multi-view compositor
+/// (render/view_renderer.hpp, SPEC §9 V2.4).
+///
+/// v1 framebuffers are color-only (docs/core.md), so only the color buffer is
+/// blitted. With equal source and destination sizes the copy is exact —
+/// GL_NEAREST does not filter, so each source pixel lands pixel-for-pixel at
+/// its destination position; the multi-view gate (V2 T2) relies on this to
+/// read each view's scene color at the center of its pinned window rect.
+///
+/// Returns an error if no GL context is current (glBlitFramebuffer not
+/// loaded).
+data::Result<void> blit(const Framebuffer& source, int srcX, int srcY,
+                        int srcWidth, int srcHeight,
+                        const Framebuffer* destination, int dstX, int dstY,
+                        int dstWidth, int dstHeight);
 
 } // namespace re::core

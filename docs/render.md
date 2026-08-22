@@ -16,8 +16,10 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 > transparency pipeline, FR-render.2/3), and the **T11 deliverable**
 > (`SliceRenderer`, the geometry-shader plane clip of a mesh, FR-render.4), and
 > the **V2 T1 deliverable** (`render/types.hpp` shared types + the `IRenderer`
-> dispatch contract, SPEC §9 V2.3). It is part of the `docs/render.md`
-> documentation map (T7/T8/T9/T10/T11 + V2 T1; later tasks extend it).
+> dispatch contract, SPEC §9 V2.3) and the **V2 T2 deliverable** (the
+> multi-view compositor `View`/`ViewRect`/`ViewRenderer` + the new `core::blit`,
+> SPEC §9 V2.4). It is part of the `docs/render.md`
+> documentation map (T7/T8/T9/T10/T11 + V2 T1/V2 T2; later tasks extend it).
 
 ## Components
 
@@ -61,6 +63,67 @@ center pixels of their direct-call gates (R3):
 | PlaneScene dispatched to `MeshRenderer` | — | typed error, code 2 | a scene of the wrong technique is rejected (SPEC §5, no exceptions) |
 | null (default-constructed) `Scene` | every renderer | typed error, code 2 | the documented "no scene" payload is rejected, never a crash (SPEC §5) |
 | `Scene` variant size | — | 4 | one alternative per technique |
+
+### Multi-view composition: `View`/`ViewRect`/`ViewRenderer` + `core::blit` (SPEC §9 V2.4, V2 T2)
+
+The **multi-view workstream's engine side** ("Model B: per-view FBO + engine
+blit"). The front-end (app/) shares **per-view window-section handles**
+(`render::ViewRect`) and **abstract scene objects** (`render::View`, each
+holding a `Scene` dispatch variant); the engine compositor
+(`render::ViewRenderer`) dispatches each view's scene through the `IRenderer`
+registered for its technique (V2 T1), **renders it into the view's own
+`core::Framebuffer`**, then **blits each FBO into its window rect** via the new
+`core::blit` wrapper. **No app-side viewport blending**: the app performs no
+textured-quad present pass and no per-view compositing — the engine present is
+the whole composition. The MPR sample's 2×2 grid (docs/mpr.md) is driven
+through this compositor (T14/T15 + V2 T2).
+
+| Type | Purpose |
+|---|---|
+| `ViewRect` | a window-section rectangle in GL pixel coordinates (origin bottom-left, matching `core::setViewport`): `x`/`y`/`width`/`height`. The per-view window-section handle the app shares with the engine. |
+| `View` | one view of a multi-view window: the abstract `Scene` object (dispatch payload), the per-view `Camera`, the per-view `clearColor`, and the `ViewRect` its FBO is blitted into. |
+| `SceneKind` | `enum { Mesh, Plane, Volume, Slice }` mirroring the `Scene` variant's alternative order (static_assert-verified); `ViewRenderer` registers one `IRenderer` per kind. |
+| `ViewRenderer` | the engine-side multi-view compositor: owns one color-only `core::Framebuffer` per view (all `viewWidth`×`viewHeight`), `setRenderer(kind, renderer)` registers the dispatch targets, `renderViews(views)` renders every view's scene into its own FBO, `present(views, destination)` blits each FBO into its pinned rect (destination `nullptr` = the window's default framebuffer), `render(views, destination)` = both. |
+| `core::blit` | the new `core/` wrapper around `glBlitFramebuffer` (guardrail `gpu_api_ownership`: the raw GL call lives in `core/draw.cpp`). Copies a color pixel rectangle from a source FBO to a destination framebuffer (`nullptr` = default framebuffer 0), GL_NEAREST, scaled to the destination rect. v1 FBOs are color-only, so only `GL_COLOR_BUFFER_BIT` is blitted. |
+
+**Dispatch semantics (engine side).** For each view, `renderViews` uses the
+`Scene` variant's alternative index — which equals the `SceneKind` enumerator
+value (static_assert in `view_renderer.hpp`) — to pick the registered
+`IRenderer` and call its `IRenderer::render(scene, camera, target)` with a
+`RenderTarget` over the view's own FBO. A view whose technique has no
+registered renderer is rejected with a typed error (code 2); a view-count
+mismatch is rejected with a typed error (code 1) (SPEC §5, no exceptions). The
+per-view FBOs are created lazily on the first render.
+
+**Blit semantics (exact, pixel-for-pixel).** `core::blit` copies
+`(srcX, srcY, srcWidth, srcHeight)` of the source FBO to
+`(dstX, dstY, dstWidth, dstHeight)` of the destination with GL_NEAREST. Both
+framebuffers share the GL y-up convention, so the copy is a direct 1:1 transfer
+when the sizes match — no vertical flip, no filtering — which is what makes the
+gate's center-pixel assertions exact: each view's FBO content lands
+pixel-for-pixel at its pinned window rect position.
+
+#### Acceptance constants (V2 T2 multi-view gate, docs/render.md)
+
+A 2-view layout in a **1280×480** window; each view's FBO is 640×480 (equal to
+its rect, so the blit is 1:1):
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| Window size | `1280×480` | the gate's pinned 2-view window |
+| View A rect | `(0, 0, 640, 480)` | pinned (task layout) |
+| View B rect | `(640, 0, 640, 480)` | pinned (task layout); the two rects exactly tile the window |
+| View A scene | MeshScene: FR-render.1 golden +Z quad, base `{0.2, 0.4, 0.8, 1.0}` | renders `{51, 102, 204}` at the FBO center (front-facing, shade 1) |
+| View B scene | PlaneScene: 640×480 solid image `{0.9, 0.1, 0.3, 1.0}` | texel bytes `{round(0.9·255)=230, round(0.1·255)=26, round(0.3·255)=77}`; quad maps 1:1, center samples the solid texel |
+| View A FBO center `(320, 240)` | `{51, 102, 204}`, α `255` | view A's scene rendered into its OWN FBO (per-view FBO proof) |
+| View B FBO center `(320, 240)` | `{230, 26, 77}`, α `255` | view B's scene rendered into its own FBO |
+| Window pixel `(320, 240)` | `{51, 102, 204}` (±1) | the blit places view A's FBO (320,240) at window (320,240) — its pinned rect center |
+| Window pixel `(960, 240)` | `{230, 26, 77}` (±1) | view B's FBO (320,240) shifted by rect origin (640,0) |
+| Window pixel `(639, 240)` | `{51, 102, 204}` (±1) | last pixel of rect A — the split is pinned exactly at x = 640 |
+| Window pixel `(640, 240)` | `{230, 26, 77}` (±1) | first pixel of rect B |
+| Unregistered technique view | typed error, code 2 | a VolumeScene with no registered Volume renderer is rejected before any draw (SPEC §5) |
+| View-count mismatch | typed error, code 1 | 1 view against a 2-view compositor (SPEC §5) |
+| `present()` before the first `renderViews` | typed error, code 3 | the per-view FBOs don't exist yet — rejected instead of blitting unrendered targets (SPEC §5) |
 
 ### `IMaterial` (`render/imaterial.hpp`)
 
@@ -491,7 +554,8 @@ out.rgb = 0.5*(1 + 0.5 + 0.25 + 0.125)     = 0.9375  (along green)
 ## Guardrails observed
 
 - **GL ownership**: `render/` is GL-call-free. Raw draw-state calls
-  (`glViewport`, `glClear`, `glDrawElements`, …) live in `core/draw.cpp`; raw
+  (`glViewport`, `glClear`, `glDrawElements`, `glBlitFramebuffer`, …) live in
+  `core/draw.cpp`; raw
   readback (`glReadPixels`) lives in `core/read_pixels.cpp`; SSBO creation/
   binding/readback lives in `core/storage_buffer.cpp`; transform-feedback
   creation/capture/readback lives in `core/transform_feedback.cpp`; image
