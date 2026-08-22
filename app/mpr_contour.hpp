@@ -38,7 +38,7 @@
 #include "app/mpr_slice.hpp"
 #include "data/image.hpp"
 #include "data/mesh.hpp"
-#include "render/mesh_renderer.hpp" // render::Camera (plain struct, no GL)
+#include "render/types.hpp" // render::Camera (plain struct, no GL)
 #include "volume/color.hpp"
 
 namespace re::app {

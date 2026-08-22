@@ -372,4 +372,19 @@ data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
     return data::Result<void>(data::value);
 }
 
+data::Result<void> VolumeRenderer::render(const Scene& scene,
+                                          const Camera& camera,
+                                          const RenderTarget& target) {
+    const VolumeScene* const* volumeScene =
+        std::get_if<const VolumeScene*>(&scene);
+    if (volumeScene == nullptr || *volumeScene == nullptr) {
+        // The dispatch contract (SPEC §9 V2.3) rejects a scene of a different
+        // technique — or the null "no scene" payload (render/types.hpp) — with
+        // a typed error instead of throwing or crashing (SPEC §5).
+        return data::makeError<void>(
+            2, "VolumeRenderer: scene does not hold a VolumeScene");
+    }
+    return render(**volumeScene, camera, target);
+}
+
 } // namespace re::render

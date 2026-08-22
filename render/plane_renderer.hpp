@@ -38,9 +38,11 @@
 #include "core/framebuffer.hpp"
 #include "core/shader_program.hpp"
 #include "core/texture2d.hpp"
+#include "core/vertex_array.hpp"
+#include "core/vertex_buffer.hpp"
 #include "data/image.hpp"
 #include "data/result.hpp"
-#include "render/mesh_renderer.hpp" // render::Camera / render::RenderTarget
+#include "render/types.hpp" // render::Camera / render::RenderTarget
 
 namespace re::render {
 
@@ -91,7 +93,7 @@ struct PlaneScene {
 /// data::Image is uploaded to the GPU once. Textures are sampled with
 /// GL_LINEAR and CLAMP_TO_EDGE (core::Texture2D defaults), so a quad mapped
 /// 1:1 onto the viewport reproduces the source texels exactly (FR-render.5).
-class PlaneRenderer {
+class PlaneRenderer : public IRenderer {
    public:
     /// Render `scene` into `target` from `camera`. On success the target
     /// framebuffer is left bound (so tests can read it back). Returns a typed
@@ -99,6 +101,12 @@ class PlaneRenderer {
     /// cannot be issued.
     data::Result<void> render(const PlaneScene& scene, const Camera& camera,
                               const RenderTarget& target);
+
+    /// IRenderer dispatch (SPEC §9 V2.3): renders when `scene` holds a
+    /// PlaneScene; returns a typed error when it holds a different technique
+    /// (SPEC §5, no exceptions).
+    data::Result<void> render(const Scene& scene, const Camera& camera,
+                              const RenderTarget& target) override;
 
    private:
     /// Convert an image's pixels to RGBA8 bytes for GL upload: 4-channel

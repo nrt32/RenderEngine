@@ -337,4 +337,18 @@ data::Result<void> PlaneRenderer::render(const PlaneScene& scene,
     return data::Result<void>(data::value);
 }
 
+data::Result<void> PlaneRenderer::render(const Scene& scene,
+                                         const Camera& camera,
+                                         const RenderTarget& target) {
+    const PlaneScene* const* planeScene = std::get_if<const PlaneScene*>(&scene);
+    if (planeScene == nullptr || *planeScene == nullptr) {
+        // The dispatch contract (SPEC §9 V2.3) rejects a scene of a different
+        // technique — or the null "no scene" payload (render/types.hpp) — with
+        // a typed error instead of throwing or crashing (SPEC §5).
+        return data::makeError<void>(
+            2, "PlaneRenderer: scene does not hold a PlaneScene");
+    }
+    return render(**planeScene, camera, target);
+}
+
 } // namespace re::render

@@ -13,7 +13,7 @@
 
 #include "core/draw.hpp"
 #include "render/mesh_geometry.hpp"
-#include "render/mesh_renderer.hpp" // render::Camera / render::RenderTarget
+#include "render/types.hpp" // render::Camera / render::RenderTarget
 
 namespace re::render {
 

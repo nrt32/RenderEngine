@@ -22,12 +22,10 @@
 #include <glm/vec4.hpp>
 
 #include "data/result.hpp"
+#include "render/types.hpp" // render::Camera / render::RenderTarget
 
 namespace re::render {
 
-// Forward declarations of the scene structs shared with MeshRenderer.
-struct Camera;
-struct RenderTarget;
 class MeshGeometry;
 
 /// Abstraction over an order-independent transparency compositor.

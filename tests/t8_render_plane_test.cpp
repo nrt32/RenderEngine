@@ -54,8 +54,8 @@
 #include "core/read_pixels.hpp"
 #include "core/texture2d.hpp"
 #include "data/image.hpp"
-#include "render/mesh_renderer.hpp"
 #include "render/plane_renderer.hpp"
+#include "render/types.hpp" // render::Camera / render::RenderTarget
 #include "tests/offscreen_fixture.hpp"
 
 namespace re::tests {

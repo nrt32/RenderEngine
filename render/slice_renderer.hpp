@@ -37,6 +37,7 @@
 #include "data/result.hpp"
 #include "render/mesh_geometry.hpp"
 #include "render/mesh_renderer.hpp"
+#include "render/types.hpp" // IRenderer / render::Scene
 
 namespace re::render {
 
@@ -51,8 +52,15 @@ struct ClipPlane {
 
 /// A scene of mesh instances to clip and slice (reuses MeshInstance from
 /// MeshRenderer; CPU-side, app/ builds these).
+///
+/// `plane` is the clip plane used by the IRenderer dispatch path
+/// (SliceRenderer::render(scene, camera, target), SPEC §9 V2.3): the dispatch
+/// contract carries no separate plane parameter, so the scene itself carries
+/// the plane it should be sliced against. The concrete 4-argument render
+/// (which receives the plane explicitly) is unaffected by this member.
 struct SliceScene {
     std::vector<MeshInstance> meshes;
+    ClipPlane plane; ///< Clip plane for the IRenderer dispatch path.
 };
 
 /// Stateless geometry-shader plane-clip renderer (SPEC §3).
@@ -61,7 +69,7 @@ struct SliceScene {
 /// fragment), the cached transform-feedback capture program, a transform
 /// feedback object, and a geometry cache keyed by mesh pointer (shared with the
 /// mesh-family renderers, so a data::Mesh is uploaded to the GPU once).
-class SliceRenderer {
+class SliceRenderer : public IRenderer {
    public:
     /// Construct with no dependencies (slicing does not use OIT in v1).
     SliceRenderer() = default;
@@ -79,6 +87,13 @@ class SliceRenderer {
     data::Result<void> render(const SliceScene& scene, const Camera& camera,
                               const ClipPlane& plane,
                               const RenderTarget& target);
+
+    /// IRenderer dispatch (SPEC §9 V2.3): renders when `scene` holds a
+    /// SliceScene, clipping it against the plane carried by the scene itself
+    /// (`scene.plane`); returns a typed error when it holds a different
+    /// technique (SPEC §5, no exceptions).
+    data::Result<void> render(const Scene& scene, const Camera& camera,
+                              const RenderTarget& target) override;
 
     /// Capture the on-plane cross-section vertices emitted by the geometry
     /// shader for `scene` clipped against `plane` into `out` (world-space

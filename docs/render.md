@@ -14,11 +14,53 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 > (`VolumeRenderer` ray-cast GL draw pass, FR-render.6), the **T10
 > deliverable** (`LinkedListOIT`, the per-pixel linked-list order-independent
 > transparency pipeline, FR-render.2/3), and the **T11 deliverable**
-> (`SliceRenderer`, the geometry-shader plane clip of a mesh, FR-render.4). It
-> is part of the `docs/render.md` documentation map (T7/T8/T9/T10/T11; later
-> tasks extend it).
+> (`SliceRenderer`, the geometry-shader plane clip of a mesh, FR-render.4), and
+> the **V2 T1 deliverable** (`render/types.hpp` shared types + the `IRenderer`
+> dispatch contract, SPEC §9 V2.3). It is part of the `docs/render.md`
+> documentation map (T7/T8/T9/T10/T11 + V2 T1; later tasks extend it).
 
 ## Components
+
+### `render/types.hpp` and the `IRenderer` contract (SPEC §9 V2.3, V2 T1)
+
+The shared render-types header: the types every renderer shares plus the narrow
+pure-abstract dispatch contract that the multi-view workstream (V2 T2, SPEC §9
+V2.4) drives ("RE dispatches objects to the correct renderer via IRenderer").
+
+| Type | Purpose |
+|---|---|
+| `Camera` | `view` / `proj` matrices + `position` (eye, for view-direction terms). **Moved here from `mesh_renderer.hpp`** so a file that needs only the shared types no longer pulls in the whole mesh renderer. |
+| `RenderTarget` | a color-only `core::Framebuffer` + pixel size + clear color (SPEC §3; v1 FBOs are color-only, SPEC §6 / docs/core.md). A null framebuffer means the window's default framebuffer (samples). **Moved here from `mesh_renderer.hpp`**. |
+| `Scene` | `std::variant<const MeshScene*, const PlaneScene*, const VolumeScene*, const SliceScene*>` — the dispatch payload: a pointer to the scene of any of the four techniques. The variant holds **pointers** because a `std::variant` of forward-declared *value* types does not compile (GCC/libstdc++); the scene structs stay defined in their renderer headers and are forward-declared here. Scenes are owned by `app/` and passed by pointer, matching the stateless-renderer model (SPEC §3). |
+| `IRenderer` | the pure abstract contract: `data::Result<void> render(const Scene&, const Camera&, const RenderTarget&) = 0`. Implemented by `MeshRenderer`, `PlaneRenderer`, `VolumeRenderer`, and `SliceRenderer`. |
+
+**Dispatch semantics.** Each renderer's `IRenderer::render` extracts its own
+scene type from the variant (`std::get_if`, never `std::get` — the
+no-exceptions rule, SPEC §5) and forwards to the concrete
+`render(scene, camera, target)`; a scene holding a different technique returns
+a typed error (code 2, message naming the expected scene type) instead of
+throwing or crashing. The output through the interface is therefore
+bit-identical to the direct concrete call (regression lock R3; verified by the
+V2 T1 gate, constants below). `SliceRenderer`'s dispatch path slices against
+the clip plane **carried by the scene itself** (`SliceScene::plane`) — the
+narrow contract has no plane parameter — while the concrete 4-argument
+`render(scene, camera, plane, target)` is unchanged.
+
+#### Acceptance constants (V2 T1 dispatch gate, docs/render.md)
+
+The four golden scenes dispatched through `IRenderer&` reproduce the exact
+center pixels of their direct-call gates (R3):
+
+| Scene dispatched | Renderer | Center pixel | Where it comes from |
+|---|---|---|---|
+| golden quad (mesh) | `MeshRenderer` | `{51, 102, 204}`, α `255` | FR-render.1 (the +Z-facing quad shades to the base color) |
+| solid 64×64 image (plane) | `PlaneRenderer` | `{51, 102, 204, 255}` | FR-render.5 (the quad maps 1:1, sampling the solid texel) |
+| 2×2×2 uniform volume, constant-green TF | `VolumeRenderer` | `{0, 239, 0, 239}` | FR-render.6 (`round(0.9375*255) = 239`) |
+| golden cube, scene-carried plane z=0 | `SliceRenderer` | `{51, 102, 204}` | FR-render.4 (kept +Z face shades to the base color) |
+| golden cube, scene-carried plane z=2 | `SliceRenderer` | `{0, 0, 0, 0}` (clear) | cube max z = 1 < 2, so every triangle is clipped away — proves the dispatch path uses the scene's plane |
+| PlaneScene dispatched to `MeshRenderer` | — | typed error, code 2 | a scene of the wrong technique is rejected (SPEC §5, no exceptions) |
+| null (default-constructed) `Scene` | every renderer | typed error, code 2 | the documented "no scene" payload is rejected, never a crash (SPEC §5) |
+| `Scene` variant size | — | 4 | one alternative per technique |
 
 ### `IMaterial` (`render/imaterial.hpp`)
 
@@ -168,14 +210,17 @@ A **stateless opaque forward-pass** renderer (SPEC §3 "Stateless renderers"):
 `render(scene, camera, target)` receives all of its data per call. The renderer
 owns only GL resources — its cached opaque shader program and the GPU geometries
 of the meshes it has drawn (keyed by mesh pointer). One mesh can be drawn by
-several views without duplication.
+several views without duplication. It implements the `IRenderer` dispatch
+contract (`render/types.hpp`, SPEC §9 V2.3): its `IRenderer::render` forwards a
+`Scene` holding a `MeshScene` to this concrete method.
 
-Public scene structs (defined in `mesh_renderer.hpp`):
+Public scene structs (`Camera`/`RenderTarget` live in `render/types.hpp`;
+`MeshInstance`/`MeshScene` are defined in `mesh_renderer.hpp`):
 
 | Type | Purpose |
 |---|---|
-| `Camera` | `view` / `proj` matrices + `position` (eye, for view-direction terms). |
-| `RenderTarget` | a color-only `core::Framebuffer` + pixel size + clear color. |
+| `Camera` | `view` / `proj` matrices + `position` (eye, for view-direction terms) — `render/types.hpp`. |
+| `RenderTarget` | a color-only `core::Framebuffer` + pixel size + clear color — `render/types.hpp`. |
 | `MeshInstance` | a `data::Mesh`, its `IMaterial`, and its model matrix. |
 | `MeshScene` | a vector of `MeshInstance`s (CPU-side; `app/` builds these). |
 
@@ -232,15 +277,19 @@ interface exactly like `MeshRenderer`, and **does not use OIT in v1** (SPEC §3
 plane, target)` receives all of its data per call; the renderer owns only GL
 resources — its cached clip shader program (vertex + geometry + fragment), its
 transform-feedback capture program + object, and the GPU geometries of the
-meshes it has drawn (keyed by mesh pointer, shared with the mesh family).
+meshes it has drawn (keyed by mesh pointer, shared with the mesh family). It
+implements the `IRenderer` dispatch contract (`render/types.hpp`, SPEC §9 V2.3):
+its `IRenderer::render` forwards a `Scene` holding a `SliceScene` to this
+concrete method, slicing against the **plane carried by the scene itself**
+(`SliceScene::plane`).
 
-Public scene structs (defined in `slice_renderer.hpp`; reuses `MeshInstance` /
-`MeshScene`-style `SliceScene` from `mesh_renderer.hpp`):
+Public scene structs (defined in `slice_renderer.hpp`; reuses `MeshInstance`
+from `mesh_renderer.hpp`):
 
 | Type | Purpose |
 |---|---|
 | `ClipPlane` | the slice plane in **world space**: a unit `normal` + a `point` on the plane. The kept side is `dot(normal, p - point) >= 0`. |
-| `SliceScene` | a vector of `MeshInstance`s to clip (CPU-side; `app/` builds these). |
+| `SliceScene` | a vector of `MeshInstance`s to clip (CPU-side; `app/` builds these) plus the `plane` the `IRenderer` dispatch path slices against (the concrete 4-argument render receives the plane explicitly and is unaffected). |
 
 **Geometry shader clip (pure GPU).** The vertex shader transforms each vertex to
 world space; the geometry shader computes each triangle's signed plane distance
@@ -287,7 +336,9 @@ slice views (T14). `PlaneRenderer::render(scene, camera, target)` receives all
 of its data per call; the renderer owns only GL resources — its cached
 textured-plane shader, one shared unit-quad VAO/VBO, and a texture cache keyed
 by image pointer (each `data::Image` is uploaded to the GPU once and reused
-across plane instances and views).
+across plane instances and views). It implements the `IRenderer` dispatch
+contract (`render/types.hpp`, SPEC §9 V2.3): its `IRenderer::render` forwards a
+`Scene` holding a `PlaneScene` to this concrete method.
 
 Public scene structs (defined in `plane_renderer.hpp`):
 
@@ -358,7 +409,9 @@ the pure math)"). `VolumeRenderer::render(scene, camera, target)` receives all o
 its data per call; the renderer owns only GL resources — its cached ray-cast
 shader program, one shared full-screen quad VAO/VBO, and a 3D-texture cache keyed
 by dataset pointer (each `data::VolumeDataset` is uploaded to the GPU once and
-reused across instances and views).
+reused across instances and views). It implements the `IRenderer` dispatch
+contract (`render/types.hpp`, SPEC §9 V2.3): its `IRenderer::render` forwards a
+`Scene` holding a `VolumeScene` to this concrete method.
 
 Public scene structs and constant (defined in `volume_renderer.hpp`):
 
@@ -447,7 +500,8 @@ out.rgb = 0.5*(1 + 0.5 + 0.25 + 0.125)     = 0.9375  (along green)
   `LinkedListOIT::readCapturedFragmentCount`,
   `SliceRenderer::captureCrossSection`) — guardrail `no_production_readback`.
 - **Stateless + dependency inversion**: `render()` takes all data per call;
-  renderers depend on `IMaterial` / `ITransparencyPipeline` abstractions.
+  renderers depend on `IMaterial` / `ITransparencyPipeline` abstractions and
+  expose the `IRenderer` dispatch contract (SPEC §9 V2.3).
 - **Typed diagnostics**: draw/geometry failures return `data::Result` — no
   exceptions, no silent failure.
 - **Deterministic / single-threaded**: one render thread; the v1 opaque pass is

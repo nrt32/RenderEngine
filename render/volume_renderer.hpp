@@ -40,7 +40,7 @@
 #include "core/vertex_buffer.hpp"
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
-#include "render/mesh_renderer.hpp" // render::Camera / render::RenderTarget
+#include "render/types.hpp" // render::Camera / render::RenderTarget
 #include "volume/transfer_function.hpp"
 
 namespace re::render {
@@ -79,7 +79,7 @@ inline constexpr float kDefaultStepLength = 0.25f;
 /// 3D-texture cache keyed by dataset pointer so each data::VolumeDataset is
 /// uploaded to the GPU once. The transfer function is uploaded per instance
 /// from its control points.
-class VolumeRenderer {
+class VolumeRenderer : public IRenderer {
    public:
     /// Render `scene` into `target` from `camera`. On success the target
     /// framebuffer is left bound (so tests can read it back). Returns a typed
@@ -87,6 +87,12 @@ class VolumeRenderer {
     /// cannot be issued.
     data::Result<void> render(const VolumeScene& scene, const Camera& camera,
                               const RenderTarget& target);
+
+    /// IRenderer dispatch (SPEC §9 V2.3): renders when `scene` holds a
+    /// VolumeScene; returns a typed error when it holds a different technique
+    /// (SPEC §5, no exceptions).
+    data::Result<void> render(const Scene& scene, const Camera& camera,
+                              const RenderTarget& target) override;
 
     /// The world-space AABB of `instance`: the min/max of its model-space unit
     /// cube [0,1]^3 transformed by the instance's model matrix (exact for

@@ -48,7 +48,7 @@
 #include "core/read_pixels.hpp"
 #include "core/texture2d.hpp"
 #include "data/volume_dataset.hpp"
-#include "render/mesh_renderer.hpp" // render::Camera / render::RenderTarget
+#include "render/types.hpp" // render::Camera / render::RenderTarget
 #include "render/volume_renderer.hpp"
 #include "tests/offscreen_fixture.hpp"
 #include "volume/color.hpp"

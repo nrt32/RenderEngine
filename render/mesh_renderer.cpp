@@ -219,4 +219,18 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
     return drawOpaque(scene, camera, target);
 }
 
+data::Result<void> MeshRenderer::render(const Scene& scene,
+                                        const Camera& camera,
+                                        const RenderTarget& target) {
+    const MeshScene* const* meshScene = std::get_if<const MeshScene*>(&scene);
+    if (meshScene == nullptr || *meshScene == nullptr) {
+        // The dispatch contract (SPEC §9 V2.3) rejects a scene of a different
+        // technique — or the null "no scene" payload (render/types.hpp) — with
+        // a typed error instead of throwing or crashing (SPEC §5).
+        return data::makeError<void>(
+            2, "MeshRenderer: scene does not hold a MeshScene");
+    }
+    return render(**meshScene, camera, target);
+}
+
 } // namespace re::render

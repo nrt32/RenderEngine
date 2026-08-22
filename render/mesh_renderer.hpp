@@ -18,39 +18,20 @@
 // render/ is GL-call-free: it draws through the core::Draw API and core/ RAII
 // objects (guardrail gpu_api_ownership).
 
-#include <cstdint>
 #include <glm/mat4x4.hpp>
-#include <glm/vec4.hpp>
 #include <optional>
 #include <unordered_map>
 #include <vector>
 
-#include "core/framebuffer.hpp"
 #include "core/shader_program.hpp"
 #include "data/mesh.hpp"
 #include "data/result.hpp"
 #include "render/imaterial.hpp"
 #include "render/itransparency_pipeline.hpp"
 #include "render/mesh_geometry.hpp"
+#include "render/types.hpp"
 
 namespace re::render {
-
-/// Camera: view + projection matrices plus the eye position (for lighting and
-/// view-direction terms).
-struct Camera {
-    glm::mat4 view{1.0f};
-    glm::mat4 proj{1.0f};
-    glm::vec3 position{0.0f, 0.0f, 0.0f};
-};
-
-/// Offscreen render target: a color-only framebuffer plus its pixel size and
-/// clear color (SPEC §3; v1 FBOs are color-only, SPEC §6 / docs/core.md).
-struct RenderTarget {
-    core::Framebuffer* framebuffer = nullptr;
-    std::uint32_t width = 0u;
-    std::uint32_t height = 0u;
-    glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 0.0f};
-};
 
 /// A single mesh in a scene: a data::Mesh, its material, and its model
 /// transform.
@@ -69,7 +50,7 @@ struct MeshScene {
 ///
 /// Owns only GL resources: the cached opaque shader program and a geometry
 /// cache keyed by mesh pointer, so a data::Mesh is uploaded to the GPU once.
-class MeshRenderer {
+class MeshRenderer : public IRenderer {
    public:
     /// Construct with the injected transparency pipeline (`transparency` may
     /// be null when no OIT is available). The pipeline is auto-engaged only
@@ -81,6 +62,12 @@ class MeshRenderer {
     /// error if the opaque shader fails to build or a draw cannot be issued.
     data::Result<void> render(const MeshScene& scene, const Camera& camera,
                               const RenderTarget& target);
+
+    /// IRenderer dispatch (SPEC §9 V2.3): renders when `scene` holds a
+    /// MeshScene; returns a typed error when it holds a different technique
+    /// (SPEC §5, no exceptions).
+    data::Result<void> render(const Scene& scene, const Camera& camera,
+                              const RenderTarget& target) override;
 
     /// The injected transparency pipeline (may be null).
     ITransparencyPipeline* transparencyPipeline() const noexcept {
