@@ -38,5 +38,5 @@ section files directly.
 - **Assets:** committed in-repo under `data/`, licensed, SHA256-pinned (§7).
 - **Env:** `source tools/env.sh` is the launch prerequisite; convenience
   scripts in `tools/` reconstruct the §8 build/test contract (§8).
-- **V2 roadmap:** ten future-scope items in approved product-first order
+- **V2 roadmap:** eight future-scope items in approved product-first order
   (§9), mirrored by the numbered backlog in `TASKS.md`.

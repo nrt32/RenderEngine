@@ -65,8 +65,6 @@ Priority order (approved): **product-first** — the multi-view workstream
 | T6 | docs/core.md (draw-state cache) |
 | T7 | docs/render.md (`.glsl` files + malformed fixture) |
 | T8 | docs/render.md (`RE_GLSL_VERSION`), docs/spec/env.md (450/460 ceiling note) |
-| T9 | docs/spec/env.md (per-platform driver hook) |
-| T10 | docs/spec/env.md (per-OS provisioning tables + generic display requirement) |
 
 ---
 
@@ -184,42 +182,9 @@ assertion (llvmpipe caps at GLSL 4.50, SPEC §8).
 
 **G** — suite green, audit green.
 
-## T9: Backend-agnostic CI driver hook (`tools/env_ci.sh`)
+## Definition of Done (end-of-loop evidence, finalized at T8)
 
-**D** — (SPEC §9 V2.8) Move the `GALLIUM_DRIVER`/`MESA_*` coupling out of
-`tests/CMakeLists.txt` into a per-platform hook; keep the leak-gate *principle*
-(deterministic software driver, stable LSan attribution) portable, llvmpipe as
-one implementation. Pinned per-platform mapping: Linux
-`GALLIUM_DRIVER=llvmpipe` (+ existing `MESA_*` vars), Windows WARP, macOS
-software CGL renderer.
-
-**T** — gate asserts: `tools/env_ci.sh` contains the literal Linux mapping
-`GALLIUM_DRIVER=llvmpipe` (grep-asserted, plus the `MESA_*` vars), sourcing it
-reproduces today's test env exactly, and the suite stays green under llvmpipe
-on this host.
-
-**G** — suite green, audit green.
-
----
-
-## T10: Per-OS provisioning tables + generic display requirement
-
-**D** — (SPEC §9 V2.9) Replace the Ubuntu/X11/xvfb-specific §8 package list
-with per-OS tables (Linux/Windows/macOS) and a generic "a display server must
-be available" sample-gate requirement.
-
-**T** — gate asserts: SPEC §8 contains the literal subsections `## Linux`,
-`## Windows`, `## macOS`, each with a per-OS package table, and the
-sample-smoke gate wording contains the literal phrase "a display server must
-be available".
-
-**G** — suite green, audit green.
-
----
-
-## Definition of Done (end-of-loop evidence, finalized at T10)
-
-- [ ] All 10 task gates green; full suite green on a clean tree at the last task.
+- [ ] All 8 task gates green; full suite green on a clean tree at the last task.
 - [ ] GPU/readback tests (T2, T6) verified with **N>=3 consecutive green
       runs** (records in `tools/logs/`).
 - [ ] Mechanical audit green (`tools/audit.sh`) with
@@ -228,5 +193,4 @@ be available".
 - [ ] Documentation map complete (table above): docs/render.md, docs/core.md,
       AGENTS.md, docs/spec/env.md, tools/env.sh, TASKS.md preamble — exactly as
       listed per task.
-- [ ] Sample smoke set (mesh/plane/volume/slice/oit/mpr) still green under the
-      display-server-generic gate wording.
+- [ ] Sample smoke set (mesh/plane/volume/slice/oit/mpr) still green.
