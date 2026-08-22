@@ -19,10 +19,11 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 > dispatch contract, SPEC §9 V2.3), the **V2 T2 deliverable** (the
 > multi-view compositor `View`/`ViewRect`/`ViewRenderer` + the new `core::blit`,
 > SPEC §9 V2.4), the **V2 T3 deliverable** (the generational asset registry
-> `AssetRegistry`/`AssetHandle`, SPEC §9 V2.5) and the **V2 T7 deliverable**
-> (shader externalization to `.glsl` files + malformed fixture, SPEC §9 V2.6).
-> It is part of the `docs/render.md` documentation map
-> (T7/T8/T9/T10/T11 + V2 T1/T2/T3/T7; later tasks extend it).
+> `AssetRegistry`/`AssetHandle`, SPEC §9 V2.5), the **V2 T7 deliverable**
+> (shader externalization to `.glsl` files + malformed fixture, SPEC §9 V2.6)
+> and the **V2 T8 deliverable** (GLSL profile macro `RE_GLSL_VERSION`, SPEC §9
+> V2.7). It is part of the `docs/render.md` documentation map
+> (T7/T8/T9/T10/T11 + V2 T1/T2/T3/T7/T8; later tasks extend it).
 
 ## Components
 
@@ -75,6 +76,47 @@ required by V2.6.
 `gpu_api_ownership`): it loads GLSL text via `core::ShaderProgram` and draws
 through `core::Draw`/`core::ShaderProgram`; the raw `glCreateShader`/
 `glCompileShader`/`glLinkProgram` calls stay under `core/shader_program.cpp`.
+
+### `RE_GLSL_VERSION` — GLSL profile macro (SPEC §9 V2.7, V2 T8)
+
+The shader language level is decoupled from the llvmpipe ceiling via the
+single macro **`RE_GLSL_VERSION`** (`core/glsl_version.hpp`): **450 = portable
+floor** (tests/CI, llvmpipe caps at GLSL 4.50) and **460 = hardware floor**
+(native d3d12 / desktop GL with full 4.6). This is the **single `#version`
+concern** now that shaders live in files (T7) — the macro is the authoritative
+version; every `.glsl` file's first line is verified to equal the macro's
+`RE_GLSL_VERSION_LINE`, so a version bump updates the macro and the files'
+first lines in lockstep.
+
+| Macro | Value in gate env | Purpose |
+|---|---|---|
+| `RE_GLSL_VERSION` | `450` | integer version: `450` (portable, llvmpipe) or `460` (hardware) |
+| `RE_GLSL_VERSION_STRING` | `"450"` | stringified version (`RE_GLSL_DETAIL_XSTR`) |
+| `RE_GLSL_VERSION_LINE` | `"#version 450 core"` | full `#version` line; every `.glsl` file heads with this line |
+
+**Default + override.** The header defaults to `450` when no override is
+supplied, so the gate/CI build is the portable floor without extra flags. For
+hardware builds pass `-DRE_GLSL_VERSION=460` or `-DRE_FORCE_GLSL_460`; the
+header stringifies the integer into `RE_GLSL_VERSION_LINE` via
+`RE_GLSL_DETAIL_XSTR`, so the line stays in sync with the integer by construction.
+A `static_assert` in the header rejects any value other than `450` or `460`.
+
+**Single concern in practice.** Every `.glsl` file under `render/shaders/`
+(including the `fixtures/` malformed helpers) heads with the line produced by
+`RE_GLSL_VERSION_LINE` — `head -n1 render/shaders/*.glsl` is uniformly
+`#version 450 core` in the gate tree (verified by the T8 gate). A fixture shader
+whose `#version` line is produced by the macro
+(`std::string(RE_GLSL_VERSION_LINE) + body`) compiles on the llvmpipe 4.6 core
+context (which accepts GLSL 4.50), while `#version 460` is the target for
+hardware-driven sample shaders on the native d3d12 path (SPEC §8). The
+460/hardware compile is a **manual sample verification**, not a gate assertion,
+because llvmpipe caps at GLSL 4.50 (`GLSL 4.60 is not supported`).
+
+**Gate (V2 T8).** In the gate env the macro expands to `#version 450` — the
+test `tests/t8_v2_glsl_version_test.cpp` asserts `static_assert(RE_GLSL_VERSION
+== 450)`, `RE_GLSL_VERSION_LINE == "#version 450 core"`, compiles the
+macro-generated fixture shader on llvmpipe, and checks that every shader file's
+first line equals `RE_GLSL_VERSION_LINE`.
 
 ### `render/types.hpp` and the `IRenderer` contract (SPEC §9 V2.3, V2 T1)
 

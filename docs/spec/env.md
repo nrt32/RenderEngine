@@ -65,15 +65,24 @@ truth.
 ### GL/GPU notes
 - WSLg exposes OpenGL via Mesa; target GL 4.6 core (the D3D12 gallium driver reports
   core 4.6 natively; llvmpipe caps at 4.5). Verify with `glxinfo -l`.
-- **Test GLSL level is GLSL 450, not 460.** The headless gate runs on the
-  deterministic software driver (llvmpipe) so LeakSanitizer attribution is stable
-  and leak-clean (see the leak-gate note below). llvmpipe's GLSL compiler supports
-  up to **4.50** — not 4.60 — and `MESA_GL_VERSION_OVERRIDE=4.6` only raises the
-  *reported* context version, never the GLSL level, so `#version 460` shaders
-  fail to compile with `GLSL 4.60 is not supported...`. A GL 4.6 core context
-  accepts GLSL 4.50 shaders, so **gate/test shaders are written `#version 450`**
-  — the portable level that compiles on both llvmpipe and d3d12. GLSL 460 remains
-  the target for hardware-driven sample shaders on the native d3d12 path.
+- **GLSL 450/460 ceiling and the `RE_GLSL_VERSION` profile macro (SPEC §9 V2.7).**
+  The headless gate runs on the deterministic software driver (llvmpipe) so
+  LeakSanitizer attribution is stable and leak-clean (see the leak-gate note
+  below). llvmpipe's GLSL compiler supports up to **4.50** — not 4.60 — and
+  `MESA_GL_VERSION_OVERRIDE=4.6` only raises the *reported* context version,
+  never the GLSL level, so `#version 460` shaders fail to compile with
+  `GLSL 4.60 is not supported...`. A GL 4.6 core context accepts GLSL 4.50
+  shaders, so **gate/test shaders are written `#version 450`** — the portable
+  level that compiles on both llvmpipe and d3d12. GLSL 460 remains the target
+  for hardware-driven sample shaders on the native d3d12 path.
+  The shader language level is controlled by the single macro **`RE_GLSL_VERSION`**
+  (`core/glsl_version.hpp`): **450 = portable floor (tests/CI, llvmpipe)**, **460
+  = hardware floor (native d3d12 / desktop GL)**. In the gate env the macro
+  expands to `#version 450 core` (static_assert + fixture-shader compile on
+  llvmpipe); the 460/hardware compile is a manual sample verification, not a
+  gate assertion, because llvmpipe caps at GLSL 4.50. Every `.glsl` file under
+  `render/shaders/` heads with the line produced by `RE_GLSL_VERSION_LINE`, so
+  the version is a single `#version` concern (V2 T7 → V2 T8).
 - **Leak-gate driver is llvmpipe, not d3d12.** The native d3d12 driver
    `dlclose()`s its closed DSOs (`libd3d12core`, `libdxcore`, `libnvwgf2umx`,
    `/dev/zero` pages) before LeakSanitizer attributes leaks, so attribution is

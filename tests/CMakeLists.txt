@@ -24,6 +24,7 @@ add_executable(${RE_TEST_TARGET}
     t12_samples_test.cpp
     t14_mpr_test.cpp
     t15_mpr_test.cpp
+    t8_v2_glsl_version_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
