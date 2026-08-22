@@ -56,8 +56,9 @@ constexpr char kOpaqueFragmentShader[] =
 
 } // namespace
 
-MeshRenderer::MeshRenderer(ITransparencyPipeline* transparency)
-    : transparency_(transparency) {}
+MeshRenderer::MeshRenderer(AssetRegistry* registry,
+                           ITransparencyPipeline* transparency)
+    : registry_(registry), transparency_(transparency) {}
 
 data::Result<core::ShaderProgram*> MeshRenderer::opaqueProgram() {
     if (opaqueProgram_.has_value()) {
@@ -73,18 +74,16 @@ data::Result<core::ShaderProgram*> MeshRenderer::opaqueProgram() {
     return data::makeValue<core::ShaderProgram*>(&*opaqueProgram_);
 }
 
-data::Result<MeshGeometry*> MeshRenderer::geometryFor(const data::Mesh& mesh) {
-    const auto it = geometries_.find(&mesh);
-    if (it != geometries_.end()) {
-        return data::makeValue<MeshGeometry*>(&it->second);
+data::Result<MeshGeometry*> MeshRenderer::geometryFor(
+    const AssetHandle& handle) {
+    if (registry_ == nullptr) {
+        return data::makeError<MeshGeometry*>(
+            1, "MeshRenderer: no asset registry injected");
     }
-    auto geometry = MeshGeometry::create(mesh);
-    if (geometry.failed()) {
-        return data::makeError<MeshGeometry*>(geometry.error().code,
-                                              geometry.error().message);
-    }
-    auto inserted = geometries_.emplace(&mesh, std::move(*geometry));
-    return data::makeValue<MeshGeometry*>(&inserted.first->second);
+    // The shared AssetRegistry is the single owner of GPU geometry (SPEC §9
+    // V2.5): resolving the handle returns the one GPU object registered for
+    // this CPU mesh, shared with every other mesh-family renderer.
+    return registry_->resolve(handle);
 }
 
 data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
@@ -103,7 +102,10 @@ data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
     program->setUniformMat4("uProj", camera.proj);
 
     for (const MeshInstance& instance : scene.meshes) {
-        if (instance.material == nullptr || instance.mesh == nullptr) {
+        if (instance.material == nullptr || instance.mesh.isNull()) {
+            // The null AssetHandle {0,0} is the "no mesh" instance (reserved,
+            // render/asset_registry.hpp); it is skipped like the pre-V2 null
+            // mesh pointer.
             continue;
         }
         if (instance.material->isTransparent()) {
@@ -111,7 +113,7 @@ data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
             // opaque forward pass (FR-render.2/3). They are skipped here.
             continue;
         }
-        auto geometry = geometryFor(*instance.mesh);
+        auto geometry = geometryFor(instance.mesh);
         if (geometry.failed()) {
             return data::makeError<void>(geometry.error().code,
                                          geometry.error().message);
@@ -135,13 +137,13 @@ data::Result<void> MeshRenderer::drawTransparent(const MeshScene& scene,
         return data::Result<void>(data::value);
     }
     for (const MeshInstance& instance : scene.meshes) {
-        if (instance.material == nullptr || instance.mesh == nullptr) {
+        if (instance.material == nullptr || instance.mesh.isNull()) {
             continue;
         }
         if (!instance.material->isTransparent()) {
             continue;
         }
-        auto geometry = geometryFor(*instance.mesh);
+        auto geometry = geometryFor(instance.mesh);
         if (geometry.failed()) {
             return data::makeError<void>(geometry.error().code,
                                          geometry.error().message);

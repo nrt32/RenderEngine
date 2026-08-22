@@ -40,6 +40,7 @@
 #include "core/window.hpp"
 #include "data/mesh.hpp"
 #include "data/result.hpp"
+#include "render/asset_registry.hpp"
 #include "render/linked_list_oit.hpp"
 #include "render/mesh_renderer.hpp"
 #include "render/phong_material.hpp"
@@ -79,16 +80,26 @@ class OitSample final : public re::app::ISample {
           middle_(glm::vec4(0.20f, 0.85f, 0.20f, 0.55f)), // green
           far_(glm::vec4(0.20f, 0.35f, 0.90f, 0.55f)),    // blue, farthest
           quad_(makeQuadMesh()) {
+        // Register the shared quad ONCE with the registry (SPEC §9 V2.5): the
+        // three instances share one AssetHandle — one GPU object, even though
+        // the same CPU quad is drawn three times (graceful degradation on the
+        // impossible registration failure, see mesh_sample).
+        const auto handle = registry_.registerAsset(quad_);
+        if (handle.failed()) {
+            spdlog::error("oit sample: failed to register quad: {}",
+                          handle.error().message);
+            return;
+        }
         // Three transparent quads stacked along -Z from the camera: near at
         // z=0.5, middle at z=0.0, far at z=-0.5. Each is a MeshInstance with a
         // transparent PhongMaterial (alpha 0.55 => isTransparent(), FR-render.3),
         // so MeshRenderer auto-engages the injected LinkedListOIT pipeline.
         scene_.meshes.push_back(re::render::MeshInstance{
-            &quad_, &near_, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.5f))});
+            *handle, &near_, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.5f))});
         scene_.meshes.push_back(re::render::MeshInstance{
-            &quad_, &middle_, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f))});
+            *handle, &middle_, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f))});
         scene_.meshes.push_back(re::render::MeshInstance{
-            &quad_, &far_, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -0.5f))});
+            *handle, &far_, glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -0.5f))});
 
         camera_.position = glm::vec3(0.0f, 0.0f, 3.0f);
         camera_.view =
@@ -128,10 +139,14 @@ class OitSample final : public re::app::ISample {
     re::render::PhongMaterial middle_;
     re::render::PhongMaterial far_;
     re::data::Mesh quad_;
+    // The shared asset registry (SPEC §9 V2.5): owns the quad's GPU geometry;
+    // declared before the renderer so `&registry_` is valid at its
+    // construction.
+    re::render::AssetRegistry registry_;
     re::render::MeshScene scene_;
     re::render::Camera camera_;
     re::render::LinkedListOIT pipeline_;
-    re::render::MeshRenderer renderer_{&pipeline_};
+    re::render::MeshRenderer renderer_{&registry_, &pipeline_};
 };
 
 } // namespace

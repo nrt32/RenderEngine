@@ -190,6 +190,8 @@ constexpr std::size_t kMaxVerticesPerTriangle = 6u;
 
 } // namespace
 
+SliceRenderer::SliceRenderer(AssetRegistry* registry) : registry_(registry) {}
+
 data::Result<core::ShaderProgram*> SliceRenderer::clipProgram() {
     if (clipProgram_.has_value()) {
         return data::makeValue<core::ShaderProgram*>(&*clipProgram_);
@@ -236,18 +238,16 @@ data::Result<core::TransformFeedback*> SliceRenderer::captureFeedback() {
     return data::makeValue<core::TransformFeedback*>(&*captureFeedback_);
 }
 
-data::Result<MeshGeometry*> SliceRenderer::geometryFor(const data::Mesh& mesh) {
-    const auto it = geometries_.find(&mesh);
-    if (it != geometries_.end()) {
-        return data::makeValue<MeshGeometry*>(&it->second);
+data::Result<MeshGeometry*> SliceRenderer::geometryFor(
+    const AssetHandle& handle) {
+    if (registry_ == nullptr) {
+        return data::makeError<MeshGeometry*>(
+            1, "SliceRenderer: no asset registry injected");
     }
-    auto geometry = MeshGeometry::create(mesh);
-    if (geometry.failed()) {
-        return data::makeError<MeshGeometry*>(geometry.error().code,
-                                              geometry.error().message);
-    }
-    auto inserted = geometries_.emplace(&mesh, std::move(*geometry));
-    return data::makeValue<MeshGeometry*>(&inserted.first->second);
+    // The shared AssetRegistry is the single owner of GPU geometry (SPEC §9
+    // V2.5): resolving the handle returns the one GPU object registered for
+    // this CPU mesh, shared with MeshRenderer.
+    return registry_->resolve(handle);
 }
 
 data::Result<void> SliceRenderer::render(const SliceScene& scene,
@@ -289,12 +289,12 @@ data::Result<void> SliceRenderer::render(const SliceScene& scene,
     program->setUniformVec3("uPlanePoint", plane.point);
 
     for (const MeshInstance& instance : scene.meshes) {
-        if (instance.material == nullptr || instance.mesh == nullptr) {
+        if (instance.material == nullptr || instance.mesh.isNull()) {
             continue;
         }
         // Slicing does not use OIT in v1 (SPEC §3): every instance is clipped
         // and drawn through the clip pass regardless of material transparency.
-        auto geometry = geometryFor(*instance.mesh);
+        auto geometry = geometryFor(instance.mesh);
         if (geometry.failed()) {
             return data::makeError<void>(geometry.error().code,
                                          geometry.error().message);
@@ -347,14 +347,21 @@ data::Result<void> SliceRenderer::captureCrossSection(
     core::TransformFeedback* feedback = *feedbackResult;
 
     // Total capture capacity: every triangle can emit up to
-    // kMaxVerticesPerTriangle vertices (each 3 floats).
+    // kMaxVerticesPerTriangle vertices (each 3 floats). The per-instance
+    // triangle count comes from the GPU geometry resolved through the shared
+    // registry (SPEC §9 V2.5; scenes carry handles, not CPU pointers).
     std::size_t totalCapacityVertices = 0u;
     for (const MeshInstance& instance : scene.meshes) {
-        if (instance.mesh == nullptr) {
+        if (instance.mesh.isNull()) {
             continue;
         }
+        auto geometry = geometryFor(instance.mesh);
+        if (geometry.failed()) {
+            return data::makeError<void>(geometry.error().code,
+                                         geometry.error().message);
+        }
         totalCapacityVertices +=
-            instance.mesh->triangleCount() * kMaxVerticesPerTriangle;
+            (*geometry)->triangleCount() * kMaxVerticesPerTriangle;
     }
 
     std::vector<float> sentinel(totalCapacityVertices * 3u, kCaptureSentinel);
@@ -383,10 +390,10 @@ data::Result<void> SliceRenderer::captureCrossSection(
     program->setUniformVec3("uPlanePoint", plane.point);
 
     for (const MeshInstance& instance : scene.meshes) {
-        if (instance.mesh == nullptr) {
+        if (instance.mesh.isNull()) {
             continue;
         }
-        auto geometry = geometryFor(*instance.mesh);
+        auto geometry = geometryFor(instance.mesh);
         if (geometry.failed()) {
             feedback->unbind();
             return data::makeError<void>(geometry.error().code,

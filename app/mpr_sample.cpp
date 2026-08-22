@@ -58,6 +58,7 @@
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
 #include "io/volume/nrrd_volume_loader.hpp"
+#include "render/asset_registry.hpp"
 #include "render/mesh_renderer.hpp" // render::MeshScene / render::Camera
 #include "render/phong_material.hpp"
 #include "render/plane_renderer.hpp"
@@ -183,10 +184,20 @@ class MPRView final : public app::ISample {
         quad_ = render::PlaneGeometry::unitQuadXY();
 
         // The golden box mesh (FR-app.3) with an opaque material, for the 3D
-        // view. The 3D-view camera is driven by the slice state (make3dCamera):
-        // it looks at the intersection point of the three slice planes.
-        boxScene_.meshes.push_back(
-            render::MeshInstance{&box_, &boxMaterial_, glm::mat4(1.0f)});
+        // view. The box is registered ONCE with the shared registry (SPEC §9
+        // V2.5) — the 3D scene carries its AssetHandle, resolved by
+        // MeshRenderer through the same registry (graceful degradation on the
+        // impossible registration failure, see mesh_sample). The 3D-view camera
+        // is driven by the slice state (make3dCamera): it looks at the
+        // intersection point of the three slice planes.
+        const auto boxHandle = registry_.registerAsset(box_);
+        if (boxHandle.failed()) {
+            spdlog::error("mpr sample: failed to register box mesh: {}",
+                          boxHandle.error().message);
+        } else {
+            boxScene_.meshes.push_back(render::MeshInstance{
+                *boxHandle, &boxMaterial_, glm::mat4(1.0f)});
+        }
         boxCamera_ = app::make3dCamera(sliceState_, box_.bounds(),
                                        static_cast<float>(kViewportWidth) /
                                            static_cast<float>(kViewportHeight));
@@ -296,9 +307,13 @@ class MPRView final : public app::ISample {
     // The golden box mesh + material for the 3D view (FR-app.3).
     data::Mesh box_;
     render::PhongMaterial boxMaterial_;
+    // The shared asset registry (SPEC §9 V2.5): owns the box's GPU geometry;
+    // declared before the renderer so `&registry_` is valid at its
+    // construction.
+    render::AssetRegistry registry_;
     render::MeshScene boxScene_;
     render::Camera boxCamera_;
-    render::MeshRenderer boxRenderer_;
+    render::MeshRenderer boxRenderer_{&registry_};
 
     render::PlaneGeometry quad_;
     render::PlaneRenderer sliceRenderer_;

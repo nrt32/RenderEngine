@@ -54,6 +54,15 @@ class MeshGeometry {
         return vertexCount_;
     }
 
+    /// The GL name of this geometry's vertex array object: the identity of the
+    /// whole GPU-side geometry bundle (the VBO and EBO are captured by it).
+    /// This is the "one GPU object" the asset registry dedups on (SPEC §9
+    /// V2.5): two handles of the same registered mesh resolve to geometries
+    /// with the same (non-zero) VAO id.
+    std::uint32_t vaoId() const noexcept {
+        return vao_.id();
+    }
+
    private:
     /// Build per-vertex normals from `mesh`: each vertex takes the
     /// area-weighted average of the normalized face normals of its incident

@@ -47,6 +47,7 @@
 #include "core/read_pixels.hpp"
 #include "core/texture2d.hpp"
 #include "data/mesh.hpp"
+#include "render/asset_registry.hpp"
 #include "render/imaterial.hpp"
 #include "render/linked_list_oit.hpp"
 #include "render/mesh_renderer.hpp"
@@ -197,8 +198,13 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
 
     // Two full-screen transparent quads at known depths: near at z=0, far at
-    // z=-1 (near is closer to the camera at z=5).
+    // z=-1 (near is closer to the camera at z=5). Both instances share ONE
+    // registered handle: the same CPU quad is one GPU object in the shared
+    // registry (SPEC §9 V2.5).
     data::Mesh quad = makeQuadMesh();
+    render::AssetRegistry registry;
+    const auto handle = registry.registerAsset(quad);
+    ASSERT_TRUE(handle.ok()) << handle.error().message;
     render::PhongMaterial nearMaterial(kNearColor);
     render::PhongMaterial farMaterial(kFarColor);
     ASSERT_TRUE(nearMaterial.isTransparent());
@@ -210,8 +216,8 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
 
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{&quad, &nearMaterial, nearModel});
-    scene.meshes.push_back(render::MeshInstance{&quad, &farMaterial, farModel});
+        render::MeshInstance{*handle, &nearMaterial, nearModel});
+    scene.meshes.push_back(render::MeshInstance{*handle, &farMaterial, farModel});
 
     render::Camera camera = makeCamera();
     render::RenderTarget rt;
@@ -221,7 +227,7 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     render::LinkedListOIT pipeline;
-    render::MeshRenderer renderer(&pipeline);
+    render::MeshRenderer renderer(&registry, &pipeline);
     auto result = renderer.render(scene, camera, rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
@@ -262,6 +268,9 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
 
 TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
     data::Mesh quad = makeQuadMesh();
+    render::AssetRegistry registry;
+    const auto handle = registry.registerAsset(quad);
+    ASSERT_TRUE(handle.ok()) << handle.error().message;
 
     // Opaque-only scene: center-pixel alpha must be exactly 1.0 (no
     // transparency engaged) and the pipeline must stay OFF.
@@ -271,7 +280,7 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
 
         render::MeshScene opaqueScene;
         opaqueScene.meshes.push_back(
-            render::MeshInstance{&quad, &opaque, glm::mat4(1.0f)});
+            render::MeshInstance{*handle, &opaque, glm::mat4(1.0f)});
 
         RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
         render::RenderTarget rt;
@@ -281,7 +290,7 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
         rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
         RecordingPipeline spy;
-        render::MeshRenderer renderer(&spy);
+        render::MeshRenderer renderer(&registry, &spy);
         auto result = renderer.render(opaqueScene, makeCamera(), rt);
         ASSERT_TRUE(result.ok()) << result.error().message;
 
@@ -312,9 +321,9 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
 
         render::MeshScene mixedScene;
         mixedScene.meshes.push_back(
-            render::MeshInstance{&quad, &opaque, glm::mat4(1.0f)});
+            render::MeshInstance{*handle, &opaque, glm::mat4(1.0f)});
         mixedScene.meshes.push_back(
-            render::MeshInstance{&quad, &transparent, glm::mat4(1.0f)});
+            render::MeshInstance{*handle, &transparent, glm::mat4(1.0f)});
 
         RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
         render::RenderTarget rt;
@@ -324,7 +333,7 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
         rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
         RecordingPipeline spy;
-        render::MeshRenderer renderer(&spy);
+        render::MeshRenderer renderer(&registry, &spy);
         auto result = renderer.render(mixedScene, makeCamera(), rt);
         ASSERT_TRUE(result.ok()) << result.error().message;
 
@@ -345,12 +354,15 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
 
 TEST(T10Oit, PipelineInterfaceIsSwappable) {
     data::Mesh quad = makeQuadMesh();
+    render::AssetRegistry registry;
+    const auto handle = registry.registerAsset(quad);
+    ASSERT_TRUE(handle.ok()) << handle.error().message;
     render::PhongMaterial transparent(glm::vec4(0.4f, 0.2f, 0.1f, 0.5f));
     ASSERT_TRUE(transparent.isTransparent());
 
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{&quad, &transparent, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, &transparent, glm::mat4(1.0f)});
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
     render::RenderTarget rt;
@@ -364,7 +376,7 @@ TEST(T10Oit, PipelineInterfaceIsSwappable) {
     // mesh, leaving the pipeline disengaged. This proves the renderer depends
     // only on the ITransparencyPipeline abstraction (open/closed, DI).
     RecordingPipeline stub;
-    render::MeshRenderer renderer(&stub);
+    render::MeshRenderer renderer(&registry, &stub);
     auto result = renderer.render(scene, makeCamera(), rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
 

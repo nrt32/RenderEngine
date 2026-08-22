@@ -32,6 +32,7 @@
 #include "core/read_pixels.hpp"
 #include "core/texture2d.hpp"
 #include "data/mesh.hpp"
+#include "render/asset_registry.hpp"
 #include "render/imaterial.hpp"
 #include "render/mesh_renderer.hpp"
 #include "render/phong_material.hpp"
@@ -153,9 +154,14 @@ TEST(T7RenderMesh, OpaqueQuadCenterPixelMatchesBaseColor) {
     ASSERT_FALSE(material.isTransparent());
 
     data::Mesh quad = makeQuadMesh();
+    // The scene carries the mesh's AssetHandle (SPEC §9 V2.5), resolved by the
+    // renderer through the shared asset registry.
+    render::AssetRegistry registry;
+    const auto handle = registry.registerAsset(quad);
+    ASSERT_TRUE(handle.ok()) << handle.error().message;
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{&quad, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
 
     render::Camera camera = makeCamera();
     render::RenderTarget rt;
@@ -166,7 +172,7 @@ TEST(T7RenderMesh, OpaqueQuadCenterPixelMatchesBaseColor) {
 
     // No transparency pipeline injected: an opaque-only scene must render via
     // the plain forward pass.
-    render::MeshRenderer renderer(nullptr);
+    render::MeshRenderer renderer(&registry, nullptr);
     auto result = renderer.render(scene, camera, rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
@@ -208,9 +214,12 @@ TEST(T7RenderMesh, OpaqueSceneAlphaIsOneAndPipelineStaysOff) {
     ASSERT_FALSE(material.isTransparent());
 
     data::Mesh quad = makeQuadMesh();
+    render::AssetRegistry registry;
+    const auto handle = registry.registerAsset(quad);
+    ASSERT_TRUE(handle.ok()) << handle.error().message;
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{&quad, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
 
     render::Camera camera = makeCamera();
     render::RenderTarget rt;
@@ -220,7 +229,7 @@ TEST(T7RenderMesh, OpaqueSceneAlphaIsOneAndPipelineStaysOff) {
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     // Inject the spy. The opaque-only scene must NOT engage it (FR-render.3).
-    render::MeshRenderer renderer(&spy);
+    render::MeshRenderer renderer(&registry, &spy);
     auto result = renderer.render(scene, camera, rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
 

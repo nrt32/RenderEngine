@@ -12,9 +12,10 @@
 //
 // Stateless rendering: render()/captureCrossSection() receive all of their data
 // per call; the renderer owns only GL resources (its cached clip shader
-// program, its transform-feedback capture program, and the GPU geometries of
-// the meshes it has drawn). One mesh can be drawn by several views without
-// duplication.
+// program and its transform-feedback capture program + object). GPU geometry
+// is owned by the shared AssetRegistry (SPEC §9 V2.5): scenes carry
+// AssetHandles and the renderer resolves them through the injected registry,
+// sharing one GPU object per CPU mesh with MeshRenderer and every view.
 //
 // render/ is GL-call-free: it draws through the core::Draw API and core/ RAII
 // objects, and captures cross-section vertices through core::TransformFeedback
@@ -26,15 +27,14 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 #include <optional>
-#include <unordered_map>
 #include <vector>
 
 #include "core/framebuffer.hpp"
 #include "core/shader_program.hpp"
 #include "core/transform_feedback.hpp"
 #include "core/vertex_buffer.hpp"
-#include "data/mesh.hpp"
 #include "data/result.hpp"
+#include "render/asset_registry.hpp"
 #include "render/mesh_geometry.hpp"
 #include "render/mesh_renderer.hpp"
 #include "render/types.hpp" // IRenderer / render::Scene
@@ -66,13 +66,17 @@ struct SliceScene {
 /// Stateless geometry-shader plane-clip renderer (SPEC §3).
 ///
 /// Owns only GL resources: the cached clip shader program (vertex + geometry +
-/// fragment), the cached transform-feedback capture program, a transform
-/// feedback object, and a geometry cache keyed by mesh pointer (shared with the
-/// mesh-family renderers, so a data::Mesh is uploaded to the GPU once).
+/// fragment), the cached transform-feedback capture program, and a transform
+/// feedback object. Mesh geometry lives in the shared AssetRegistry (SPEC §9
+/// V2.5): the renderer resolves each instance's AssetHandle through the
+/// injected registry, so a data::Mesh is uploaded to the GPU once — even
+/// across MeshRenderer + SliceRenderer.
 class SliceRenderer : public IRenderer {
    public:
-    /// Construct with no dependencies (slicing does not use OIT in v1).
-    SliceRenderer() = default;
+    /// Construct with the shared asset registry (`registry` must be non-null
+    /// and outlive the renderer; scenes' AssetHandles resolve through it, SPEC
+    /// §9 V2.5). Slicing does not use OIT in v1.
+    explicit SliceRenderer(AssetRegistry* registry);
 
     SliceRenderer(const SliceRenderer&) = delete;
     SliceRenderer& operator=(const SliceRenderer&) = delete;
@@ -83,7 +87,8 @@ class SliceRenderer : public IRenderer {
     /// shaded with each instance's material (deterministic v1 flat lighting,
     /// see docs/render.md). On success the target framebuffer is left bound (so
     /// tests can read it back). Returns a typed error if the clip shader fails
-    /// to build or a draw cannot be issued.
+    /// to build, an instance's handle fails to resolve (stale/dangling), or a
+    /// draw cannot be issued.
     data::Result<void> render(const SliceScene& scene, const Camera& camera,
                               const ClipPlane& plane,
                               const RenderTarget& target);
@@ -100,11 +105,17 @@ class SliceRenderer : public IRenderer {
     /// positions). This is a test-consumed readback path (guardrail
     /// no_production_readback) used by the FR-render.4 gate to assert every
     /// emitted cross-section vertex lies on the clip plane. Returns a typed
-    /// error if the capture program fails to build or the capture cannot be
-    /// issued.
+    /// error if the capture program fails to build, an instance's handle fails
+    /// to resolve, or the capture cannot be issued.
     data::Result<void> captureCrossSection(const SliceScene& scene,
                                            const ClipPlane& plane,
                                            std::vector<glm::vec3>& out);
+
+    /// The shared asset registry instances' handles resolve through (non-null
+    /// after construction).
+    AssetRegistry* assetRegistry() const noexcept {
+        return registry_;
+    }
 
    private:
     /// Build (and cache) the clip shader program, returning a pointer to the
@@ -119,15 +130,17 @@ class SliceRenderer : public IRenderer {
     /// returning a pointer to the transform-feedback object.
     data::Result<core::TransformFeedback*> captureFeedback();
 
-    /// Upload the GPU geometry for `mesh` if not already cached, returning a
-    /// pointer to it (shared with MeshRenderer; reuses MeshGeometry).
-    data::Result<MeshGeometry*> geometryFor(const data::Mesh& mesh);
+    /// Resolve `handle` to its GPU geometry through the shared asset registry
+    /// (SPEC §9 V2.5; shared with MeshRenderer). Returns a typed error for a
+    /// stale/dangling handle.
+    data::Result<MeshGeometry*> geometryFor(const AssetHandle& handle);
+
+    AssetRegistry* registry_;
 
     std::optional<core::ShaderProgram> clipProgram_;
     std::optional<core::ShaderProgram> captureProgram_;
     std::optional<core::TransformFeedback> captureFeedback_;
     std::optional<core::VertexBuffer> captureBuffer_;
-    std::unordered_map<const data::Mesh*, MeshGeometry> geometries_;
 };
 
 } // namespace re::render

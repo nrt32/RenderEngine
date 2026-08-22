@@ -4,6 +4,7 @@
 # forward pass.
 
 add_library(re_render STATIC
+    asset_registry.cpp
     phong_material.cpp
     mesh_geometry.cpp
     mesh_renderer.cpp

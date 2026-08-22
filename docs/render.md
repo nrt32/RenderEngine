@@ -16,10 +16,12 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 > transparency pipeline, FR-render.2/3), and the **T11 deliverable**
 > (`SliceRenderer`, the geometry-shader plane clip of a mesh, FR-render.4), and
 > the **V2 T1 deliverable** (`render/types.hpp` shared types + the `IRenderer`
-> dispatch contract, SPEC §9 V2.3) and the **V2 T2 deliverable** (the
+> dispatch contract, SPEC §9 V2.3), the **V2 T2 deliverable** (the
 > multi-view compositor `View`/`ViewRect`/`ViewRenderer` + the new `core::blit`,
-> SPEC §9 V2.4). It is part of the `docs/render.md`
-> documentation map (T7/T8/T9/T10/T11 + V2 T1/V2 T2; later tasks extend it).
+> SPEC §9 V2.4) and the **V2 T3 deliverable** (the generational asset registry
+> `AssetRegistry`/`AssetHandle`, SPEC §9 V2.5). It is part of the
+> `docs/render.md` documentation map (T7/T8/T9/T10/T11 + V2 T1/T2/T3; later
+> tasks extend it).
 
 ## Components
 
@@ -124,6 +126,58 @@ its rect, so the blit is 1:1):
 | Unregistered technique view | typed error, code 2 | a VolumeScene with no registered Volume renderer is rejected before any draw (SPEC §5) |
 | View-count mismatch | typed error, code 1 | 1 view against a 2-view compositor (SPEC §5) |
 | `present()` before the first `renderViews` | typed error, code 3 | the per-view FBOs don't exist yet — rejected instead of blitting unrendered targets (SPEC §5) |
+
+### The asset registry: `AssetHandle` + `AssetRegistry` (SPEC §9 V2.5, V2 T3)
+
+The **asset system of the multi-view workstream**: a single registry owns exactly
+**ONE GPU object per individual CPU object registered, globally** across every
+mesh-family renderer. Scenes carry **copyable `AssetHandle`s — `{index,
+generation}`** — instead of raw `const data::Mesh*` pointers, and **handles are
+the currency views exchange**: a `View`'s `Scene` holds handles, and the
+renderers resolve them through the shared registry. Registering the same
+`data::Mesh` twice (e.g. once through the MeshRenderer path and once through
+the SliceRenderer path) yields one GPU object — the registry dedups by
+CPU-object identity — fixing the pre-V2 per-renderer double-upload of the same
+mesh.
+
+| Type / member | Purpose |
+|---|---|
+| `AssetHandle` | a copyable `{index, generation}` handle into the registry's slot table. `index` selects the slot, `generation` validates it. Cheap to copy; the default handle `{0, 0}` is the reserved **null handle** (`isNull()`), the "no asset" instance renderers skip (like the pre-V2 null mesh pointer) — real handles always carry `generation >= 1`. |
+| `AssetRegistry::registerAsset(mesh)` | registers `mesh` (uploading its GPU geometry once) and returns its handle. Registering the **same CPU object again returns the EXISTING handle** (dedup by identity, `slotCount()` unchanged); two distinct objects — even with identical content — are two GPU objects. Returns a typed error if the upload fails (no GL context). Named `registerAsset`, not `register` — `register` is a C++ reserved keyword. |
+| `AssetRegistry::resolve(handle)` | returns the handle's `MeshGeometry*`. A **stale/dangling handle** — out-of-range index (code 1), generation mismatch (code 2, message "stale handle": a freed, reused, or fabricated handle), or a freed slot (code 3) — returns a **typed error, never a crash** (SPEC §5). |
+| `AssetRegistry::unregister(handle)` | frees the slot: destroys its GPU object, **bumps the slot's generation** so every outstanding handle to it goes stale immediately, and makes the slot reusable. A later `registerAsset` of a different mesh may **reuse the freed index with a fresh generation** — the old handle stays stale. |
+| `AssetRegistry::slotCount()` | the number of currently registered (live) GPU objects: one per distinct individual CPU object (the V2 T3 gate: registering the same mesh twice leaves this at exactly 1). |
+
+**Generational safety.** Every slot's generation starts at 1 and is bumped each
+time the slot is freed (and again when a freed slot is reused). A handle is
+valid only while its `{index, generation}` exactly matches the slot's — so a
+dangling handle (its slot freed or reused) is detected at resolve time and
+surfaced as a typed error, never a dereference of freed memory. Resolved
+geometry pointers stay valid until the slot is freed (each slot's geometry is
+heap-stable); the renderers resolve per draw and never retain pointers across
+registrations.
+
+**Renderer integration.** `MeshRenderer` and `SliceRenderer` are constructed
+with a shared `AssetRegistry*` (non-null, outliving the renderer) and resolve
+every instance's handle through it — the registry, not the renderer, owns the
+GPU geometry. This is what makes the dedup global: the same mesh drawn by both
+renderers (and by any number of views) is uploaded once.
+
+#### Acceptance constants (V2 T3 asset-registry gate, docs/render.md)
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| Same `data::Mesh` registered twice (via the MeshRenderer path + the SliceRenderer path) | `slotCount() == 1` | the registry dedups by CPU-object identity: one GPU object per individual CPU object (SPEC §9 V2.5) |
+| The two registration handles | equal (`{index, generation}` identical) | `registerAsset` of an already-registered object returns the existing handle |
+| Both handles resolve to | the same **non-zero** GL object id (`MeshGeometry::vaoId()`) | one GPU object behind both handles; GL reserves 0, so a live VAO name is non-zero |
+| Two DISTINCT meshes with identical content | `slotCount() == 2`, distinct VAO ids | dedup is per individual CPU object; GL object names are unique among live objects of a type |
+| Stale `{index, generation+1}` lookup | typed error, code 2, message contains `stale` | generation mismatch (fabricated stale handle) |
+| `{index, 0}` lookup | typed error | generation 0 is the never-allocated marker (null handle) |
+| Out-of-range index lookup | typed error, code 1 | index beyond the slot table |
+| Handle after `unregister` | typed error (code 2) | the freed slot's generation is bumped at free time; unregistering it again is also a typed error |
+| Freed-slot reuse for a NEW mesh | same index, **new generation**; old handle still stale, new handle resolves | slot reuse issues a fresh generation — the generational mechanism |
+| Stale handle inside a rendered scene | `render()` returns the typed error, no crash | the renderer propagates the resolve error (SPEC §5) |
+| Mesh + Slice renderers drawing one shared handle | both center pixels `{51, 102, 204}` (±1), `slotCount()` still 1 | FR-render.1/4 analytic center pixels (regression lock R3) — see the FR-render.1/4 tables below |
 
 ### `IMaterial` (`render/imaterial.hpp`)
 
@@ -266,16 +320,21 @@ GPU once and reused across instances and renderers.
 - `MeshGeometry::create(mesh)` builds the GPU buffers (returns a typed error if
   no GL context is current).
 - `draw()` issues the indexed triangle draw through `core::drawElements`.
+- `vaoId()` returns the GL name of the geometry's vertex array object — the
+  identity of the whole GPU-side geometry bundle, used as the "one GPU object"
+  the asset registry dedups on (SPEC §9 V2.5).
 
 ### `MeshRenderer` (`render/mesh_renderer.hpp`, `.cpp`)
 
-A **stateless opaque forward-pass** renderer (SPEC §3 "Stateless renderers"):
+A **stateless opaque-forward-pass** renderer (SPEC §3 "Stateless renderers"):
 `render(scene, camera, target)` receives all of its data per call. The renderer
-owns only GL resources — its cached opaque shader program and the GPU geometries
-of the meshes it has drawn (keyed by mesh pointer). One mesh can be drawn by
-several views without duplication. It implements the `IRenderer` dispatch
-contract (`render/types.hpp`, SPEC §9 V2.3): its `IRenderer::render` forwards a
-`Scene` holding a `MeshScene` to this concrete method.
+owns only its cached opaque shader program; **GPU geometry lives in the shared
+`AssetRegistry`** (SPEC §9 V2.5): scenes carry `AssetHandle`s and the renderer
+resolves them through the injected registry, so one GPU object exists per
+individual CPU mesh globally — shared with SliceRenderer and every view. It
+implements the `IRenderer` dispatch contract (`render/types.hpp`, SPEC §9
+V2.3): its `IRenderer::render` forwards a `Scene` holding a `MeshScene` to this
+concrete method.
 
 Public scene structs (`Camera`/`RenderTarget` live in `render/types.hpp`;
 `MeshInstance`/`MeshScene` are defined in `mesh_renderer.hpp`):
@@ -284,7 +343,7 @@ Public scene structs (`Camera`/`RenderTarget` live in `render/types.hpp`;
 |---|---|
 | `Camera` | `view` / `proj` matrices + `position` (eye, for view-direction terms) — `render/types.hpp`. |
 | `RenderTarget` | a color-only `core::Framebuffer` + pixel size + clear color — `render/types.hpp`. |
-| `MeshInstance` | a `data::Mesh`, its `IMaterial`, and its model matrix. |
+| `MeshInstance` | an `AssetHandle` into the shared `AssetRegistry` (SPEC §9 V2.5), its `IMaterial`, and its model matrix. The scene carries the handle — the currency views exchange — never a raw CPU pointer. |
 | `MeshScene` | a vector of `MeshInstance`s (CPU-side; `app/` builds these). |
 
 `MeshRenderer::render(scene, camera, target)`:
@@ -338,13 +397,14 @@ It reuses the shared `MeshGeometry` (mesh geometry handling) and the `IMaterial`
 interface exactly like `MeshRenderer`, and **does not use OIT in v1** (SPEC §3
 "Slicing is geometry, not compositing"). `SliceRenderer::render(scene, camera,
 plane, target)` receives all of its data per call; the renderer owns only GL
-resources — its cached clip shader program (vertex + geometry + fragment), its
-transform-feedback capture program + object, and the GPU geometries of the
-meshes it has drawn (keyed by mesh pointer, shared with the mesh family). It
-implements the `IRenderer` dispatch contract (`render/types.hpp`, SPEC §9 V2.3):
-its `IRenderer::render` forwards a `Scene` holding a `SliceScene` to this
-concrete method, slicing against the **plane carried by the scene itself**
-(`SliceScene::plane`).
+resources — its cached clip shader program (vertex + geometry + fragment) and
+its transform-feedback capture program + object. **GPU geometry lives in the
+shared `AssetRegistry`** (SPEC §9 V2.5): scenes carry `AssetHandle`s and the
+renderer resolves them through the injected registry, sharing one GPU object
+per CPU mesh with `MeshRenderer`. It implements the `IRenderer` dispatch
+contract (`render/types.hpp`, SPEC §9 V2.3): its `IRenderer::render` forwards a
+`Scene` holding a `SliceScene` to this concrete method, slicing against the
+**plane carried by the scene itself** (`SliceScene::plane`).
 
 Public scene structs (defined in `slice_renderer.hpp`; reuses `MeshInstance`
 from `mesh_renderer.hpp`):
@@ -565,7 +625,10 @@ out.rgb = 0.5*(1 + 0.5 + 0.25 + 0.125)     = 0.9375  (along green)
   `SliceRenderer::captureCrossSection`) — guardrail `no_production_readback`.
 - **Stateless + dependency inversion**: `render()` takes all data per call;
   renderers depend on `IMaterial` / `ITransparencyPipeline` abstractions and
-  expose the `IRenderer` dispatch contract (SPEC §9 V2.3).
+  expose the `IRenderer` dispatch contract (SPEC §9 V2.3). GPU geometry is
+  injected: the mesh-family renderers take a shared `AssetRegistry*` and resolve
+  scene `AssetHandle`s through it (SPEC §9 V2.5) — never a raw GL call, never a
+  per-renderer duplicate upload.
 - **Typed diagnostics**: draw/geometry failures return `data::Result` — no
   exceptions, no silent failure.
 - **Deterministic / single-threaded**: one render thread; the v1 opaque pass is

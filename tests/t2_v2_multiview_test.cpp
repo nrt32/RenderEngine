@@ -58,6 +58,7 @@
 #include "core/texture2d.hpp"
 #include "data/image.hpp"
 #include "data/mesh.hpp"
+#include "render/asset_registry.hpp"
 #include "render/mesh_renderer.hpp"
 #include "render/phong_material.hpp"
 #include "render/plane_renderer.hpp"
@@ -226,6 +227,10 @@ void expectViewBColor(const std::vector<std::uint8_t>& pixel,
 // scene (View B), the two technique renderers, and the engine compositor.
 // ---------------------------------------------------------------------------
 struct TwoViewFixture {
+    // The shared asset registry (SPEC §9 V2.5): the quad's GPU geometry lives
+    // here; the MeshScene carries its AssetHandle. Declared before the
+    // renderers so `&registry` is a valid member address at their construction.
+    render::AssetRegistry registry;
     render::PhongMaterial materialA{kViewABaseColor};
     data::Mesh quadA{makeQuadMesh()};
     render::MeshScene sceneA;
@@ -234,13 +239,17 @@ struct TwoViewFixture {
     render::PlaneGeometry quadB{render::PlaneGeometry::unitQuadXY()};
     render::PlaneScene sceneB;
 
-    render::MeshRenderer meshRenderer;
+    render::MeshRenderer meshRenderer{&registry};
     render::PlaneRenderer planeRenderer;
     render::ViewRenderer composer{2u, kViewWidth, kViewHeight};
 
     TwoViewFixture() {
-        sceneA.meshes.push_back(
-            render::MeshInstance{&quadA, &materialA, glm::mat4(1.0f)});
+        const auto handle = registry.registerAsset(quadA);
+        EXPECT_TRUE(handle.ok()) << handle.error().message;
+        if (handle.ok()) {
+            sceneA.meshes.push_back(render::MeshInstance{*handle, &materialA,
+                                                         glm::mat4(1.0f)});
+        }
         sceneB.planes.push_back(
             render::PlaneInstance{&quadB, &imageB, glm::mat4(1.0f)});
         composer.setRenderer(render::SceneKind::Mesh, &meshRenderer);

@@ -93,6 +93,7 @@
 #include "data/image.hpp"
 #include "data/mesh.hpp"
 #include "data/volume_dataset.hpp"
+#include "render/asset_registry.hpp"
 #include "render/mesh_renderer.hpp"
 #include "render/phong_material.hpp"
 #include "tests/offscreen_fixture.hpp"
@@ -475,6 +476,12 @@ TEST(T15Mpr, ThreeDViewDrawsMesh) {
     render::PhongMaterial material(k3dBaseColor);
     ASSERT_FALSE(material.isTransparent());
 
+    // The scene carries the box's AssetHandle (SPEC §9 V2.5), resolved by the
+    // renderer through the shared registry.
+    render::AssetRegistry registry;
+    const auto handle = registry.registerAsset(box);
+    ASSERT_TRUE(handle.ok()) << handle.error().message;
+
     app::MprSliceState state;
     state.transverseZ = kTransverseZ;
     state.coronalY = kCoronalY;
@@ -484,7 +491,7 @@ TEST(T15Mpr, ThreeDViewDrawsMesh) {
 
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{&box, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
     render::RenderTarget rt;
@@ -493,7 +500,7 @@ TEST(T15Mpr, ThreeDViewDrawsMesh) {
     rt.height = kTargetHeight;
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-    render::MeshRenderer renderer(nullptr);
+    render::MeshRenderer renderer(&registry, nullptr);
     auto result = renderer.render(scene, camera, rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());

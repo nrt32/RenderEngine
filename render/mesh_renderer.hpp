@@ -5,8 +5,12 @@
 //
 // Stateless rendering: MeshRenderer::render(scene, camera, target) receives
 // all of its data per call; the renderer owns only GL resources (its cached
-// opaque shader program and the GPU geometries of the meshes it has drawn).
-// One mesh can be drawn by several views without duplication.
+// opaque shader program). GPU geometry is owned by the shared AssetRegistry
+// (SPEC §9 V2.5): scenes carry AssetHandles instead of raw `const data::Mesh*`
+// pointers, and the renderer resolves them through the injected registry — so
+// one GPU object exists per individual CPU mesh GLOBALLY, shared with every
+// other mesh-family renderer (SliceRenderer) and every view. One mesh can be
+// drawn by several views and several renderers without duplication.
 //
 // Mesh geometry handling is shared through MeshGeometry, reused by the later
 // mesh-family renderers (SliceRenderer, T11). Materials are consumed through
@@ -20,12 +24,11 @@
 
 #include <glm/mat4x4.hpp>
 #include <optional>
-#include <unordered_map>
 #include <vector>
 
 #include "core/shader_program.hpp"
-#include "data/mesh.hpp"
 #include "data/result.hpp"
+#include "render/asset_registry.hpp"
 #include "render/imaterial.hpp"
 #include "render/itransparency_pipeline.hpp"
 #include "render/mesh_geometry.hpp"
@@ -33,10 +36,11 @@
 
 namespace re::render {
 
-/// A single mesh in a scene: a data::Mesh, its material, and its model
-/// transform.
+/// A single mesh in a scene: an AssetHandle into the shared AssetRegistry
+/// (SPEC §9 V2.5), its material, and its model transform. Scenes carry the
+/// handle — the currency views exchange — never a raw CPU pointer.
 struct MeshInstance {
-    const data::Mesh* mesh = nullptr;
+    AssetHandle mesh; ///< Handle of the GPU geometry in the shared registry.
     const IMaterial* material = nullptr;
     glm::mat4 model{1.0f};
 };
@@ -48,18 +52,24 @@ struct MeshScene {
 
 /// Stateless opaque-forward-pass mesh renderer (SPEC §3).
 ///
-/// Owns only GL resources: the cached opaque shader program and a geometry
-/// cache keyed by mesh pointer, so a data::Mesh is uploaded to the GPU once.
+/// Owns only GL resources: the cached opaque shader program. Mesh geometry
+/// lives in the shared AssetRegistry (SPEC §9 V2.5): the renderer resolves
+/// each instance's AssetHandle through the injected registry, so a data::Mesh
+/// is uploaded to the GPU once — even across MeshRenderer + SliceRenderer.
 class MeshRenderer : public IRenderer {
    public:
-    /// Construct with the injected transparency pipeline (`transparency` may
-    /// be null when no OIT is available). The pipeline is auto-engaged only
-    /// when a scene contains a transparent material (FR-render.3).
-    explicit MeshRenderer(ITransparencyPipeline* transparency = nullptr);
+    /// Construct with the shared asset registry (`registry` must be non-null
+    /// and outlive the renderer; scenes' AssetHandles resolve through it, SPEC
+    /// §9 V2.5) and the injected transparency pipeline (`transparency` may be
+    /// null when no OIT is available). The pipeline is auto-engaged only when
+    /// a scene contains a transparent material (FR-render.3).
+    explicit MeshRenderer(AssetRegistry* registry,
+                          ITransparencyPipeline* transparency = nullptr);
 
     /// Render `scene` into `target` from `camera`. On success the target
     /// framebuffer is left bound (so tests can read it back). Returns a typed
-    /// error if the opaque shader fails to build or a draw cannot be issued.
+    /// error if the opaque shader fails to build, an instance's handle fails
+    /// to resolve (stale/dangling), or a draw cannot be issued.
     data::Result<void> render(const MeshScene& scene, const Camera& camera,
                               const RenderTarget& target);
 
@@ -74,14 +84,20 @@ class MeshRenderer : public IRenderer {
         return transparency_;
     }
 
+    /// The shared asset registry instances' handles resolve through (non-null
+    /// after construction).
+    AssetRegistry* assetRegistry() const noexcept {
+        return registry_;
+    }
+
    private:
     /// Build (and cache) the opaque shader program, returning a pointer to the
     /// cached program (non-null on success).
     data::Result<core::ShaderProgram*> opaqueProgram();
 
-    /// Upload the GPU geometry for `mesh` if not already cached, returning a
-    /// pointer to it.
-    data::Result<MeshGeometry*> geometryFor(const data::Mesh& mesh);
+    /// Resolve `handle` to its GPU geometry through the shared asset registry
+    /// (SPEC §9 V2.5). Returns a typed error for a stale/dangling handle.
+    data::Result<MeshGeometry*> geometryFor(const AssetHandle& handle);
 
     /// Draw every opaque mesh instance directly to `target`.
     data::Result<void> drawOpaque(const MeshScene& scene, const Camera& camera,
@@ -89,14 +105,14 @@ class MeshRenderer : public IRenderer {
 
     /// Capture every transparent mesh instance through the engaged
     /// transparency pipeline (FR-render.3). Returns a typed error if a geometry
-    /// upload or pipeline capture cannot be issued (SPEC §5).
+    /// resolution or pipeline capture cannot be issued (SPEC §5).
     data::Result<void> drawTransparent(const MeshScene& scene,
                                        const Camera& camera);
 
+    AssetRegistry* registry_;
     ITransparencyPipeline* transparency_;
 
     std::optional<core::ShaderProgram> opaqueProgram_;
-    std::unordered_map<const data::Mesh*, MeshGeometry> geometries_;
 };
 
 } // namespace re::render
