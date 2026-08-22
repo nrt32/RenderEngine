@@ -50,7 +50,7 @@ offscreen fixture creates a GL 4.6 core context — asserted via
 and `GL_CONTEXT_PROFILE_MASK & GL_CONTEXT_CORE_PROFILE_BIT` (not the
 unreliable `glGetString(GL_VERSION)` string) — and reports no GL errors;
 (4) the gate environment is correctly sourced: `$AUDIT_SOURCE_DIRS` equals
-`io data volume core render app tests` and `$LOOP_BUILD_TEST_CMD` is
+`io data volume scene core broker render app utils tests` and `$LOOP_BUILD_TEST_CMD` is
 non-empty (R15 — a forgotten `source tools/env.sh` fails loudly instead of
 the audit silently scanning default dirs; the "non-empty" check is a binary
 env-var presence assertion — the sanctioned R4 exemption — not a weak
@@ -261,7 +261,7 @@ V2 SPEC-REVIEW gate).
 - [x] GPU/readback tests (T7–T11, T14, T15) verified with **N>=3 consecutive
       green runs** (records in `tools/logs/`).
 - [x] Mechanical audit green (`tools/audit.sh`) with
-      `AUDIT_SOURCE_DIRS="io data volume core render app tests"`.
+      `AUDIT_SOURCE_DIRS="io data volume scene core broker render app utils tests"`.
 - [x] ASan+UBSan clean on all test binaries (no leaks, no UB).
 - [x] Assets committed with a LICENSE beside every dataset dir; `data/README.md`
       records sources, URLs, licenses, and SHA256 (matches SPEC §7).
@@ -289,7 +289,7 @@ updated (already drafted, uncommitted).
 **T** — gate asserts (R15-style, explainable): (1) each script exists, is
 executable, and is `shellcheck`-clean; (2) `tools/test.sh` from a clean tree
 reproduces the full §8 contract: full suite green AND it sourced `tools/env.sh`
-(`$AUDIT_SOURCE_DIRS` equals `io data volume core render app tests` after it
+(`$AUDIT_SOURCE_DIRS` equals `io data volume scene core broker render app utils tests` after it
 runs); (3) `tools/build.sh re_sample_mesh` builds exactly that target and
 `tools/test.sh` output matches `eval "$LOOP_BUILD_TEST_CMD"` (same exit code);
 (4) `tools/run_sample.sh` with an invalid name exits 2 and prints the literal

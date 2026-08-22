@@ -26,13 +26,23 @@ small raw NRRD for commit.
 
 **Fetch method (two-phase: SETUP stages, T2 commits):** because assets are
 committed, setup does NOT download into the repo at build time. The setup phase
-(`/loop-setup`) downloads the pinned source files above, verifies SHA256, runs
-`tools/convert_nrrd.py` (downsample the CT to ≤128³ and re-write as raw NRRD),
+(`/loop-setup`) downloads the pinned source files above with `curl -L --fail`, verifies `sha256sum -c`, runs
+`python3 (>=3.10, stdlib only) tools/convert_nrrd.py` (downsample the CT to ≤128³ and re-write as raw NRRD),
 and stages the results under `data/` — but does **not** commit. Committing the
-assets, LICENSE files, `data/README.md` (sources, URLs, licenses, checksums),
+assets, `LICENSE` per dataset dir (`data/meshes/LICENSE`, `data/volumes/LICENSE`), `data/README.md` (sources, URLs, licenses, checksums),
 and recording the verified SHA256s in this section is the **T2 implementer's**
 deliverable. Re-running setup is therefore idempotent and never touches git
-state.
+state. Explicit fetch (idempotent):
+
+```bash
+curl -L --fail https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/stanford-bunny.obj -o /tmp/bunny.obj
+echo "1eb35d1e21ce99e5ce911353b6be278990713448dd9e8f5c9387f9de39b32205  /tmp/bunny.obj" | sha256sum -c
+curl -L --fail https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/teapot.obj -o /tmp/teapot.obj
+echo "1b5396fedd74b577e32cef41146582c2f2e1a050d5b4915193c0ac1ad4187ed4  /tmp/teapot.obj" | sha256sum -c
+curl -L --fail https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e -o /tmp/CT-chest.nrrd
+echo "4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e  /tmp/CT-chest.nrrd" | sha256sum -c
+python3 tools/convert_nrrd.py /tmp/CT-chest.nrrd data/volumes/sample_ct.nrrd  # downsample ≤128³, raw NRRD, python3 >=3.10 stdlib only
+```
 
 **Verified SHA256s of the committed files (T2):**
 - `data/meshes/bunny.obj` — `1eb35d1e21ce99e5ce911353b6be278990713448dd9e8f5c9387f9de39b32205` (matches source)

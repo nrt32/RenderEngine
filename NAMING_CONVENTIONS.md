@@ -13,7 +13,7 @@ project.
 ## 2. File & module naming
 - Headers `snake_case.hpp`, sources `snake_case.cpp`; one primary class per
   file, named after the class (`phong_material.hpp` → `PhongMaterial`).
-- Module directories (lowercase): `io/ data/ volume/ core/ render/ app/ tests/`.
+- Module directories (lowercase): `io/ data/ volume/ scene/ core/ broker/ utils/ render/ app/ tests/` (`scene/` GL-free value lib, `broker/` only lib that may include both `scene/`+`render/`, `utils/` offscreen context + pixel reader — see `docs/spec/modules.md` §3).
 
 ## 3. Type names
 - Classes/structs/enums/aliases: `PascalCase` (`PhongMaterial`, `VolumeDataset`).

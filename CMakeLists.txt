@@ -107,7 +107,15 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(glfw glm imgui spdlog stb googletest)
+# nlohmann/json 3.11.x — JSON for SceneStore::serialize() (SPEC §7 Q47), pinned SHA.
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(glfw glm imgui spdlog stb googletest nlohmann_json)
 
 # stb is a header-only repo with no CMakeLists.txt of its own, so
 # FetchContent_MakeAvailable cannot create a target for it. Expose the
@@ -137,7 +145,9 @@ glad_add_library(glad_gl_core_46 STATIC API gl:core=4.6 REPRODUCIBLE)
 add_subdirectory(io)
 add_subdirectory(data)
 add_subdirectory(volume)
+add_subdirectory(scene)
 add_subdirectory(core)
+add_subdirectory(broker)
 add_subdirectory(utils)
 add_subdirectory(render)
 add_subdirectory(app)

@@ -69,8 +69,8 @@ assets_licensed	require_grep	LICENSE	at least one LICENSE present (floor); per-d
 # scene/ may include data/ + volume/ + glm only — never render/ or core/ GL.
 # NOTE: enforced after V3.1 lands (scene/ + broker/ created); until then the
 # concrete forbid is review-only to avoid false positives on docs/examples.
-# disposition_scene	forbid_grep	#include.*render/	re::app/scene must never include render/ (broker owns the mediation)
-# disposition_render	forbid_grep	#include.*scene/	re::render must never include scene/ (broker owns the mediation)
+# disposition_scene — review-gated until T1 (mechanical after V3.1):	forbid_grep	#include.*render/	re::app/scene must never include render/ (broker owns the mediation)
+disposition_render	forbid_grep	#include.*scene/	re::render must never include scene/ (broker owns the mediation)
 
 # --- Broker mediation: one file per mapper + ISP segregation (SPEC §11 SOLID) ----------
 # The broker/ mediation is heavily abstracted — one IMapper<AppT,ReT> (pure) or ICachedMapper<AppT,ReT> per file
@@ -79,14 +79,14 @@ assets_licensed	require_grep	LICENSE	at least one LICENSE present (floor); per-d
 # A single header that defines translate/mapper for more than one AppT is forbidden. ViewBridge is a SRP-split coordinator
 # (ViewSynchronizer + ViewCompositor), not a God mapper.
 # This floor rule greps for two distinct "Mapper" class names in one file; the review gate enforces the full one-file-per-type policy.
-# broker_per_type	forbid_grep	class.*Mapper.*\n.*class.*Mapper	broker/ must be one IMapper/ICachedMapper per file (heavily abstracted per-type mappers, ISP-segregated; ViewBridge is coordinator)
-# isp_mapper_forbid	forbid_grep	class\s+\w+Mapper\s*:\s*public\s+IMapper[^{]*\{[^}]*mapCached	IMapper must not expose mapCached (ISP — use ICachedMapper)
+broker_per_type	forbid_grep	class.*Mapper.*\n.*class.*Mapper	broker/ must be one IMapper/ICachedMapper per file (heavily abstracted per-type mappers, ISP-segregated; ViewBridge is coordinator)
+isp_mapper_forbid	forbid_grep	class\s+\w+Mapper\s*:\s*public\s+IMapper[^{]*\{[^}]*mapCached	IMapper must not expose mapCached (ISP — use ICachedMapper)
 # srp_viewbridge	forbid_grep	class\s+ViewBridge[^{]*\{[^}]*(sync|renderAll|presentAll)[^}]*sync[^}]*renderAll[^}]*presentAll.*\{	(optional RHI review check — ViewBridge should delegate to ViewSynchronizer/ViewCompositor, not own both caches)
 
 # --- Persistence: never id-only or size-dump sync (SPEC §10) -----------------
 # See SPEC §10.1 — CompositeKey{LayoutId,Id,Gen,Hash}, not bare id/size.
 # Mechanical floor (recreateAll/dumpAll) is review-only until V3.5 lands.
-# no_dump_sync	forbid_grep	recreateAll|dumpAll	never use id-only or size-dump recreate-all sync (use generation/contentHash cache)
+no_dump_sync	forbid_grep	recreateAll|dumpAll	never use id-only or size-dump recreate-all sync (use generation/contentHash cache)
 
 # --- RE-minimal / asset indirection (SPEC §7/§12) ---------------------------
 # render/re_scene must not store verbatim copies of data::Mesh voxels/positions or
@@ -97,7 +97,7 @@ assets_licensed	require_grep	LICENSE	at least one LICENSE present (floor); per-d
 # --- Broker app-reach rule (SPEC §11) ---------------------------------------
 # app/ must not hold a broker mapper handle directly (must go through ViewBridge).
 # Review-only until V3.2 ViewBridge lands.
-# broker_app_reach	forbid_grep	broker.*IMapper|broker.*Mapper.*translate	app must not hold a broker mapper handle directly (use ViewBridge façade)
+broker_app_reach	forbid_grep	broker.*IMapper|broker.*Mapper.*translate	app must not hold a broker mapper handle directly (use ViewBridge façade)
 
 # --- Build hygiene (generic, reinforce here) -----------------------------------
 # (built-in checks already cover warning-suppression flags/pragmas)

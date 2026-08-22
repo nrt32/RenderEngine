@@ -36,7 +36,7 @@
   set explicitly). `tools/env.sh` sets it to `tools/configure.sh && cmake
   --build build -j$(nproc) && ctest --test-dir build --output-on-failure`,
   i.e. conditional configure + incremental build + full suite.
-- `AUDIT_SOURCE_DIRS="io data volume core render app utils tests"` — required for
+- `AUDIT_SOURCE_DIRS="io data volume scene core broker render app utils tests"` — required for
   audit ownership rules to see our non-default layout.
 
 ### Convenience scripts (tools/)
