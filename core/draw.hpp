@@ -83,6 +83,53 @@ void unbindImage(std::uint32_t unit) noexcept;
 /// (SPEC §3 OIT; render/linked_list_oit.cpp composite pass).
 void enablePremultipliedOverBlend() noexcept;
 
+/// ---------------------------------------------------------------------------
+/// Draw-state cache + test-injectable GL-call spy (SPEC §9 V2.10).
+///
+/// `core/draw.cpp` keeps an internal dirty-flag cache for the draw-state
+/// wrappers (`setViewport`, `setClearColor`, `enable*`/`disable*`,
+/// `enablePremultipliedOverBlend`). A second call with identical values is a
+/// cache hit and issues **no** raw `gl*` call (motivator: OIT mid-frame
+/// toggles). The free-function `core::Draw` API and the audit anchors
+/// (`core::loadCoreGl`, `core::readRgba8`) are unchanged.
+///
+/// The spy records how many times each wrapper *actually* issued its raw GL
+/// call — a cached call does not increment the counter. Tests can reset the
+/// counters and invalidate the cache between cases.
+/// ---------------------------------------------------------------------------
+
+/// Per-wrapper raw-GL call counts observed by the spy.
+struct DrawSpyCounts {
+    /// Number of `glViewport` calls issued via `setViewport`.
+    int viewport = 0;
+    /// Number of `glClearColor` calls issued via `setClearColor`.
+    int clearColor = 0;
+    /// Number of `glEnable(GL_DEPTH_TEST)` calls via `enableDepthTest`.
+    int enableDepthTest = 0;
+    /// Number of `glDisable(GL_DEPTH_TEST)` calls via `disableDepthTest`.
+    int disableDepthTest = 0;
+    /// Number of `glEnable(GL_BLEND)` calls via `enableBlend` or
+    /// `enablePremultipliedOverBlend`.
+    int enableBlend = 0;
+    /// Number of `glDisable(GL_BLEND)` calls via `disableBlend` or the
+    /// post-composite restore in `LinkedListOIT::end`.
+    int disableBlend = 0;
+    /// Number of `glBlendFunc` calls via `enablePremultipliedOverBlend`.
+    int blendFunc = 0;
+};
+
+/// Return a snapshot of the current spy counts.
+DrawSpyCounts getDrawSpyCounts() noexcept;
+
+/// Reset all spy counters to zero (cache is left intact).
+void resetDrawSpyCounts() noexcept;
+
+/// Invalidate the internal dirty-flag cache so the next wrapper call always
+/// issues its raw GL call (also resets the spy counters for convenience in
+/// tests — call `resetDrawSpyCounts` separately if you want to keep the
+/// cache).
+void invalidateDrawCache() noexcept;
+
 /// Copy a `srcWidth` x `srcHeight` color pixel rectangle from the bottom-left
 /// corner `(srcX, srcY)` of the `source` framebuffer into the `destination`
 /// framebuffer (nullptr = the window's default framebuffer 0) at the

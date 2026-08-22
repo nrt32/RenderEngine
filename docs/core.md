@@ -94,6 +94,41 @@ portable level that compiles on both llvmpipe and the native d3d12 driver. GLSL
 460 remains the target for hardware-driven sample shaders on the native d3d12
 path.
 
+### Draw-state cache (SPEC §9 V2.10)
+
+`core/draw.cpp` keeps an **internal dirty-flag cache** for the draw-state
+wrappers (`setViewport`, `setClearColor`, `enableDepthTest`/`disableDepthTest`,
+`enableBlend`/`disableBlend`, `enablePremultipliedOverBlend`). The free-function
+`core::Draw` API and the audit anchors (`core::loadCoreGl`, `core::readRgba8`)
+are unchanged — the cache is transparent to callers and to the mechanical
+audit.
+
+- `setViewport(x,y,w,h)` caches the last viewport rect; an identical rect is a
+  cache hit and issues no `glViewport`.
+- `setClearColor(r,g,b,a)` caches the last clear color (exact float equality);
+  an identical color is a hit and issues no `glClearColor`.
+- `enableDepthTest`/`disableDepthTest` and `enableBlend`/`disableBlend` cache
+  the last enabled state per capability; a redundant enable/disable is a hit and
+  issues no `glEnable`/`glDisable`. `enablePremultipliedOverBlend` caches both
+  the `GL_BLEND` enable and the `glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)`
+  state, so a second identical call issues neither.
+- Motivator: OIT mid-frame toggles that would otherwise redundantly re-issue
+  `glEnable`/`glDisable`/`glBlendFunc` per transparent draw.
+
+For testing, `core/draw.hpp` exposes a **test-injectable spy**:
+
+- `core::DrawSpyCounts` — per-wrapper raw-GL call counts (only incremented on a
+  cache miss);
+- `core::getDrawSpyCounts()` / `core::resetDrawSpyCounts()` — inspect/reset the
+  spy;
+- `core::invalidateDrawCache()` — invalidate the cache (and reset the spy) so
+  the next wrapper call always issues its `gl*` call. Tests call this between
+  cases to avoid cross-test pollution.
+
+Example gate assertion: `setClearColor(red); setClearColor(red)` issues exactly
+**1** `glClearColor`; the same holds for `setViewport` and each
+`enable*`/`disable*`.
+
 ### Logging
 
 `core::initLogging()` configures the shared spdlog console logger (SPEC §5). It

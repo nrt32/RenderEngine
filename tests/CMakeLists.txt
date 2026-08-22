@@ -15,6 +15,7 @@ add_executable(${RE_TEST_TARGET}
     t5_v2_platform_backend_test.cpp
     t5_volume_test.cpp
     t6_volume_math_test.cpp
+    t6_v2_draw_cache_test.cpp
     t7_render_mesh_test.cpp
     t8_render_plane_test.cpp
     t9_render_volume_test.cpp
