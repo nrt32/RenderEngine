@@ -49,6 +49,14 @@ project.
   `Exchange`, `Adapter`, `Converter`, `Synchronizer` are recorded as
   alternatives but **one** name is chosen on the implementing branch and
   bulk-updated.
+  - `IMapper<AppT,ReT>{map(Ctx)}` pure vs `ICachedMapper:IMapper{mapCached,invalidate}`
+    ISP-split — one file per mapper (`camera_mapper.*`, `mesh_object_mapper.*`,
+    `view_bridge.*` etc.; `ViewBridge` is coordinator not mapper — guardrail
+    `broker_per_type`), `Broker{registerMapper<T>(unique_ptr<IMapper<T>>), get<T>()}`
+    keyed by `std::type_index` (OCP — no `enum` switch), `IViewBridge{sync,renderAll,
+    presentAll}` façade composing `ViewSynchronizer` (cache/dirty) + `ViewCompositor`
+    (dispatch/present) SRP-split (T3 V3.2b). App never holds `IMapper`; only
+    `IViewBridge` (DIP).
 - **`render/` naming:** material hierarchy is
   `IMaterial → MeshMaterial/VolumeMaterial/SliceMaterial/ContourMaterial → PhongMaterial/PBRMaterial`
   (SPEC §12); light hierarchy is `ILight → DirectionalLight/PointLight/SpotLight`

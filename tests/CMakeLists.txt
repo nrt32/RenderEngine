@@ -27,6 +27,7 @@ add_executable(${RE_TEST_TARGET}
     t15_mpr_test.cpp
     t8_v2_glsl_version_test.cpp
     t2_skeletons_test.cpp
+    t3_broker_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
@@ -37,6 +38,7 @@ target_link_libraries(${RE_TEST_TARGET}
         re_io
         re_volume
         re_scene
+        re_broker
         re_render
         re_app
         re_project_warnings

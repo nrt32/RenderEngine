@@ -101,6 +101,8 @@ broker/
 
 **SOLID 11.4.2 — OCP choice for 11.5 Q25:** `AppPlaneDesc::Space` conversion **always normalises to world before reaching the mapper** where possible (world is the stable `Re` representation), but where voxel→world needs per-volume dims+model, the mapper receives those via `TranslateContext` — adding a new `Space::NormalizedDevice` variant needs only a new `SpaceConverter` extension, not an edit to every mapper (OCP).
 
+> **T3 landed (V3.2b):** `broker/` `STATIC` now owns `IMapper<AppT,ReT>` (pure) vs `ICachedMapper:IMapper` (cached `mapCached`+`invalidate`) ISP-split (`i_mapper.hpp` + alias `i_cached_mapper.hpp`), `Broker` registry keyed by `std::type_index(typeid(AppT))` (OCP — no enum switch) with `registerMapper<T>(unique_ptr<IMapper<T>>)` / `get<T>()`, and `IViewBridge{sync,renderAll,presentAll}` façade composing `ViewSynchronizer` (cache/dirty) + `ViewCompositor` (dispatch/present) SRP-split. One file per mapper (`camera_mapper.*`, `mesh_object_mapper.*`, `view_bridge.*` etc. — `ViewBridge` is coordinator not mapper). App never holds `IMapper`; only `IViewBridge` (DIP). `MeshObjectMapper` injects `AssetHandle` via `render::AssetRegistry` (same pointer dedup) and `AssetStore` skeleton provides generational `StaleHandle` code 2 for T3 gate. See gate test `t3_broker_test.cpp`.
+
 ### 11.5 Build / ownership / guardrail
 
 - `scene/` links to `data`, `volume`, `glm` + `data/result`.
