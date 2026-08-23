@@ -92,8 +92,8 @@ no_dump_sync	forbid_grep	recreateAll|dumpAll	never use id-only or size-dump recr
 # --- RE-minimal / asset indirection (SPEC §7/§12) ---------------------------
 # render/re_scene must not store verbatim copies of data::Mesh voxels/positions or
 # data::VolumeDataset voxels — only derived handles (AssetHandle, Texture3D*, ReMaterial*).
-# Review-only until V3.1/V3.6 create render/re_scene/.
-# asset_indirection	forbid_grep	data::Mesh.*positions|data::VolumeDataset.*voxels	render/re_scene must not store verbatim app asset data (RE-minimal, use handles)
+# Active since T9 V3.8 — render/re_scene/ landed.
+asset_indirection	forbid_grep	data::Mesh::positions|data::VolumeDataset::voxels	render/re_scene must not store verbatim app asset data (RE-minimal, use handles)
 
 # --- Broker app-reach rule (SPEC §11) ---------------------------------------
 # app/ must not hold a broker mapper handle directly (must go through ViewBridge).
