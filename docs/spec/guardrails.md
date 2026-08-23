@@ -41,5 +41,19 @@
   `(AssetId/type/contentHash, scope, refCount)` per SPEC §7/§10, not by
   pointer-identity alone (see SPEC §7 addendum research). *Audit:
   `asset_indirection` (forbid direct `data::Mesh` copy into `render/re_scene/`).*
+- **Bridge completeness (Sr. review 2026-08-23)** — every scene kind routed
+  through `broker/` produces a real layer or a typed error; no-op/placeholder
+  renderables in `ViewSynchronizer::sync` (a scene kind silently vanishing
+  from the frame) are forbidden. *Audit: grep `Noop` under `broker/` == 0;
+  review gate enforces the full rule.*
+- **Single internal implementation per renderer (Sr. review)** — pass
+  prologue, shared quad geometry, `geometryFor`, and the content-hash helper
+  each have exactly one definition; `<glad/gl.h>` never appears under
+  `render/` (GL constants via core/ wrappers). *Audit:
+  `render_no_glad_include` (forbid `#include <glad/gl.h>` outside core|).*
+- **Error codes carry their domain (Sr. review)** — numeric error ranges may
+  repeat across loaders/renderers/broker; consumers disambiguate via the
+  domain tag on `data::Error`, never by string-parsing messages. Failed
+  `Result` dereference asserts in debug builds. *Review gate; T22.*
 - **Build hygiene** — warnings-as-errors, no warning-suppression flags/pragmas
   (generic built-in checks).

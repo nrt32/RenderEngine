@@ -103,3 +103,33 @@ References: cache-key `version` + tenant isolation via Software Patterns Lexicon
   is the lower layer §10's per-item translators call into.
 
 > **T6 landed (V3.5):** Full content-addressed persistence — `CompositeKey{Version,LayoutId,ViewId,Type,Gen,Hash}` (not `id+size` dump) via `scene/composite_key.hpp` (now includes `typeHash`). `ReView`/`Re*Object`/`ViewTarget` persist across `sync()` — `Camera::rotate` dirties only `CameraMapper` (per-field `viewGen` via `ViewSynchronizer`+`ViewCompositor` SRP-split), `2D→3D` toggle same `ViewId` (`plane some→nullopt`, `itemIds` swap) rebinds `plane+items` without `ReView` map churn, size resize recreates only `ViewTarget` inner `FBO` (physical pixels `framebufferSize` + `contentScale` via `Layout::resolve`), layout count/set change inserts/erases `ReView`s. Hybrid `storeGen` poll early-out + bounded `dirtyFieldsSince()` scan + `markDirty()` push opt-in via `broker::IDirtyTracker` (`broker/idirty_tracker.hpp`, `IJobExecutor` inline fallback) + `scene::SceneStore`/`ViewStore::markDirty`/`dirtyFieldsSince` + `scene/LayoutSpec` relative → `Layout::resolve(windowSize,dpr)` absolute `Rect` (within 1 px). See gate `t6_persistence_test.cpp`.
+
+### 10.7 Implementation honesty requirements (Sr. review 2026-08-23 — Task T19)
+
+The persistence contract above is only real if the machinery actually computes
+what it claims. The following are **binding**, closing gaps the architecture
+review found between the documented mechanism and its implementation:
+
+- **`dirtyFieldsSince` must derive from the dirty log.** Returning a hardcoded
+  field set while maintaining a `dirtyLog_` that is never read makes the
+  hybrid push/poll story decorative. The gate asserts a camera-only mutation
+  yields exactly `{Camera}`.
+- **Tombstones are enforced at resolve time.** An id erased from
+  `SceneStore`/`ViewStore` resolves to a typed stale error afterward — the
+  written-but-never-read tombstone generation is consulted by `resolve`.
+- **One identity type.** `StableKey` exists exactly once in `broker/`
+  (versioned shape `{Version/LayoutId/ViewId}`); synchronizer and compositor
+  share it — divergent twins drift and silently break reuse semantics.
+- **No discarded dirty computation and no fake parallelism.** Dirty results
+  are consumed or the code is deleted; executor-exercise stubs whose outputs
+  are `(void)`-discarded misrepresent the concurrency contract.
+- **Per-camera mapper caching.** A single-slot camera cache thrashes under
+  N cameras; `invalidate(id)` implies id-keyed entries.
+
+> **Asset-store gap (Task T14):** today's GPU-side store is mesh-only —
+> `render::AssetRegistry` dedups `MeshGeometry`, but volume/image textures
+> live in per-renderer pointer-keyed caches without invalidation, and
+> `broker::AssetStore` mirrors the mesh-only shape despite unused
+> `computeContentHash(VolumeDataset/Image)` overloads. §10's "Volume Tex lives
+> globally, deduped" becomes true only when T14 lands the typed multi-kind
+> store keyed by `(AssetId, generation, contentHash)`.

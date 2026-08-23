@@ -46,3 +46,34 @@ Pure-redesign V3 (no new FRs — R1–R8 redesign scope per 2026-08-23 direction
 | 10 | T10 | V3.9 | EOL skeletons — deferred stretch | `RHI`/`IJobExecutor`/serialisation skeletons **deferred** (stretch) — only `DrawContext`/`IDirtyTracker`/`Version` extension points remain. | T2, T6 | §3, §11.6, §13.8 |
 | 11 | T11 | V3.8b | GPU mesh contour — `ContourRenderer` via geometry shader | Replace CPU `app/mpr_contour` (`meshPlaneContour`/`overlayContour`) with GPU `render::ContourRenderer` (`contour.geom.glsl`) — `plane∩mesh` outline on GPU via `ContourObject{AssetHandle,ClipPlane}` + `ContourMapper`, `app/mpr_contour.hpp` deleted. | T1, T5, T7 | §3, §12.4 |
 | 12 | T12 | V3.4b | Plane rendering via `PlaneRenderer` — no CPU quad parsing | Audit all textured-plane displays via `render::PlaneRenderer::drawLayer` (GPU `plane.vert/frag.glsl`), no `app/` CPU `PlaneGeometry` vertex parsing outside `render/`. | T1, T3 | §3 |
+| 13 | T13 | Review | Ownership discipline — no raw owning-suspect pointers | Full inventory (scene structs, renderer ctor injection, pointer-keyed caches, sample member-order coupling); handle-first policy (`unique_ptr` sole owner / generational handles for RE / `shared_ptr`+`weak_ptr` only where cross-layer lifetime is real — atomic-refcount + zombie-resource pitfalls documented); lifetime notes on every remaining borrow; audit rule. | — | §6 |
+| 14 | T14 | Review | Unified asset store — volumes/images/materials alongside meshes | Closes the mesh-only gap (`broker::AssetStore`, per-renderer pointer-keyed texture caches without invalidation) with one typed multi-kind store keyed `(AssetId,generation,contentHash)`; removes per-renderer texture maps; real material dedup replaces the `material=nullptr` placeholder. | T7 | §7, §10.7 |
+| 15 | T15 | Review | Comment hygiene — self-contained rationale beside every tag | Sweep of bare `SPEC §N`/`T#`/decision-log citations found in review; mechanical floor rule or explicit allowlist. | — | §6, R9 |
+| 16 | T16 | Review | GPU volume-plane extraction + interactive MPR 2D views | Fragment-shader sampling of cached `Texture3D` at the view's `ClipPlane`; `plane_sample` reworked to an extracted CT plane (was: gradient quad — neither mesh nor slice); MPR slices leave the frozen CPU path (`makeSliceImage` becomes test oracle). | T5, T14 | §3, FR-app.2 |
+| 17 | T17 | Review | OIT sample — opaque + transparent meshes with depth overlap | ≥2 opaque + ≥2 transparent real meshes interleaved along the view direction (replaces three transparent quads); analytic composite probes; consumes T21 depth support. | T21 | FR-render.2/3 |
+| 18 | T18 | Review | Broker = only app path; complete mapper inventory | Implement missing `PlaneMapper` (+ volume layer reality), delete Noop renderables from `ViewSynchronizer`, route all samples through `IViewBridge` (today broker has zero app consumers). | T3, T16 | §3, §11 |
+| 19 | T19 | Review | Persistence honesty — activate scaffolding | `dirtyFieldsSince` computed from `dirtyLog_`; tombstones enforced in `resolve`; single shared `StableKey` (divergent twins unified); fake `parallelFor` + discarded dirty results removed; id-keyed camera cache. | T6 | §10.7 |
+| 20 | T20 | Review | Renderer consolidation | One pass-prologue, one shared quad, one `geometryFor`, one content-hash definition (`data/content_hash.hpp`), merged `render()`/`drawLayer` bodies, `<glad/gl.h>` out of `render/`. Zero pixel drift. | T5 | §3 |
+| 21 | T21 | Review | Depth-buffer support — optional attachment + per-view flag | Color-only stays default (analytic gates); opt-in depth target for true occlusion (near-mesh-wins gate); feeds OIT-with-opaque-meshes and unblocks removing the MPR box face-ordering hack. | T5 | §3 |
+| 22 | T22 | Review | Error-model hardening | Domain-tagged error codes (loader ranges collide inside the single `int code`); debug-trap on failed `Result` dereference; dead `hasValue()` removed; monadic helpers optional stretch. | — | §6 |
+| 23 | T23 | Review | Sample harness resize handling | Framebuffer-size callback + optional `ISample::onResize`; all samples derive aspect from live dims (today only MPR does; others distort on resize). | — | FR-app.1 |
+
+### 9.1.1 Deferred (recorded, intentionally not scheduled — Sr. review)
+
+Industry-standard capabilities deliberately kept out of the current loop so
+the redesign lands before breadth; recorded here so they are visible EOL
+items, not accidents:
+
+- **Render-graph pass scheduling/ordering** (Frostbite FrameGraph /
+  Filament / UE RDG pattern): automatic pass ordering + transient resource
+  aliasing from declared reads/writes. The `View` item list is painter's
+  order today — sufficient at this scale; revisit when passes exceed a
+  handful per view.
+- **Async/staging uploads** (staging buffer → device-local copy): v1 is
+  single-threaded, upload-at-load; fine for ≤128³ budgets.
+- **Material shader-permutation system** (UE FMaterialShaderMap analog):
+  Phong-only non-goal keeps one shader per technique; revisit with PBR.
+- **Lights** (`ILight` hierarchy, per-view light lists): deferred with the
+  material expansion (T8 note); fixed headlight until then.
+- **Monadic `Result` combinators** (`map`/`and_then`): stretch within T22;
+  nested-error-dance call sites are tolerable at current depth.
