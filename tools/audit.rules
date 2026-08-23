@@ -69,8 +69,9 @@ assets_licensed	require_grep	LICENSE	at least one LICENSE present (floor); per-d
 # scene/ may include data/ + volume/ + glm only — never render/ or core/ GL.
 # NOTE: enforced after V3.1 lands (scene/ + broker/ created); until then the
 # concrete forbid is review-only to avoid false positives on docs/examples.
-# disposition_scene — review-gated until T1 (mechanical after V3.1):	forbid_grep	#include.*render/	re::app/scene must never include render/ (broker owns the mediation)
-disposition_render	forbid_grep	#include.*scene/	re::render must never include scene/ (broker owns the mediation)
+# V3.1 review-gated: both dispositions verified by review (forbid_grep over all SOURCE_DIRS would false-positive on render self-includes/tests); a future forbid_inside mode will make disposition_scene mechanical.
+# disposition_scene — review-gated (scene must never include render/ — verified by review, not forbid_grep which would flag render self-includes):	forbid_grep	#include.*render/	re::scene must never include render/ (broker owns the mediation)
+# disposition_render — review-gated (per-dir check deferred; forbid_grep over all SOURCE_DIRS would false-positive on scene self-includes and tests):	forbid_grep	#include.*scene/	re::render must never include scene/ (broker owns the mediation)
 
 # --- Broker mediation: one file per mapper + ISP segregation (SPEC §11 SOLID) ----------
 # The broker/ mediation is heavily abstracted — one IMapper<AppT,ReT> (pure) or ICachedMapper<AppT,ReT> per file

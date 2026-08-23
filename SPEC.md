@@ -34,7 +34,10 @@ section files directly.
 - **Stack:** GLFW 3.4, glad2 v2.0.8, GLM 1.0.1, Dear ImGui v1.92.9, GoogleTest
   v1.15.x, spdlog v1.14.1, stb — all pinned via FetchContent `GIT_TAG` (§2, §6).
 - **Modules:** `io/ data/ volume/ scene/ core/ broker/ utils/ render/ app/ tests/` — `core/`
-  is the sole owner of raw GL calls (§3); `scene/` is the app-side scene description library (GL/RE-free) and `broker/` is the heavily abstracted per-type `scene → render` mediation library (ViewBridge) (§3/§11).
+  is the sole owner of raw GL calls (§3); `scene/` `re::scene` `STATIC` is the GL/RE-free app-side
+  scene value library (`View{rect,plane,itemIds,gen}`, `Camera{pan/rotate/zoom/orbit → viewMatrix()}`,
+  `PlaneDesc{World|VoxelIndex}`, `SceneObject` family `{AssetRef,transform,presentation}`, `SceneStore`/`ViewStore`
+  stable handles + per-field `generation` — `data`+`volume`+`glm` only, copyable value semantics, no `App` prefix) (SPEC §3.1, V3.1 landed T1); `broker/` is the heavily abstracted per-type `scene → render` mediation library (ViewBridge) (§3/§11).
 - **FRs:** analytic acceptance constants; tolerances 1/255 (color), 1e-6
   (math), ε=1e-4 (plane geometry) (§4).
 - **Guardrails:** dependency lock, GL ownership, forbidden patterns, evidence +

@@ -61,20 +61,24 @@ app/         compositions + samples + ImGui overlay — now THIN, consumes scene
 tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; broker/ and scene/ headless-translation tests too; RHI tests via utils::OffscreenContext→IRHIContext)
 ```
 
-### 3.1 `scene/` — app-side scene library (GL-free, RE-free)
+### 3.1 `scene/` — app-side scene library (GL-free, RE-free) — landed V3.1
 
-- **Purpose:** every type an `app` author touches: `View`, `Camera` (manipulable
-  `pan/rotate/zoom/orbit` plus `viewMatrix()` that RE consumes — app sends the
-  **view matrix**, not eye/target up), `PlaneDesc` (abstract plane equation,
-  `Space::World|VoxelIndex`, lives on `View` for `2D` — item slice objects do
-  **not** carry their own plane unless an explicit per-item override is needed),
-  `MaterialDesc` hierarchy, `LightDesc` hierarchy (`Directional/Point/Spot` per
-  view, many per view), and the `SceneObject` family. No `GL`, no
-  `AssetHandle`, no `core::` types; only `glm` + `data/` + `volume/`.
-- **Naming:** types are **unprefixed** inside `re::app` — e.g. `app::MeshObject`,
-  `app::Camera`, `app::View` — the namespace **is** the prefix (your
-  requirement). `render::View` is the RE mirror (`render::ReView` alias kept for
-  grep distinctness where both are included — `translate/`).
+- **Purpose (V3.1 `re::scene` STATIC):** every type an `app` author touches:
+  `View{rect,plane,itemIds,generation + per-field rectGen/planeGen/cameraGen/itemsGen}`,
+  `Camera` (manipulable `pan/rotate/zoom/orbit` plus `viewMatrix()`/`projMatrix()` that RE
+  consumes — app sends the **view matrix**, not eye/target up; per-field `viewGen`/`projGen`),
+  `PlaneDesc` (abstract plane equation, `Space::World|VoxelIndex`, lives on `View` for `2D` —
+  item slice objects do **not** carry their own plane unless an explicit per-item override is
+  needed), `MaterialDesc`/`VolumePresentation` (Phong-only `MeshMaterialDesc` + `VolumeMaterialDesc`
+  `+ TransferFunction` per §12.5), `LightDesc` hierarchy (`Directional/Point/Spot` per
+  view, many per view, deferred inline vector), and the `SceneObject` family
+  (`MeshObject/MeshSliceObject/VolumeObject/VolumeSliceObject/PlaneObject = {AssetRef,transform,presentation}`).
+  `SceneStore`/`ViewStore` carry stable `uint64_t` handles + `generation`/`storeGeneration` + `bump(FieldId)`
+  single entry point (SPEC §10.4). No `GL`, no `AssetHandle`, no `core::` types; only `glm` + `data/` + `volume/`.
+- **Naming:** types are **unprefixed** inside `re::scene` (accepted name `re::scene::MeshObject`,
+  not `re::app::AppMeshObject` — namespace is prefix per NAMING_CONVENTIONS §6) — e.g.
+  `scene::MeshObject`, `scene::Camera`, `scene::View`. `render::View` is the RE mirror
+  (`render::ReView` alias kept for grep distinctness where both are included — `broker/` ACL).
 - **SceneStore + ViewStore:** stable `uint64_t` handles + `generation` per
   object/view/layout, **but `id` is never the sole persistence key** (SPEC §10).
   The store is the source of truth for `id → Object` and is page/layout-scoped

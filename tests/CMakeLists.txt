@@ -5,6 +5,7 @@ set(RE_TEST_TARGET re_tests)
 add_executable(${RE_TEST_TARGET}
     offscreen_fixture.cpp
     t1_scaffolding_test.cpp
+    t1_scene_test.cpp
     t1_v2_ir_dispatch_test.cpp
     t2_assets_test.cpp
     t2_v2_multiview_test.cpp
@@ -34,6 +35,7 @@ target_link_libraries(${RE_TEST_TARGET}
         re_data
         re_io
         re_volume
+        re_scene
         re_render
         re_app
         re_project_warnings
