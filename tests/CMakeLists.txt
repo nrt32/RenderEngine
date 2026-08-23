@@ -30,6 +30,7 @@ add_executable(${RE_TEST_TARGET}
     t3_broker_test.cpp
     t4_camera_test.cpp
     t5_view_test.cpp
+    t6_persistence_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

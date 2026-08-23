@@ -1,15 +1,21 @@
 #pragma once
 
-// broker/view_synchronizer.hpp — ViewSynchronizer (SPEC §11 V3.2b T3).
+// broker/view_synchronizer.hpp — ViewSynchronizer full persistence (SPEC §11 V3.2b T3, V3.5 T6).
 //
 // SRP: single responsibility is poll SceneStore generations / contentHash and
-// drive ICachedMapper::mapCached (owns CompositeKey cache). Does not dispatch
-// rendering (that's ViewCompositor). Broker owns mapper registry (type_index),
-// ViewSynchronizer owns generation/contentHash cache (SRP split per §11.3.1).
+// drive ICachedMapper::mapCached (owns CompositeKey cache + per-field ViewCache).
+// Hybrid poll+push via IDirtyTracker (DIP): poll storeGeneration() early-out,
+// bounded dirtyFieldsSince() scan, markDirty() push opt-in. Owns no ReView
+// lifetime (that's ViewCompositor); but updates ReViews in place via
+// ViewCompositor pointer (SRP split per §11.3.1).
 
 #include <span>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "broker/broker.hpp"
+#include "broker/idirty_tracker.hpp"
 #include "data/result.hpp"
 #include "scene/composite_key.hpp"
 #include "scene/store.hpp"
@@ -17,26 +23,81 @@
 
 namespace re::broker {
 
+class ViewCompositor; // forward
+
 /// View synchronizer — cache/dirty side of IViewBridge (SRP via composition).
 ///
+/// Implements IDirtyTracker for hybrid poll+push DIP (ViewSynchronizer is the
+/// collaborator from T2; SceneStore/ViewStore adapters also implement the same
+/// abstraction so sync can be tested against either).
+///
 /// Polls SceneStore::storeGeneration() as early-out, then iterates
-/// dirtyFieldsSince(lastStoreGen) bounded set (hybrid poll+push per §10.4,
-/// unblocks T6). For T3 the implementation is a skeleton that drives
-/// ICachedMapper::mapCached for known mappers without recreating ReView identity.
-class ViewSynchronizer {
-   public:
-    explicit ViewSynchronizer(Broker* broker) : broker_(broker) {}
+/// dirtyFieldsSince(lastStoreGen) bounded set (hybrid poll+push per §10.4).
+/// For T6 it also diffs per-field generations (rectGen/planeGen/cameraGen/
+/// itemsGen and Camera viewGen/projGen) and drives ICachedMapper::mapCached
+/// for the dirty field only (Camera::rotate dirties only CameraMapper).
+/// ReView identity by CompositeKey{Version,LayoutId,ViewId} stable — no map churn
+/// on 2D→3D toggle or camera orbit; size resize recreates only ViewTarget inner FBO.
+class ViewSynchronizer : public IDirtyTracker {
+    public:
+     explicit ViewSynchronizer(Broker* broker, ViewCompositor* compositor = nullptr,
+                               IJobExecutor* executor = nullptr)
+         : broker_(broker), compositor_(compositor), executor_(executor) {
+         if (!executor_) executor_ = &inlineExecutor_;
+     }
 
-    /// Sync views + scene: poll storeGeneration, drive cached mappers.
-    data::Result<void> sync(std::span<const scene::View> views,
-                            const scene::SceneStore& scene);
+     /// Primary sync: views + sceneStore, optional layoutId (default 0 for single-layout).
+     data::Result<void> sync(std::span<const scene::View> views,
+                             const scene::SceneStore& scene,
+                             uint64_t layoutId = 0);
 
-    /// For test: last synced store generation.
-    uint64_t lastStoreGen() const noexcept { return lastStoreGen_; }
+     /// Push opt-in: mark a specific view's field dirty off-frame (SPEC §10.4).
+     void markDirty(uint64_t viewId, scene::FieldId field) noexcept override;
+
+     /// For test: last synced store generation (poll early-out).
+     uint64_t lastStoreGen() const noexcept { return lastStoreGen_; }
+
+     /// IDirtyTracker facet (for tests exercising tracker directly).
+     uint64_t storeGeneration() const noexcept override;
+     std::vector<scene::FieldId> dirtyFieldsSince(uint64_t lastGen) const noexcept override;
+
+    void setCompositor(ViewCompositor* c) noexcept { compositor_ = c; }
 
    private:
-    Broker* broker_;
-    uint64_t lastStoreGen_{0};
+    struct ViewCache {
+        uint64_t rectGen{static_cast<uint64_t>(-1)};
+        uint64_t planeGen{static_cast<uint64_t>(-1)};
+        uint64_t cameraGen{static_cast<uint64_t>(-1)};
+        uint64_t itemsGen{static_cast<uint64_t>(-1)};
+        uint64_t viewGen{static_cast<uint64_t>(-1)};
+        uint64_t projGen{static_cast<uint64_t>(-1)};
+    };
+    struct StableKey {
+        uint64_t layoutId{0};
+        uint64_t viewId{0};
+        bool operator==(const StableKey& o) const noexcept {
+            return layoutId == o.layoutId && viewId == o.viewId;
+        }
+    };
+    struct StableKeyHash {
+        std::size_t operator()(const StableKey& k) const noexcept {
+            std::size_t h = std::hash<uint64_t>{}(k.layoutId);
+            h ^= std::hash<uint64_t>{}(k.viewId) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+
+    bool hasPushDirty(uint64_t viewId, scene::FieldId field) const noexcept;
+
+     Broker* broker_;
+     ViewCompositor* compositor_{nullptr};
+     IJobExecutor* executor_{nullptr};
+     InlineJobExecutor inlineExecutor_{};
+     uint64_t lastStoreGen_{0};
+     std::unordered_map<StableKey, ViewCache, StableKeyHash> caches_{};
+     std::unordered_map<uint64_t, std::vector<scene::FieldId>> pushDirties_{};
+     // Last computed scene dirty set for storeGeneration poll
+     mutable std::vector<scene::FieldId> lastDirtySet_{};
 };
 
 } // namespace re::broker

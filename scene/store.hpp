@@ -66,7 +66,10 @@ class SceneStore {
     uint64_t storeGeneration() const noexcept { return storeGen_; }
 
     /// Single entry point for field mutation bump (SPEC §10.4 SRP God-object guard).
-    void bump(FieldId /*field*/) noexcept { ++storeGen_; }
+    void bump(FieldId field) noexcept;
+
+    /// Push opt-in: mark a specific id/field dirty (hybrid poll+push, SPEC §10.4).
+    void markDirty(uint64_t id, FieldId field) noexcept;
 
     /// Counts.
     size_t meshObjectCount() const noexcept { return meshObjects_.size(); }
@@ -80,6 +83,8 @@ class SceneStore {
     uint64_t allocId() noexcept { return nextId_++; }
     uint64_t storeGen_{0};
     uint64_t nextId_{1};
+    // Hybrid push log: each bump/markDirty records (gen, field) for bounded scan.
+    std::vector<std::pair<uint64_t, FieldId>> dirtyLog_{};
 
     std::unordered_map<uint64_t, MeshObject> meshObjects_;
     std::unordered_map<uint64_t, MeshSliceObject> meshSliceObjects_;
@@ -103,7 +108,8 @@ class ViewStore {
     bool removeView(uint64_t id) noexcept;
 
     uint64_t storeGeneration() const noexcept { return storeGen_; }
-    void bump(FieldId /*field*/) noexcept { ++storeGen_; }
+    void bump(FieldId field) noexcept;
+    void markDirty(uint64_t id, FieldId field) noexcept;
     size_t count() const noexcept { return views_.size(); }
 
     std::vector<FieldId> dirtyFieldsSince(uint64_t lastGen) const noexcept;
@@ -114,6 +120,7 @@ class ViewStore {
      uint64_t nextId_{1};
      std::unordered_map<uint64_t, View> views_;
      std::unordered_map<uint64_t, uint64_t> tombstoneGen_;
+     std::vector<std::pair<uint64_t, FieldId>> dirtyLog_{};
 };
 
 } // namespace re::scene

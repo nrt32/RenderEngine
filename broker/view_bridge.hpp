@@ -31,16 +31,26 @@ class ViewBridge : public IViewBridge {
     /// Construct with explicit synchronizer/compositor (SRP injection).
     ViewBridge(std::unique_ptr<ViewSynchronizer> sync,
                std::unique_ptr<ViewCompositor> comp)
-        : sync_(std::move(sync)), comp_(std::move(comp)) {}
+        : sync_(std::move(sync)), comp_(std::move(comp)) {
+        if (sync_ && comp_) sync_->setCompositor(comp_.get());
+    }
 
     /// Convenience: build from Broker (creates default synchronizer+compositor).
     explicit ViewBridge(Broker* broker)
-        : sync_(std::make_unique<ViewSynchronizer>(broker)),
-          comp_(std::make_unique<ViewCompositor>(broker)) {}
+        : sync_(std::make_unique<ViewSynchronizer>(broker, nullptr)),
+          comp_(std::make_unique<ViewCompositor>(broker)) {
+        sync_->setCompositor(comp_.get());
+    }
 
     data::Result<void> sync(std::span<const scene::View> views,
                             const scene::SceneStore& scene) override {
         return sync_->sync(views, scene);
+    }
+
+    /// Extended sync with explicit layoutId persistence (SPEC §10.2 composite key).
+    data::Result<void> syncWithLayout(std::span<const scene::View> views,
+                                      const scene::SceneStore& scene, uint64_t layoutId) {
+        return sync_->sync(views, scene, layoutId);
     }
 
     data::Result<void> renderAll() override { return comp_->renderAll(); }

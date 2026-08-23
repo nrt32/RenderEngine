@@ -3,6 +3,7 @@
 add_library(re_scene STATIC
     camera.cpp
     store.cpp
+    layout.cpp
 )
 target_link_libraries(re_scene PUBLIC re_data re_volume)
 target_link_libraries(re_scene PUBLIC glm::glm)

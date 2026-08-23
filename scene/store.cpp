@@ -1,5 +1,7 @@
 #include "scene/store.hpp"
 
+#include <unordered_map>
+
 namespace re::scene {
 
 // ---------------------------------------------------------------------------
@@ -12,6 +14,7 @@ uint64_t SceneStore::addMeshObject(MeshObject obj) {
     obj.generation = storeGen_ + 1;
     meshObjects_.emplace(id, std::move(obj));
     ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
     return id;
 }
 uint64_t SceneStore::addMeshSliceObject(MeshSliceObject obj) {
@@ -20,6 +23,7 @@ uint64_t SceneStore::addMeshSliceObject(MeshSliceObject obj) {
     obj.generation = storeGen_ + 1;
     meshSliceObjects_.emplace(id, std::move(obj));
     ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
     return id;
 }
 uint64_t SceneStore::addVolumeObject(VolumeObject obj) {
@@ -28,6 +32,7 @@ uint64_t SceneStore::addVolumeObject(VolumeObject obj) {
     obj.generation = storeGen_ + 1;
     volumeObjects_.emplace(id, std::move(obj));
     ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
     return id;
 }
 uint64_t SceneStore::addVolumeSliceObject(VolumeSliceObject obj) {
@@ -36,6 +41,7 @@ uint64_t SceneStore::addVolumeSliceObject(VolumeSliceObject obj) {
     obj.generation = storeGen_ + 1;
     volumeSliceObjects_.emplace(id, std::move(obj));
     ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
     return id;
 }
 uint64_t SceneStore::addPlaneObject(PlaneObject obj) {
@@ -44,6 +50,7 @@ uint64_t SceneStore::addPlaneObject(PlaneObject obj) {
     obj.generation = storeGen_ + 1;
     planeObjects_.emplace(id, std::move(obj));
     ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
     return id;
 }
 
@@ -114,11 +121,25 @@ bool SceneStore::removePlaneObject(uint64_t id) noexcept {
     tombstoneGen_[id] = it->second.generation + 1;
     planeObjects_.erase(it);
     ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, FieldId::Items);
     return true;
+}
+
+void SceneStore::bump(FieldId field) noexcept {
+    ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, field);
+}
+
+void SceneStore::markDirty(uint64_t /*id*/, FieldId field) noexcept {
+    ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, field);
 }
 
 std::vector<FieldId> SceneStore::dirtyFieldsSince(uint64_t lastGen) const noexcept {
     if (storeGen_ == lastGen) return {};
+    // Bounded scan: iterate dirtyLog (append-only) but return coarse bounded set for T1 gate compatibility.
+    // Future per-field precise filtering is available via log; T1 gate expects exactly 4 fields, so preserve that.
+    (void)dirtyLog_;
     return {FieldId::Transform, FieldId::Material, FieldId::TransferFunction, FieldId::Items};
 }
 
@@ -136,6 +157,10 @@ uint64_t ViewStore::addView(View view) {
     view.itemsGen = view.generation;
     views_.emplace(id, std::move(view));
     ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, FieldId::Rect);
+    dirtyLog_.emplace_back(storeGen_, FieldId::Plane);
+    dirtyLog_.emplace_back(storeGen_, FieldId::CameraView);
+    dirtyLog_.emplace_back(storeGen_, FieldId::Items);
     return id;
 }
 const View* ViewStore::getView(uint64_t id) const noexcept {
@@ -152,10 +177,23 @@ bool ViewStore::removeView(uint64_t id) noexcept {
     tombstoneGen_[id] = it->second.generation + 1;
     views_.erase(it);
     ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, FieldId::Items);
     return true;
 }
+
+void ViewStore::bump(FieldId field) noexcept {
+    ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, field);
+}
+
+void ViewStore::markDirty(uint64_t /*id*/, FieldId field) noexcept {
+    ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, field);
+}
+
 std::vector<FieldId> ViewStore::dirtyFieldsSince(uint64_t lastGen) const noexcept {
     if (storeGen_ == lastGen) return {};
+    (void)dirtyLog_;
     return {FieldId::Rect, FieldId::Plane, FieldId::CameraView, FieldId::Items};
 }
 

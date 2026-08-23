@@ -18,14 +18,16 @@
 
 namespace re::scene {
 
-/// Composite persistence key — value type (SPEC §10.1).
+/// Composite persistence key — value type (SPEC §10.1, V3.5 T6 full).
 ///
-/// Fields:
+/// Fields (SPEC §10.1 hierarchical Version:LayoutId:Type:Hash):
 /// - Version: persistence schema version (bump invalidates entire cache)
 /// - LayoutId: owning layout/page scope (prevents aliasing same ViewId across layouts)
 /// - Id: stable handle (ViewId or ObjectId)
 /// - Gen: per-field generation (per SPEC §10.4 per-field split)
 /// - Hash: content hash of canonicalized stable bytes (not pointer address)
+/// - TypeHash: hash of TypeIndex (stable type identity, added V3.5 to complete
+///   CompositeKey{Version,LayoutId,ViewId,Type,Gen,Hash} per SPEC §10.1).
 struct CompositeKey {
     /// Schema version — bump when Re* field inventory or hash algorithm changes.
     uint32_t version{1};
@@ -37,11 +39,13 @@ struct CompositeKey {
     uint64_t gen{0};
     /// Content hash of canonical stable bytes (FNV-1a 64-bit of canonicalized field bytes).
     uint64_t hash{0};
+    /// Stable type hash (hash of std::type_index name; 0 = unspecified for backwards-compat with T2).
+    uint64_t typeHash{0};
 
     /// Equality — all fields must match (explainable invariant: key is composite).
     bool operator==(const CompositeKey& o) const noexcept {
         return version == o.version && layoutId == o.layoutId && id == o.id &&
-               gen == o.gen && hash == o.hash;
+               gen == o.gen && hash == o.hash && typeHash == o.typeHash;
     }
     bool operator!=(const CompositeKey& o) const noexcept { return !(*this == o); }
 
@@ -82,6 +86,7 @@ struct CompositeKeyHash {
         combine(k.id);
         combine(k.gen);
         combine(k.hash);
+        combine(k.typeHash);
         return h;
     }
 };

@@ -87,6 +87,7 @@ tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; b
   object/view/layout, **but `id` is never the sole persistence key** (SPEC §10).
   The store is the source of truth for `id → Object` and is page/layout-scoped
   or global per asset visibility design (see SPEC §10.2).
+- **LayoutSpec + Layout::resolve (V3.5 T6 — binding):** `LayoutSpec{viewId,row,col,rowSpan,colSpan,weight}` is the serialisable relative constraint (HiDPI-agnostic, JSON wire); `Layout{layoutId, vector<LayoutSpec> specs}` resolves via `resolve(windowSize, contentScale)` → `vector<Rect>` absolute **physical** pixels (`framebufferSize = windowSize * contentScale`, rounded, bottom-left origin) and via `resolvePhysical(framebufferSize)` when物理 size already known. Normalisation: `weight` = flex (remaining space after fixed spans), `rowSpan==0` / `colSpan==0` = fill remainder, equal weights → equal distribution, remainder pixels to last view (deterministic floor + remainder, within 1 px). `View::rect` stores physical pixels; `CompositeKey{rect}` hash therefore includes DPR implicitly via physical rect without extra `dpr` field (monitor move → `Layout::resolve` + `ViewTarget` recreate only, Q34). See `scene/layout.hpp` and SPEC §10.5.
 
 ### 3.2 `render/` — RE-minimal types (SPEC §12) — landed T5 V3.4 (ViewRenderer deleted)
 
