@@ -20,10 +20,13 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 > multi-view compositor `View`/`ViewRect`/`ViewRenderer` + the new `core::blit`,
 > SPEC §9 V2.4), the **V2 T3 deliverable** (the generational asset registry
 > `AssetRegistry`/`AssetHandle`, SPEC §9 V2.5), the **V2 T7 deliverable**
-> (shader externalization to `.glsl` files + malformed fixture, SPEC §9 V2.6)
-> and the **V2 T8 deliverable** (GLSL profile macro `RE_GLSL_VERSION`, SPEC §9
-> V2.7). It is part of the `docs/render.md` documentation map
-> (T7/T8/T9/T10/T11 + V2 T1/T2/T3/T7/T8; later tasks extend it).
+> (shader externalization to `.glsl` files + malformed fixture, SPEC §9 V2.6),
+> the **V2 T8 deliverable** (GLSL profile macro `RE_GLSL_VERSION`, SPEC §9
+> V2.7), and the **T4 (V3.3) deliverable** (`scene::Camera` manipulable
+> `pan/rotate/zoom/orbit` → `render::Camera{view,proj,pos}` via
+> `broker::CameraMapper`; `2D` ortho vs `3D` perspective validated by mapper).
+> It is part of the `docs/render.md` documentation map
+> (T7/T8/T9/T10/T11 + V2 T1/T2/T3/T7/T8 + T4; later tasks extend it).
 
 ## Components
 
@@ -158,6 +161,55 @@ center pixels of their direct-call gates (R3):
 | PlaneScene dispatched to `MeshRenderer` | — | typed error, code 2 | a scene of the wrong technique is rejected (SPEC §5, no exceptions) |
 | null (default-constructed) `Scene` | every renderer | typed error, code 2 | the documented "no scene" payload is rejected, never a crash (SPEC §5) |
 | `Scene` variant size | — | 4 | one alternative per technique |
+
+### `scene::Camera` → `render::Camera` via `broker::CameraMapper` (SPEC §3.1, T4 V3.3)
+
+The **scene-side camera** (`re::scene::Camera`, `scene/camera.hpp`) is the sole owner
+of the manipulable camera (`pan`/`rotate`/`zoom`/`orbit`) and of the two factories
+`makeOrthoForSlice` / `makePerspectiveCrosshair` (T4 V3.3). It is a **pure value type**,
+GL-free and RE-free — only `glm` + standard library — and never includes a `render/`
+header (guardrail `disposition_scene`). The renderer never sees `eye`/`center`/`up`
+directly; it receives only the **translated matrices + position**:
+
+```
+scene::Camera{eye,center,up, FOV/aspect/near/far or ortho bounds, viewGen/projGen}
+  → broker::CameraMapper::map(camera, TranslateContext{viewPlane})
+  → render::Camera{view, proj, position}
+```
+
+| Member | Source | Where it comes from |
+|---|---|---|
+| `view` (`glm::mat4`) | `scene::Camera::viewMatrix()` = `glm::lookAt(eye, center, up)` | `pan`/`rotate`/`zoom`/`orbit` mutate `eye`/`center`/`up` and bump only `viewGen` |
+| `proj` (`glm::mat4`) | `scene::Camera::projMatrix()` — `perspective(FOV,aspect,near,far)` when `isPerspective()` else `ortho(l,r,b,t,near,far)` | `setPerspective` / `setOrtho` / factories bump only `projGen` (per-field `viewGen`/`projGen` split, SPEC §10.4) |
+| `position` (`glm::vec3`) | `scene::Camera::eye()` | camera eye (world space) |
+
+**Factories (T4):**
+
+| Factory | Projection | Eye / Up | Gate constant |
+|---|---|---|---|
+| `makeOrthoForSlice(center, planeNormal, distance)` | `Orthographic` (`ortho(-1,1,-1,1,0.1,100)`) | `eye = center - normalize(planeNormal)*distance`, `up` orthogonal to plane normal (fallback `(1,0,0)` when `planeNormal≈(0,1,0)`) | `proj == glm::ortho(-1,1,-1,1,0.1,100)`; `view == lookAt(eye,center,up)` |
+| `makePerspective(center, distance, fovDeg=45, aspect=1)` | `Perspective` (`perspective(fovDeg,aspect,0.1,100)`) | `eye = center + (0,0,distance)`, `up=(0,1,0)` | `proj == glm::perspective(radians(fovDeg),aspect,0.1,100)` |
+| `makePerspectiveCrosshair(center, distance, fovDeg=45, aspect=1)` | `Perspective` — alias for MPR 3D crosshair | identical to `makePerspective` | same as above (T4 gate uses crosshair name) |
+
+**Validation (T4):** `broker::CameraMapper::map` checks `TranslateContext::hasPlane()`:
+
+- `hasPlane()==true` (2D slice view) → camera must be `isOrthographic()==true`; otherwise typed error code `4` (`plane present → ortho`).
+- `hasPlane()==false` (3D) → camera must be `isPerspective()==true`; otherwise typed error code `4`.
+
+This keeps `2D` ortho vs `3D` perspective deterministic (gate uses one ortho + one perspective case) and enforces that `scene/` never leaks a `render::Camera` type (the mapper is the only place that includes both headers — `broker/` ACL, SPEC §11).
+
+**Per-field generation (T4):** `Camera::orbit(deg,axis)` and `pan`/`rotate`/`zoom` bump only `viewGen`; `setPerspective` / `setOrtho` bump only `projGen`. `CameraMapper` caches per `(viewGen,projGen)` so a pure orbit dirties only the view cache entry (gate asserts `viewGen` +1, `projGen` unchanged).
+
+#### Acceptance constants (T4 gate, docs/render.md)
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| `orbit(90°, (0,1,0))` view matrix | `lookAt((5,0,0),(0,0,0),(0,1,0))` | offset `(0,0,5)` rotated 90° about Y → `(5,0,0)`; within 1e-6 |
+| `2D` plane+`makeOrthoForSlice` | `proj == glm::ortho(-1,1,-1,1,0.1,100)` | ortho factory deterministic; mapper with `hasPlane()==true` succeeds |
+| `3D` `makePerspectiveCrosshair` | `proj == glm::perspective(radians(45),1,0.1,100)` | perspective factory deterministic; mapper with `hasPlane()==false` succeeds |
+| `2D` plane + perspective camera | typed error code `4` | `plane present → ortho` violation |
+| `3D` no-plane + ortho camera | typed error code `4` | `no plane → perspective` violation |
+| `orbit` gen split | `viewGen` +1, `projGen` unchanged | per-field split invariant |
 
 ### Multi-view composition: `View`/`ViewRect`/`ViewRenderer` + `core::blit` (SPEC §9 V2.4, V2 T2)
 

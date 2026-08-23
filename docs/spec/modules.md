@@ -61,12 +61,16 @@ app/         compositions + samples + ImGui overlay — now THIN, consumes scene
 tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; broker/ and scene/ headless-translation tests too; RHI tests via utils::OffscreenContext→IRHIContext)
 ```
 
-### 3.1 `scene/` — app-side scene library (GL-free, RE-free) — landed V3.1
+### 3.1 `scene/` — app-side scene library (GL-free, RE-free) — landed V3.1, T4 V3.3
 
-- **Purpose (V3.1 `re::scene` STATIC):** every type an `app` author touches:
+- **Purpose (V3.1 `re::scene` STATIC, T4 V3.3):** every type an `app` author touches:
   `View{rect,plane,itemIds,generation + per-field rectGen/planeGen/cameraGen/itemsGen}`,
-  `Camera` (manipulable `pan/rotate/zoom/orbit` plus `viewMatrix()`/`projMatrix()` that RE
-  consumes — app sends the **view matrix**, not eye/target up; per-field `viewGen`/`projGen`),
+  `Camera` (manipulable `pan/rotate/zoom/orbit` → `viewMatrix()` plus `projMatrix()` that RE
+  consumes — app sends **only the view matrix (+projMatrix, pos)** via `broker::CameraMapper`
+  to `render::Camera{view,proj,pos}` (T4 V3.3); factories `makeOrthoForSlice` /
+  `makePerspectiveCrosshair` (alias `makePerspective`) live on `Camera`; per-field
+  `viewGen`/`projGen` split so `orbit` dirties only `viewGen` (SPEC §10.4, T4); `2D`
+  ortho vs `3D` perspective validated by mapper (`plane present → ortho`, T4)),
   `PlaneDesc` (abstract plane equation, `Space::World|VoxelIndex`, lives on `View` for `2D` —
   item slice objects do **not** carry their own plane unless an explicit per-item override is
   needed), `MaterialDesc`/`VolumePresentation` (Phong-only `MeshMaterialDesc` + `VolumeMaterialDesc`
@@ -74,7 +78,7 @@ tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; b
   view, many per view, deferred inline vector), and the `SceneObject` family
   (`MeshObject/MeshSliceObject/VolumeObject/VolumeSliceObject/PlaneObject = {AssetRef,transform,presentation}`).
   `SceneStore`/`ViewStore` carry stable `uint64_t` handles + `generation`/`storeGeneration` + `bump(FieldId)`
-  single entry point (SPEC §10.4). No `GL`, no `AssetHandle`, no `core::` types; only `glm` + `data/` + `volume/`.
+  single entry point (SPEC §10.4). No `GL`, no `AssetHandle`, no `core::` types; only `glm` + `data/` + `volume/`. No `render/` type leaks into `scene/` (disposition_scene, T4).
 - **Naming:** types are **unprefixed** inside `re::scene` (accepted name `re::scene::MeshObject`,
   not `re::app::AppMeshObject` — namespace is prefix per NAMING_CONVENTIONS §6) — e.g.
   `scene::MeshObject`, `scene::Camera`, `scene::View`. `render::View` is the RE mirror

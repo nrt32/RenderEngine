@@ -14,7 +14,10 @@ glm::mat4 Camera::viewMatrix() const noexcept {
 }
 
 glm::mat4 Camera::projMatrix() const noexcept {
-    return glm::perspective(glm::radians(fovDeg_), aspect_, near_, far_);
+    if (projType_ == ProjectionType::Perspective) {
+        return glm::perspective(glm::radians(fovDeg_), aspect_, near_, far_);
+    }
+    return glm::ortho(orthoLeft_, orthoRight_, orthoBottom_, orthoTop_, near_, far_);
 }
 
 void Camera::pan(float dx, float dy) noexcept {
@@ -103,11 +106,30 @@ void Camera::orbit(float angleDeg, const glm::vec3& axis) noexcept {
 }
 
 void Camera::setPerspective(float fovDeg, float aspect, float nearPlane, float farPlane) noexcept {
-    bool changed = (fovDeg_ != fovDeg) || (aspect_ != aspect) || (near_ != nearPlane) || (far_ != farPlane);
+    bool changed = (projType_ != ProjectionType::Perspective) || (fovDeg_ != fovDeg) ||
+                   (aspect_ != aspect) || (near_ != nearPlane) || (far_ != farPlane);
     fovDeg_ = fovDeg;
     aspect_ = aspect;
     near_ = nearPlane;
     far_ = farPlane;
+    projType_ = ProjectionType::Perspective;
+    if (changed) {
+        ++projGen_;
+    }
+}
+
+void Camera::setOrtho(float left, float right, float bottom, float top, float nearPlane,
+                      float farPlane) noexcept {
+    bool changed = (projType_ != ProjectionType::Orthographic) || (orthoLeft_ != left) ||
+                   (orthoRight_ != right) || (orthoBottom_ != bottom) || (orthoTop_ != top) ||
+                   (near_ != nearPlane) || (far_ != farPlane);
+    orthoLeft_ = left;
+    orthoRight_ = right;
+    orthoBottom_ = bottom;
+    orthoTop_ = top;
+    near_ = nearPlane;
+    far_ = farPlane;
+    projType_ = ProjectionType::Orthographic;
     if (changed) {
         ++projGen_;
     }
@@ -120,7 +142,16 @@ Camera Camera::makePerspective(glm::vec3 center, float distance, float fovDeg, f
     cam.up_ = glm::vec3{0.0f, 1.0f, 0.0f};
     cam.fovDeg_ = fovDeg;
     cam.aspect_ = aspect;
+    cam.near_ = 0.1f;
+    cam.far_ = 100.0f;
+    cam.projType_ = ProjectionType::Perspective;
     return cam;
+}
+
+Camera Camera::makePerspectiveCrosshair(glm::vec3 center, float distance, float fovDeg,
+                                        float aspect) noexcept {
+    // Alias for MPR 3D crosshair view — same deterministic perspective as makePerspective.
+    return makePerspective(center, distance, fovDeg, aspect);
 }
 
 Camera Camera::makeOrthoForSlice(glm::vec3 center, glm::vec3 planeNormal, float distance) noexcept {
@@ -134,6 +165,14 @@ Camera Camera::makeOrthoForSlice(glm::vec3 center, glm::vec3 planeNormal, float 
         up = glm::vec3{1.0f, 0.0f, 0.0f};
     }
     cam.up_ = glm::normalize(up - n * glm::dot(up, n));
+    // Deterministic orthographic bounds for the slice gate (-1,1) square.
+    cam.projType_ = ProjectionType::Orthographic;
+    cam.orthoLeft_ = -1.0f;
+    cam.orthoRight_ = 1.0f;
+    cam.orthoBottom_ = -1.0f;
+    cam.orthoTop_ = 1.0f;
+    cam.near_ = 0.1f;
+    cam.far_ = 100.0f;
     return cam;
 }
 

@@ -1,11 +1,14 @@
 #pragma once
 
-// scene/camera.hpp — manipulable camera for the scene value library (SPEC §3.1, V3.1).
+// scene/camera.hpp — manipulable camera for the scene value library (SPEC §3.1, V3.3 T4).
 //
 // Pure value type, GL-free, RE-free. Only depends on glm + standard library.
-// Namespace re::scene is the prefix — no App prefix.
-// Provides pan/rotate/zoom/orbit that mutate eye/center/up and bump per-field
-// generations. viewMatrix() is glm::lookAt(eye, center, up) — analytic within 1e-6.
+// Namespace re::scene is the prefix — no App prefix. Owns pan/rotate/zoom/orbit
+// + factories makeOrthoForSlice / makePerspectiveCrosshair (T4 V3.3) and sends
+// only viewMatrix() (+projMatrix(), pos) via broker::CameraMapper to
+// render::Camera{view,proj,pos}. Per-field viewGen/projGen split — orbit dirties
+// only viewGen (SPEC §10.4). 2D (plane present) → orthographic, 3D → perspective
+// validated by mapper; no render/ type leaks into scene/ (disposition_scene).
 
 #include <cstdint>
 
@@ -15,18 +18,34 @@
 
 namespace re::scene {
 
-/// Manipulable camera: pan/rotate/zoom/orbit → viewMatrix().
+/// Projection mode for scene::Camera (SPEC §3.1 V3.3 T4).
+/// 2D slice views (View.plane present) use Orthographic, 3D crosshair views use
+/// Perspective. Plane present → ortho is validated by broker::CameraMapper.
+enum class ProjectionType : uint8_t {
+    Perspective = 0,
+    Orthographic = 1,
+};
+
+/// Manipulable camera: pan/rotate/zoom/orbit → viewMatrix() + projMatrix().
 ///
-/// View matrix is defined as glm::lookAt(eye, center, up). Projection is a
-/// simple perspective (FOV/aspect/near/far) with separate projGen, so a pure
-/// orbit/rotate dirties only viewGen per SPEC §10.4 per-field split.
+/// View matrix is defined as glm::lookAt(eye, center, up) — analytic within
+/// 1e-6 (FR-app.2/3). Projection is either perspective (FOV/aspect/near/far) or
+/// orthographic (left/right/bottom/top/near/far) with separate projGen, so a
+/// pure orbit/rotate dirties only viewGen per SPEC §10.4 per-field split (T4).
+/// Scene sends only the matrices + position via broker::CameraMapper; no
+/// render:: type leaks into scene/.
+///
+/// @par Factories (T4)
+/// makeOrthoForSlice() builds an orthographic camera aligned to a slice plane;
+/// makePerspective() / makePerspectiveCrosshair() build perspective cameras for
+/// 3D views. Both set eye/center/up and the matching projection mode.
 class Camera {
    public:
     /// Default camera: eye (0,0,5), center (0,0,0), up (0,1,0), 45° FOV, 1:1
-    /// aspect, near 0.1 far 100.
+    /// aspect, near 0.1 far 100, perspective mode.
     Camera() noexcept = default;
 
-    /// Construct with explicit eye/center/up.
+    /// Construct with explicit eye/center/up (perspective defaults).
     Camera(glm::vec3 eye, glm::vec3 center, glm::vec3 up) noexcept;
 
     /// Eye position (world space).
@@ -36,13 +55,21 @@ class Camera {
     /// Up vector (world space, normalized).
     const glm::vec3& up() const noexcept { return up_; }
 
+    /// Current projection mode (Perspective for 3D, Orthographic for 2D).
+    ProjectionType projectionType() const noexcept { return projType_; }
+    /// True when projectionType() == Perspective (3D crosshair).
+    bool isPerspective() const noexcept { return projType_ == ProjectionType::Perspective; }
+    /// True when projectionType() == Orthographic (2D slice).
+    bool isOrthographic() const noexcept { return projType_ == ProjectionType::Orthographic; }
+
     /// View matrix: lookAt(eye, center, up).
     glm::mat4 viewMatrix() const noexcept;
-    /// Projection matrix: perspective(FOV, aspect, near, far).
+    /// Projection matrix: perspective(FOV, aspect, near, far) or
+    /// ortho(left, right, bottom, top, near, far) depending on projectionType().
     glm::mat4 projMatrix() const noexcept;
 
     /// Per-field generations for cache keying (SPEC §10.4). viewGen bumps on
-    /// pan/rotate/zoom/orbit; projGen bumps only when projection params change.
+    /// pan/rotate/zoom/orbit; projGen bumps only when projection params or mode change.
     uint64_t viewGen() const noexcept { return viewGen_; }
     uint64_t projGen() const noexcept { return projGen_; }
     /// Combined generation (max of view+proj) for coarse poll.
@@ -51,45 +78,69 @@ class Camera {
     /// Pan in camera local plane: move eye and center by right*dx + up*dy.
     /// @param dx Right displacement (world units).
     /// @param dy Up displacement (world units).
+    /// Bumps viewGen only (projGen unchanged).
     void pan(float dx, float dy) noexcept;
 
     /// Yaw/pitch orbit around center (degrees). Yaw about world up, pitch about
-    /// camera right. Equivalent to spherical orbit; bumps viewGen.
+    /// camera right. Equivalent to spherical orbit; bumps viewGen only.
     /// @param yawDeg   Yaw in degrees (around world up).
     /// @param pitchDeg Pitch in degrees (around camera right).
     void rotate(float yawDeg, float pitchDeg) noexcept;
 
     /// Zoom by scaling eye-center distance: eye = center + (eye-center)*factor.
-    /// factor < 1 zooms in, >1 zooms out. Bumps viewGen.
+    /// factor < 1 zooms in, >1 zooms out. Bumps viewGen only.
     void zoom(float factor) noexcept;
 
     /// Orbit eye around center by angleDeg about axis through center.
     /// @param angleDeg Rotation angle in degrees.
     /// @param axis     World-space axis (normalized internally).
+    /// Bumps viewGen only (projGen unchanged) — per-field split invariant.
     void orbit(float angleDeg, const glm::vec3& axis) noexcept;
 
-    /// Set perspective params; bumps projGen if changed.
+    /// Set perspective params; switches to Perspective mode; bumps projGen if changed.
     void setPerspective(float fovDeg, float aspect, float nearPlane, float farPlane) noexcept;
+
+    /// Set orthographic params; switches to Orthographic mode; bumps projGen if changed.
+    /// @param left   Left clip plane (world).
+    /// @param right  Right clip plane.
+    /// @param bottom Bottom clip plane.
+    /// @param top    Top clip plane.
+    /// @param nearPlane Near clip distance.
+    /// @param farPlane  Far clip distance.
+    void setOrtho(float left, float right, float bottom, float top, float nearPlane,
+                  float farPlane) noexcept;
 
     // --- factories -----------------------------------------------------------
 
-    /// Perspective camera for 3D view (crosshair): eye distance derived from
-    /// bounds radius.
+    /// Perspective camera for 3D view: eye distance derived from bounds radius.
+    /// Produces a Perspective projection (FOV/aspect/near/far).
     static Camera makePerspective(glm::vec3 center, float distance, float fovDeg = 45.0f,
                                   float aspect = 1.0f) noexcept;
 
-    /// Orthographic helper for slice views (plane-normal aligned). Returns a
-    /// camera looking along -planeNormal at center.
+    /// Perspective-crosshair camera for 3D view (T4 alias).
+    /// Identical to makePerspective — named for the MPR 3D crosshair view.
+    static Camera makePerspectiveCrosshair(glm::vec3 center, float distance,
+                                           float fovDeg = 45.0f, float aspect = 1.0f) noexcept;
+
+    /// Orthographic helper for slice views (plane-normal aligned, T4).
+    /// Returns an Orthographic camera looking along -planeNormal at center at
+    /// the given distance. Ortho bounds are deterministic
+    /// (-1,1,-1,1,0.1,100) scaled to be aspect-independent for the gate.
     static Camera makeOrthoForSlice(glm::vec3 center, glm::vec3 planeNormal, float distance) noexcept;
 
    private:
     glm::vec3 eye_{0.0f, 0.0f, 5.0f};
     glm::vec3 center_{0.0f, 0.0f, 0.0f};
     glm::vec3 up_{0.0f, 1.0f, 0.0f};
+    ProjectionType projType_{ProjectionType::Perspective};
     float fovDeg_{45.0f};
     float aspect_{1.0f};
     float near_{0.1f};
     float far_{100.0f};
+    float orthoLeft_{-1.0f};
+    float orthoRight_{1.0f};
+    float orthoBottom_{-1.0f};
+    float orthoTop_{1.0f};
     uint64_t viewGen_{0};
     uint64_t projGen_{0};
 };
