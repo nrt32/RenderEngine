@@ -23,6 +23,15 @@
 //     carries the mesh pointer + abstract PlaneDesc + color; the registered
 //     mapper produces the RE-minimal render::ContourObject{AssetHandle,
 //     ClipPlane, color};
+//   - each slice view's textured slice image goes through the SAME mediation
+//     (V3.4b T12): the scene-side PlaneObject carries only {image asset ref,
+//     transform, presentation}; the registered PlaneMapper binds the shared
+//     unit quad geometry and produces the render::PlaneInstance that
+//     render::PlaneRenderer draws. app/ never names the RE-side quad geometry
+//     and never parses quad corners/UVs into vertex buffers — every
+//     textured-plane draw reaches the GPU exclusively through PlaneRenderer's
+//     own unit-quad VAO (plane.vert/frag.glsl), composed by ReView's
+//     drawLayer list and presented by core::blit.
 //   - the 3D-view camera comes from app::make3dCamera (app/mpr_camera.hpp),
 //     which looks at the slice-state crosshair;
 //   - the sample shares per-view window-section handles (render::ViewRect
@@ -61,6 +70,7 @@
 #include "app/sample_harness.hpp"
 #include "broker/broker.hpp"
 #include "broker/contour_mapper.hpp"
+#include "broker/plane_mapper.hpp"
 #include "core/draw.hpp"
 #include "core/window.hpp"
 #include "data/image.hpp"
@@ -172,12 +182,14 @@ class MPRView final : public app::ISample {
                                         sliceState_.sagittalX)),
           box_(app::makeBoxMesh(kGoldenBoxMin, kGoldenBoxMax)),
           boxMaterial_(kBoxMaterialColor) {
-        // One shared unit quad, scaled per slice view onto that view's image
-        // pixel rectangle (app::makeSliceModel) and viewed through a per-view
-        // orthographic camera (app::makeSliceCamera) — the shared 2D-view
-        // camera scaffolding (app/mpr_camera.hpp) that maps each slice image
-        // onto its full viewport.
-        quad_ = render::PlaneGeometry::unitQuadXY();
+        // Each slice view's textured layer is expressed scene-side as a
+        // PlaneObject{image asset ref, transform} whose transform scales the
+        // shared unit quad onto that view's image pixel rectangle
+        // (app::makeSliceModel), viewed through the per-view orthographic
+        // camera (app::makeSliceCamera) — the shared 2D-view camera/model
+        // scaffolding (app/mpr_camera.hpp). The RE-side instance is produced
+        // by broker::PlaneMapper below; app/ never touches the quad geometry
+        // itself (V3.4b T12: no CPU quad parsing outside render/).
 
         // The golden box mesh (FR-app.3) with an opaque material, for the 3D
         // view. The box is registered ONCE with the shared registry (SPEC §9
@@ -251,14 +263,48 @@ class MPRView final : public app::ISample {
                       1.0f, 0.0f, 0.0f, 0.0f, // col1: row0 gets y -> x' = y
                       0.0f, 1.0f, 0.0f, 0.0f, // col2: row1 gets z -> y' = z
                       0.0f, 0.0f, 0.0f, 1.0f)};
-        // Composition root: register the contour mapper with the Broker
-        // registry (one mapper per AppT, OCP via type_index — SPEC §11).
+        // Composition root: register the mappers with the Broker registry
+        // (one mapper per AppT, OCP via type_index — SPEC §11): ContourMapper
+        // for the contour overlay (V3.8b T11) and PlaneMapper for the
+        // textured slice layers (V3.4b T12).
         broker_.registerMapper(std::make_unique<broker::ContourMapper>(&registry_));
+        broker_.registerMapper(std::make_unique<broker::PlaneMapper>());
         auto* contourMapper =
             broker_.get<scene::ContourObject, render::ContourObject>();
+        auto* planeMapper =
+            broker_.get<scene::PlaneObject, render::PlaneInstance>();
+
         constexpr std::array<const char*, 3> kAxisNames = {"Transverse",
                                                            "Coronal",
                                                            "Sagittal"};
+
+        // Translate each slice view's textured layer scene→render through the
+        // type-erased IMapper interface fetched from the Broker (app never
+        // holds a concrete mapper handle). The mapped render::PlaneInstance
+        // borrows this sample's image members and PlaneMapper's shared unit
+        // quad — both outlive every draw below.
+        const std::array<const data::Image*, 3> sliceImages = {
+            &transverseImage_, &coronalImage_, &sagittalImage_};
+        for (std::size_t i = 0u; i < 3u; ++i) {
+            scene::PlaneObject appPlane;
+            appPlane.image = sliceImages[i];
+            appPlane.transform = app::makeSliceModel(*sliceImages[i]);
+            scene::TranslateContext planeCtx;
+            auto mappedPlane = planeMapper->map(appPlane, planeCtx);
+            if (mappedPlane.failed()) {
+                // Typed errors are surfaced, never swallowed: a missing slice
+                // layer would look exactly like a black viewport (same
+                // discipline as the contour translation below).
+                spdlog::error(
+                    "mpr sample: {} slice-plane translation failed (code {})"
+                    ": {} — the view will show NO slice image",
+                    kAxisNames[i], mappedPlane.error().code,
+                    mappedPlane.error().message);
+                continue;
+            }
+            sliceScenes_[i].planes.push_back(*mappedPlane);
+        }
+
         for (std::size_t i = 0u; i < 3u; ++i) {
             scene::ContourObject appContour;
             appContour.mesh = &box_;
@@ -302,23 +348,23 @@ class MPRView final : public app::ISample {
         // drawLayer; no ViewRenderer.
         const std::array<app::MprViewport, 4> grid =
             app::mprViewports(width, height);
-        const std::array<const data::Image*, 3> sliceImages = {
-            &transverseImage_, &coronalImage_, &sagittalImage_};
 
         // Create 4 ReViews with their ViewTargets and renderables.
         // Three slice views (T/C/S) + one 3D box view.
-        // Use DrawContext per View for per-frame cache isolation.
-        std::array<render::PlaneScene, 3> sliceScenes;
+        // Use DrawContext per View for per-frame cache isolation. The slice
+        // layers are the broker-translated PlaneObject instances built once
+        // in the constructor (the held slice images are static per run).
         std::vector<render::View> views;
         views.reserve(4u);
+        const std::array<const data::Image*, 3> sliceImages = {
+            &transverseImage_, &coronalImage_, &sagittalImage_};
         for (std::size_t i = 0u; i < 3u; ++i) {
-            sliceScenes[i].planes.push_back(render::PlaneInstance{
-                &quad_, sliceImages[i],
-                app::makeSliceModel(*sliceImages[i])});
             render::ViewRect rect{grid[i].x, grid[i].y, grid[i].width, grid[i].height};
             render::View view(rect, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
             view.setCamera(app::makeSliceCamera(*sliceImages[i]));
-            view.addItem(sliceScenes[i], &sliceRenderer_);
+            if (!sliceScenes_[i].planes.empty()) {
+                view.addItem(sliceScenes_[i], &sliceRenderer_);
+            }
             // Second layer: the GPU-computed plane∩mesh contour over the
             // slice (FR-app.3). View::render draws layers without clearing,
             // so the contour strokes overwrite exactly their own pixels.
@@ -461,17 +507,22 @@ class MPRView final : public app::ISample {
     render::Camera boxCamera_;
     render::MeshRenderer boxRenderer_{&registry_};
 
+    // Per-slice-view textured slice layers (FR-app.2), translated scene→render
+    // through the Broker-mediated PlaneMapper (V3.4b T12) and drawn by the
+    // PlaneRenderer as the first ReView layer of each slice view. app/ holds
+    // only scene::PlaneObject values — no RE-side quad geometry, no quad
+    // vertex parsing (the unit-quad VAO belongs to PlaneRenderer alone).
+    broker::Broker broker_;
+    std::array<render::PlaneScene, 3> sliceScenes_{};
+    render::PlaneRenderer sliceRenderer_;
+
     // Per-slice-view GPU contour layers (FR-app.3): translated scene→render
     // through the Broker-mediated contour mapper and drawn by the
     // ContourRenderer as the second ReView layer of each slice view (V3.8b
-    // T11). The Broker owns the mapper; app only fetches the type-erased
-    // IMapper interface from it (no mapper handle held).
-    broker::Broker broker_;
+    // T11). The Broker owns the mappers; app only fetches the type-erased
+    // IMapper interfaces from it (no mapper handle held).
     std::array<render::ContourScene, 3> contourScenes_{};
     render::ContourRenderer contourRenderer_{&registry_};
-
-    render::PlaneGeometry quad_;
-    render::PlaneRenderer sliceRenderer_;
 
     /// One-shot guard for the RE_SAMPLE_DUMP_FRAME diagnostic capture.
     bool frameDumped_{false};

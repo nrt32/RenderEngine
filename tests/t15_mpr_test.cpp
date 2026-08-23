@@ -111,7 +111,9 @@
 
 #include "app/mpr_camera.hpp"
 #include "app/mpr_slice.hpp"
+#include "broker/broker.hpp"
 #include "broker/contour_mapper.hpp"
+#include "broker/plane_mapper.hpp"
 #include "core/framebuffer.hpp"
 #include "core/gl_error.hpp"
 #include "core/texture2d.hpp"
@@ -553,9 +555,20 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
                                  "the contour away is the T11 defect)";
     }
 
-    // Broker-mediated translation, exactly as the sample constructor does it.
+    // Broker-mediated translation, exactly as the sample constructor does it:
+    // BOTH slice-view layers are translated scene→render through mappers
+    // fetched from the Broker as type-erased IMapper interfaces (V3.4b T12
+    // adds the textured slice layer; V3.8b T11 added the contour).
     render::AssetRegistry registry;
-    broker::ContourMapper mapper(&registry);
+    broker::Broker broker_;
+    broker_.registerMapper(std::make_unique<broker::ContourMapper>(&registry));
+    broker_.registerMapper(std::make_unique<broker::PlaneMapper>());
+    auto* contourMapper =
+        broker_.get<scene::ContourObject, render::ContourObject>();
+    auto* planeMapper =
+        broker_.get<scene::PlaneObject, render::PlaneInstance>();
+    ASSERT_NE(contourMapper, nullptr);
+    ASSERT_NE(planeMapper, nullptr);
     render::ContourRenderer renderer(&registry);
 
     scene::ContourObject appContour;
@@ -564,19 +577,28 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
     appContour.plane.setNormal(glm::vec3(0.0f, 0.0f, 1.0f));
     appContour.plane.setPoint(glm::vec3(0.0f, 0.0f, planeCoordinate));
     appContour.color = app::kContourColor;
-    auto mapped = mapper.map(appContour, scene::TranslateContext{});
+    auto mapped = contourMapper->map(appContour, scene::TranslateContext{});
     ASSERT_TRUE(mapped.ok()) << mapped.error().message;
     mapped->halfWidthPx = kStrokeHalfWidthPx;
     render::ContourScene contourScene;
     contourScene.contours.push_back(*mapped);
 
+    // The textured slice layer is ALSO broker-mediated (V3.4b T12): the
+    // scene-side PlaneObject carries {image asset ref, transform} and the
+    // PlaneMapper binds the shared unit quad — no hand-assembled
+    // render::PlaneInstance anywhere.
+    scene::PlaneObject appSlicePlane;
+    appSlicePlane.image = &sliceImage;
+    appSlicePlane.transform = app::makeSliceModel(sliceImage);
+    auto mappedPlane = planeMapper->map(appSlicePlane,
+                                        scene::TranslateContext{});
+    ASSERT_TRUE(mappedPlane.ok()) << mappedPlane.error().message;
+    render::PlaneScene sliceScene;
+    sliceScene.planes.push_back(*mappedPlane);
+
     // The composed slice view: slice-image layer FIRST, GPU contour SECOND,
     // through render::View's type-erased drawLayer dispatch — the sample's
     // renderFrame structure at the sample's shared camera/model functions.
-    render::PlaneGeometry quad = render::PlaneGeometry::unitQuadXY();
-    render::PlaneScene sliceScene;
-    sliceScene.planes.push_back(render::PlaneInstance{
-        &quad, &sliceImage, app::makeSliceModel(sliceImage)});
 
     render::View view(render::ViewRect{0, 0,
                                        static_cast<int>(kTargetWidth),

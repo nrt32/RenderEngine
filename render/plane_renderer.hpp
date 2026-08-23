@@ -3,6 +3,20 @@
 // render/plane_renderer.hpp — PlaneRenderer: textured quads/planes (SPEC §3,
 // FR-render.5).
 //
+// Sole owner of every textured-plane draw (V3.4b T12 audit): all textured-plane
+// displays — the plane sample and the MPR slice views — reach the GPU ONLY
+// through this renderer (drawLayer(PlaneScene, Camera, DrawContext&) inside a
+// ReView's IRenderable list, or render() for direct single-target tests). The
+// app side sends only scene::PlaneObject{image asset ref, transform,
+// presentation}; broker/ mediates that value into the render::PlaneInstance
+// consumed here. app/ never names PlaneGeometry and never parses quad
+// corners/UVs into vertex buffers — the unit-quad VAO is built and owned by
+// quadGeometry() below, PlaneGeometry::unitQuadXY() stays a render/-internal
+// detail (reached through broker, not re-parsed by callers), and the
+// data::Image → core::Texture2D upload stays inside textureFor()
+// (imageToRgba8's CPU row-flip feeds that GPU upload; it is NOT an app-side
+// quad path).
+//
 // Stateless rendering: PlaneRenderer::render(scene, camera, target) receives
 // all of its data per call; the renderer owns only GL resources (its cached
 // textured-plane shader program, one shared unit-quad VAO/VBO, and the GPU
@@ -75,13 +89,22 @@ struct PlaneGeometry {
 /// A single plane in a scene: its geometry, the image to texture it with, and
 /// its model transform. The model matrix places the quad corners in world
 /// space and orients the plane (applied to vertices and normals).
+///
+/// Produced by broker::PlaneMapper from scene::PlaneObject (V3.4b T12) — app/
+/// code does not assemble instances by hand.
+///
+/// @note lifetime: `geometry` borrows PlaneMapper's program-duration shared
+/// unit quad; `image` borrows the caller's data::Image. Both must outlive
+/// every draw that consumes this instance (the renderer uploads `image`
+/// lazily via textureFor and never retains the instance itself).
 struct PlaneInstance {
     const PlaneGeometry* geometry = nullptr;
     const data::Image* image = nullptr; // source texture (RGBA8/RGB/gray)
     glm::mat4 model{1.0f};
 };
 
-/// A scene of plane instances to render (CPU-side; app/ builds these).
+/// A scene of plane instances to render (CPU-side; built by mapping
+/// scene::PlaneObject values through broker::PlaneMapper).
 struct PlaneScene {
     std::vector<PlaneInstance> planes;
 };

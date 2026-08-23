@@ -82,10 +82,12 @@ if(RE_BUILD_SAMPLES OR RE_BUILD_TESTS)
         )
         # The MPR sample drives its contour layer through the broker
         # mediation registry (ContourMapper, V3.8b T11), so it links the
-        # broker library directly. The RE_SAMPLE_DUMP_FRAME diagnostic frame
-        # capture reads pixels through utils::PixelReader (T11 defect-gate
-        # aid), so it links utils too.
+        # broker library directly; the plane sample routes its textured layer
+        # through broker::PlaneMapper the same way (V3.4b T12). The
+        # RE_SAMPLE_DUMP_FRAME diagnostic frame capture reads pixels through
+        # utils::PixelReader (T11 defect-gate aid), so MPR links utils too.
         target_link_libraries(re_sample_mpr PRIVATE re_broker re_utils)
+        target_link_libraries(re_sample_plane PRIVATE re_broker)
         # Repo root, so samples locate the committed assets under data/ (SPEC
         # §7). Pointed at the SOURCE tree, not the build tree.
         target_compile_definitions(${sample_target} PRIVATE

@@ -735,24 +735,60 @@ shared ortho down-Z camera mapping `[0,64]^2` 1:1 onto a 64×64 target:
 | Registry dedup across 3 view translations | `slotCount() == 1` | same CPU box mapped three times through `ContourMapper` → one GPU object (SPEC §9 V2.5) |
 | Mapper errors: null mesh / null registry / VoxelIndex plane | typed codes `1` / `2` / `3` | SPEC §5 — typed errors, no crashes, no silent reinterpretation |
 
-### `PlaneRenderer` (`render/plane_renderer.hpp`, `.cpp`) — T8
+### `PlaneRenderer` (`render/plane_renderer.hpp`, `.cpp`) — T8, V3.4b audit
 
 A **stateless textured-plane renderer** (SPEC §3, FR-render.5): it feeds the MPR
-slice views (T14). `PlaneRenderer::render(scene, camera, target)` receives all
-of its data per call; the renderer owns only GL resources — its cached
-textured-plane shader, one shared unit-quad VAO/VBO, and a texture cache keyed
-by image pointer (each `data::Image` is uploaded to the GPU once and reused
-across plane instances and views). It implements the `IRenderer` dispatch
-contract (`render/types.hpp`, SPEC §9 V2.3): its `IRenderer::render` forwards a
-`Scene` holding a `PlaneScene` to this concrete method.
+slice views (T14) and the plane sample. Since V3.4b (T12) it is the **sole
+owner of every textured-plane draw**: all displays reach the GPU only through
+this renderer — `drawLayer(PlaneScene, Camera, DrawContext&)` inside a ReView's
+IRenderable list (samples), or `render(scene, camera, target)` for direct
+single-target tests. There is no CPU quad parsing anywhere outside `render/`:
+the app side sends only `scene::PlaneObject{image asset ref, transform,
+presentation}`, which `broker::PlaneMapper` translates into the
+`render::PlaneInstance` values consumed here; the unit-quad VAO is built and
+owned by `quadGeometry()` below, and `data::Image → core::Texture2D` upload
+stays inside `textureFor()` (the `imageToRgba8` row-flip feeds that GPU upload;
+it is not an app-side quad path).
+
+**Broker-mediated display path (V3.4b T12):**
+
+```
+scene::PlaneObject{const data::Image*, transform, presentation}   (app/scene)
+  └─ broker::PlaneMapper : IMapper<scene::PlaneObject, render::PlaneInstance>
+       binds its ONE program-duration shared unit quad as geometry
+     = render::PlaneInstance{const PlaneGeometry*, const data::Image*, model}
+        └─ render::View::addItem(PlaneScene, &PlaneRenderer)
+             └─ View::render(): bind FBO + viewport + clear (DrawContext),
+                then PlaneRenderer::drawLayer per layer (no clear between)
+                  └─ plane.vert.glsl / plane.frag.glsl (RE_GLSL_VERSION 450)
+             └─ View::blitTo(dst): engine present via core::blit (GL_NEAREST,
+                exact when target size == rect size)
+```
+
+`broker::PlaneMapper` is a pure translator (ISP `IMapper`, no cache — texture
+dedup already lives in `textureFor`): it carries image + transform across and
+binds the shared analytic unit quad; `presentation` deliberately has no RE
+counterpart because the textured-plane path is an unlit texture display by
+design (FR-render.5's quad must reproduce source texels exactly). The mapped
+instance borrows two things: the mapper's program-duration static unit quad,
+and the caller's `data::Image` — both must outlive every draw that consumes the
+instance.
+
+`PlaneRenderer::render(scene, camera, target)` receives all of its data per
+call; the renderer owns only GL resources — its cached textured-plane shader,
+one shared unit-quad VAO/VBO, and a texture cache keyed by image pointer (each
+`data::Image` is uploaded to the GPU once and reused across plane instances and
+views). It implements the `IRenderer` dispatch contract (`render/types.hpp`,
+SPEC §9 V2.3): its `IRenderer::render` forwards a `Scene` holding a
+`PlaneScene` to this concrete method.
 
 Public scene structs (defined in `plane_renderer.hpp`):
 
 | Type | Purpose |
 |---|---|
-| `PlaneGeometry` | four world-space corners + per-corner UVs + an analytic unit normal. `unitQuadXY()` builds the unit XY square `[-1,1]^2` at z=0 with normal `(0,0,1)` and the UV binding `(0,0)`@c0 … `(1,1)`@c2. |
-| `PlaneInstance` | a `PlaneGeometry`, the `data::Image` to texture it with, and a model matrix. |
-| `PlaneScene` | a vector of `PlaneInstance`s (CPU-side; `app/` builds these). |
+| `PlaneGeometry` | four world-space corners + per-corner UVs + an analytic unit normal. `unitQuadXY()` builds the unit XY square `[-1,1]^2` at z=0 with normal `(0,0,1)` and the UV binding `(0,0)`@c0 … `(1,1)`@c2. A `render/`-internal detail since V3.4b: callers receive it only through `broker::PlaneMapper`. |
+| `PlaneInstance` | a `PlaneGeometry` (borrowed from the mapper's shared quad), the `data::Image` to texture it with (borrowed from the caller), and a model matrix. Produced by `broker::PlaneMapper`. |
+| `PlaneScene` | a vector of `PlaneInstance`s (CPU-side; built by mapping `scene::PlaneObject`s through `broker::PlaneMapper`). |
 
 `PlaneRenderer::render(scene, camera, target)`:
 
@@ -806,6 +842,11 @@ viewport pixel `(px,py)` (py=0 is the bottom) samples image pixel
 | `unitQuadXY()` normal | `(0,0,1)` | `normalize(cross(c1-c0, c3-c0))` = `cross((2,0,0),(0,2,0))` / 4 |
 | `unitQuadXY()` UV binding | `uv[0]=(0,0)`, `uv[2]=(1,1)` | image maps once across the quad |
 | 90° Z rotation, bottom-left pixel | `G == 0` (±1) | `(x,y)→(-y,x)`: viewport `(-1,-1)` is local corner3 = UV `(0,1)` → image `(0,0)` = `(0,0,128)` (was `G=252` unrotated) |
+| Same image through ReView + Broker (T12 gate): center `(32,32)` | `{128,124,128,255}` (±1) | identical constants — the broker route maps to the same unit quad + model; `drawLayer` inside a `View` changes only who binds/clears the FBO, not the sampled texel |
+| T12 gate: four corners via ReView + Broker | BL `{0,252,…}`, BR `{252,252,…}`, TL `{0,0,…}`, TR `{252,0,…}` B=`128`, A=`255` (±1) | corner probes pin the row-flip orientation through the composed path |
+| MPR slice layer via PlaneMapper (`makeSliceModel`+`makeSliceCamera`) | solid bytes at center + all four corners (±1) | ortho `[0,img]²` ↔ viewport 1:1, quad covers the viewport edge-to-edge |
+| `broker::PlaneMapper` null-image map | typed error code 1 | SPEC §5: no exceptions, no silently-empty instance |
+| Shared unit quad across mappings | one geometry pointer | mapper owns exactly one program-duration static `PlaneGeometry`; instances only borrow it |
 
 ### `VolumeRenderer` (`render/volume_renderer.hpp`, `.cpp`) — T9
 
