@@ -28,20 +28,20 @@ scene/       app-side scene description — GL-free, RE-free   (SPEC §3.1, NEW)
                |- SceneStore { stable handles + per-field generation + ContentHash per object/View/Layout } // CompositeKey{Version,LayoutId,Id,Gen,Hash}
 core/        GL foundation: GLFW context, RAII GL objects, ShaderProgram,
                thin core::Draw API, raw-GL anchors (core::loadCoreGl,
-               core::readRgba8)           <- SOLE owner of raw GL calls
-               + RHI abstraction for EOL (NEW): core/rhi/ { IRHIContext, IRHIFramebuffer, IRHITexture, IRHIShader, IRHIBuffer } — core's concrete GL (GLTexture2D, GLFramebuffer, …) is ONE RHI implementation; Vulkan/Metal are drop-in replacements
-               + core/draw is façade over IRHIContext (no raw gl* outside core/rhi/gl/)
+               core::readRgba8)           <- SOLE owner of raw GL calls (EOL RHI deferred — T10 stretch)
+               + RHI abstraction for EOL (NEW — stretch T10 deferred, not landed this iteration): `core/rhi/` { `IRHIContext`, `IRHIFramebuffer`, `IRHITexture`, `IRHIShader`, `IRHIBuffer` } — intended as ONE RHI impl (core's concrete GL `GLTexture2D`/`GLFramebuffer` is ONE impl; `Vulkan`/`Metal` are future drop-ins) — **not landed this iteration; `core/rhi/` still absent, `core/` remains sole `gl*` owner per audit `gpu_api_ownership` (`core|\bgl[A-Z]`), `rhi_ownership` (`core/rhi/gl|`) and `require_only` not yet enforced (see T10 G); only extension points stay: `DrawContext` instance (T2) + `IDirtyTracker` interface + `CompositeKey::Version` field (no Vulkan impl, no thread pool, no file format)**
+               + core/draw is façade over IRHIContext (no raw gl* outside core/rhi/gl/ — deferred to RHI landing; currently no raw gl* outside core/)
 utils/       test-support + windowing, NO raw GL (offscreen GL context via
                GLFW/EGL, pixel reader facade) — delegates the raw parts to the
-               core/ anchors (SPEC §9 V2.1); utils::OffscreenContext now depends on core::IRHIContext (DIP)
+               core/ anchors (SPEC §9 V2.1); utils::OffscreenContext now depends on core::IRHIContext (DIP) — **(stretch — T10 deferred — `IRHIContext` not landed this iteration; currently delegates to `core::loadCoreGl` / `core::readRgba8` anchors per `gpu_api_ownership` `core|\bgl[A-Z]`; DIP via `IRHIContext` deferred to RHI landing)**
 render/      ONE class per rendering technique, RE-minimal types only   (SPEC §3.2)
-               |- render::View (ReView) — one ViewTarget{IRHIFramebuffer} per screen section, list<IRenderable>, render()+present() via IRHIContext::blit (core::blit façade)
+               |- render::View (ReView) — one ViewTarget{IRHIFramebuffer} per screen section, list<IRenderable>, render()+present() via IRHIContext::blit (core::blit façade) — **(stretch — T10 deferred — `IRHIFramebuffer`/`IRHIContext::blit` not landed; currently `ViewTarget{Texture2D+Framebuffer}` via `core::blit` façade per `gpu_api_ownership`; RHI migration deferred)**
                |- IMaterial hierarchy (render::IMaterial minimal isTransparent only → IColorMaterial/IVolumeMaterial/ILineMaterial → MeshMaterial→Phong/PBR, VolumeMaterial, SliceMaterial, ContourMaterial) — LSP/ISP fixed per §12.2
                |- ILight variant<Directional,Point,Spot> — per-View, many per View, role-segregated — LSP/ISP fixed per §12.3
                |- ITransparencyPipeline + LinkedListOIT (swappable OCP; per-view lifecycle owned by ReView)
                |- MeshRenderer / SliceRenderer / PlaneRenderer / VolumeRenderer / VolumeSliceRenderer
                |    each adds drawLayer(SceneT, Camera, targetNoClear) for View compositing; render() keeps bind+clear for tests — drawLayer depends on ITransparencyPipeline/ ILight abstractions (DIP)
-               |- ReSceneObjects { ReMeshObject{AssetHandle,ReMaterial*,model,bounds}, ... } — RE-direct types only (IRHIFramebuffer/IRHITexture via core/rhi)
+               |- ReSceneObjects { ReMeshObject{AssetHandle,ReMaterial*,model,bounds}, ... } — RE-direct types only (IRHIFramebuffer/IRHITexture via core/rhi) — **(stretch — T10 deferred — `IRHI*` via `core/rhi/` not landed; currently `AssetHandle`/`ReMaterial*`/`Texture2D*`/`Framebuffer*` via `core/` wrappers; RE-minimal handles stay, RHI handle migration deferred)**
                |- IRenderable type-erased draw (concept Renderable<T>: drawLayer(camera, targetNoClear)) — OCP via View's vector<IRenderable> (new technique = new IRenderable impl, no edit to View)
 broker/      `app → RE` mediation — heavily abstracted per-type Mappers, NOT a god Translator  (SPEC §11, NEW)
                 |- IMapper<AppT,ReT> { map(const AppT&, TranslateContext) } pure; ICachedMapper<AppT,ReT> : IMapper { mapCached/invalidate } cached (ISP segregation)
@@ -51,14 +51,14 @@ broker/      `app → RE` mediation — heavily abstracted per-type Mappers, NOT
                |- Broker (type_index → unique_ptr<IMapperBase>) + per-field generation/contentHash cache — OCP via registerMapper
                |- ViewMapper (orchestrator: composes CameraMapper, PlaneMapper, per-item Mappers → ReView; single responsibility)
                |- ViewSynchronizer (single responsibility: poll+push dirty, drive ICachedMapper::mapCached, owns CompositeKey cache)
-               |- ViewCompositor (single responsibility: renderAll()/presentAll(dst) via IRHIContext, owns ReView map LayoutId→ReView)
+               |- ViewCompositor (single responsibility: renderAll()/presentAll(dst) via IRHIContext, owns ReView map LayoutId→ReView) — **(stretch — T10 deferred — `IRHIContext` not landed; currently via `core::DrawContext` + `core::blit`; `IRHIContext` dispatch deferred)**
                |- IViewBridge abstraction; ViewBridge : IViewBridge façade composing Synchronizer+Compositor (SRP via composition; app depends on IViewBridge — DIP)
                |  App never holds a mapper handle; app only touches app::View / SceneStore / IViewBridge
 app/         compositions + samples + ImGui overlay — now THIN, consumes scene/ + broker/ via IViewBridge (DIP: app never includes render/ or core/ directly)
                |- SceneView  (composes AppVolume+AppMesh per-View lists)
                |- MPRView    (4× AppView: 3× 2D VolumeSlice+MeshSlice + 1× 3D Volume+Mesh)
                |- AppContext { SceneStore, Broker, IViewBridge } — composition root (DIP)
-tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; broker/ and scene/ headless-translation tests too; RHI tests via utils::OffscreenContext→IRHIContext)
+tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; broker/ and scene/ headless-translation tests too; RHI tests via utils::OffscreenContext→IRHIContext) — **(stretch — T10 deferred — `IRHIContext` RHI tests deferred; currently headless via `utils::OffscreenContext` + `core::loadCoreGl` + `utils::PixelReader`→`core::readRgba8`)**
 ```
 
 ### 3.1 `scene/` — app-side scene library (GL-free, RE-free) — landed V3.1, T4 V3.3
