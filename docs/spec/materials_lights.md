@@ -18,11 +18,34 @@
   includes `render/phong_material.hpp` to set a hard-coded `baseColor`).
 - `MeshRenderer` hardcodes `shade=max(dot(n,(0,0,1)),0)` (`render/mesh_renderer.cpp:53`).
 
+> **V3.7 (T8) — Phong-only stays (deferred, binding).** This iteration keeps
+> `render::IMaterial → PhongMaterial` single path (FR non-goal `SPEC §1` —
+> PBR deferred) and no `ILight` (fixed headlight `max(dot(n,(0,0,1)),0)` in
+> `MeshRenderer` stays). Even hierarchies `IColor/IVolume/ILineMaterial +
+> PBR/SliceMaterial/ContourMaterial` (§12.2) and `Directional/Point/Spot`
+> (§12.3) plus `render/material/` and `render/light/` files are **deferred**
+> — headers not added this iteration; no new `render/material/` files
+> (gate `G` enforces). `MaterialDesc`/`LightDesc` remain `app`-local free
+> structs for the `MPR` sample. This task only tightens the
+> `TransferFunction` vs `VolumeMaterial` boundary — `TransferFunction` stays
+> **beside** `VolumeMaterial` in `VolumePresentation` (`VolumeMaterial` +
+> `TransferFunction` + `stepLength` + `shading`, already decided §12.5);
+> `VolumeRenderer` still takes `TransferFunction*` separately (no regression).
+> `PhongMaterial isTransparent ⇔ baseColor.a < 1` preserves `FR-render.2/3`
+> transparency gates.
+
 ## 12.2 `IMaterial` hierarchy — RE-shaped, app disposition mirrors but stays RE-free (SOLID LSP/ISP — binding)
 
 > **V3.2.1 SOLID verdict — IMaterial was LSP/ISP violation (research-backed, web-verified 2026-08-23).** The prior `IMaterial{ baseColor(), isTransparent() }` forced `VolumeMaterial` to implement `baseColor()` where no base color exists (volume's appearance is `TransferFunction` ramp, not a uniform RGBA; `baseColor.a` postcondition `isTransparent ⇔ baseColor.a<1` does not hold for volumes). Per LSP (Barbara Liskov: subtype must preserve supertype contract; invariants + postconditions cannot be weakened/strengthened — Wikipedia LSP + TechWayFit Rectangle-Square + Baeldung LSP "preconditions cannot be strengthened, postconditions cannot be weakened" + LogRocket LSP 2025-06-06 + StackOverflow 79132898 LSP pre/post invariants), `VolumeMaterial` substituting for `IMaterial` breaks callers expecting `baseColor` semantics (Rectangle-Square classic violation: Square strengthening invariant `w==h` breaks `Rectangle::setWidth` postcondition). Per ISP (Robert C. Martin: "no client should be forced to depend on methods it does not use" — NDepend ISP + Baeldung ISP + code-note-vr ISP), `VolumeMaterial` is forced to depend on `baseColor` it never uses — fat interface (`MultiFunction` printer anti-pattern per code-note-vr + Baeldung `Worker`→`Workable`/`Feedable`; NDepend `ICollection` vs `IReadOnlyCollection`). Same applies to `SliceMaterial`/`ContourMaterial` needing `specular/shininess`. Web research verdict: split the fat `IMaterial` into role interfaces (see Baeldung ISP `Worker` → `Workable`/`Feedable`; code-note-vr ISP `IMultiFunction` → `Printable`/`Scannable`; NDepend ISP). **Variant vs hierarchy OCP (binding):** `app::MaterialDesc` uses `std::variant` (see §12 App) — variant is open for operations (new visitors) but closed for types (variant list edit — Here Be Braces 2020-06-26); polymorphic `IMaterial` hierarchy is opposite. V3 chooses variant for `MaterialDesc` because type set is closed/small (4) while operations (visitors/dispatch) vary more; polymorphic hierarchy retained for `render::IMaterial` concrete tree where new `ToonMaterial` = new file + visitor overload once, zero edits to existing concrete mappers (OCP via `Broker::registerMapper`).
 
 ### RE (`render/material/` — role-segregated, OCP-open):
+
+> **Deferred (T8 V3.7):** `render/material/` hierarchy (`IColorMaterial`/
+> `IVolumeMaterial`/`ILineMaterial` + `PBR`/`SliceMaterial`/`ContourMaterial`)
+> stays **spec-only** this iteration — no headers under `render/material/`
+> landed; `render::IMaterial → PhongMaterial` single path preserved (Phong-only
+> non-goal SPEC §1). TransferFunction vs VolumeMaterial boundary tightened
+> per §12.5 decision only.
 
 ```
 render::IMaterial                      // MINIMAL, stable abstraction (DIP-owned by render/policy) — ONLY isTransparent() + kind()
@@ -78,6 +101,13 @@ app::MaterialDesc  variant< MeshMaterialDesc, VolumeMaterialDesc, SliceMaterialD
 - `ContourMaterial` **distinct** line material (not `MeshMaterial` reuse) — distinct is required (`ContourMaterial` carries `lineWidth/stipple` which `Phong` does not; `MeshMaterial::shininess` meaningless for lines — ISP violation). Same file-cost argument.
 
 ## 12.3 Light — per-`View`, many per `View`, multiple types, same `broker/` abstraction (SOLID LSP/ISP — binding)
+
+> **Deferred (T8 V3.7):** `ILight` hierarchy (`Directional/Point/Spot` per
+> `View`, many per `View`) stays **spec-only** this iteration — no
+> `render/light/` headers landed; fixed headlight
+> `max(dot(n,(0,0,1)),0)` in `MeshRenderer` stays. `LightDesc` remains
+> `app`-local free struct for `MPR` sample (no `scene/light/` headers this
+> iteration).
 
 > **V3.3.1 SOLID verdict — ILight was LSP/ISP violation (web-verified).** Prior `ILight{ dir/pos/radius … }` forced `DirectionalLight` to implement `pos` or `PointLight` to throw on `dir` — classic `Bird::fly`/Ostrich (LSP: subclass cannot fulfil `fly()` — code-note-vr LSP 2026-06-22 Bird/Ostrich) / `Worker::eat` (Baeldung ISP fat `Worker` → `Workable`/`Payable`; NDepend `ICollection` vs `IReadOnlyCollection`) LSP/ISP violation (LSP "throw UnsupportedOperationException" anti-pattern — Baeldung LSP, Wikipedia LSP history). `ILight` fat also violates ISP: `DirectionalLight` forced to depend on `pos`/`attenuation` it never uses (Baeldung ISP). Web verdict: `ILight` must be **role-segregated** marker (`isEnabled()+kind()` only), per-type data only in concrete, dispatch via `std::variant` + `std::visit` (same as §12.2; ISP segregates `IColorMaterial`/`IVolumeMaterial`). Variant OCP trade-off same as §12.2 (closed type set 3 lights, bounded per SPEC §1).
 

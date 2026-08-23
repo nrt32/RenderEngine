@@ -345,6 +345,18 @@ dependency inversion).
 - `baseColor()` — the straight (non-premultiplied) RGBA base/diffuse color;
   its alpha carries the material's opacity (alpha == 1.0 is opaque).
 
+> **V3.7 (T8) — Phong-only stays (deferred, binding).** This iteration keeps
+> `render::IMaterial → PhongMaterial` single path (FR non-goal `SPEC §1` —
+> PBR deferred) and no `ILight` (fixed headlight `max(dot(n,(0,0,1)),0)` in
+> `MeshRenderer` stays). Even hierarchies `IColor/IVolume/ILineMaterial +
+> PBR/SliceMaterial/ContourMaterial` (§12.2) and
+> `Directional/Point/Spot` (§12.3) are **deferred** — headers not added;
+> no new `render/material/` files this iteration (`G` enforces). `TransferFunction`
+> stays **beside** `VolumeMaterial` in `VolumePresentation` (already decided
+> §12.5) — `VolumeRenderer` still takes `TransferFunction*` separately
+> (no regression). `MaterialDesc`/`LightDesc` remain `app`-local free structs
+> for the `MPR` sample.
+
 ### `PhongMaterial` (`render/phong_material.hpp`, `.cpp`)
 
 The v1 Phong material model. Holds the classic Phong parameters — an ambient
@@ -356,6 +368,15 @@ by the color itself.
 - `PhongMaterial({r,g,b,a})` clamps the base color to `[0,1]`.
 - `isTransparent()` returns `baseColor().a < 1.0f` (FR-render.3: an alpha of
   `1.0` is opaque; `0.5` and `0.0` are transparent).
+
+**RE-minimal `Re*` note (T8 V3.7, SPEC §12.4).** `Re*` keeps only RE-direct
+values (`AssetHandle`/`ReMaterial*`/`ClipPlane`/`ReLight[]`/`worldBounds`/
+`sliceUVW` where derived), never verbatim `app::MaterialDesc`. `ReMeshObject`
+carries `AssetHandle`+`model`+`bounds`+`ReMaterial*` only; `ReVolumeObject`
+carries `VolumeMaterial*` + `ReTfUniforms` separately (TF not owned by material
+— ISP per §12.5). The binding inventory `docs/re_scene_inventory.md` (T9) will
+enumerate every `Re*` field with rationale `derived|uniform-ready|handle`
+(`asset_indirection` guardrail).
 
 ### `ITransparencyPipeline` (`render/itransparency_pipeline.hpp`)
 
