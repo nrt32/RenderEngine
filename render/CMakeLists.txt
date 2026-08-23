@@ -12,6 +12,7 @@ add_library(re_render STATIC
     plane_renderer.cpp
     volume_renderer.cpp
     slice_renderer.cpp
+    contour_renderer.cpp
     view_target.cpp
     view.cpp
 )

@@ -14,6 +14,7 @@
 #include "data/volume_dataset.hpp"
 #include "data/image.hpp"
 #include "scene/material_desc.hpp"
+#include "scene/plane_desc.hpp"
 #include "volume/transfer_function.hpp"
 
 namespace re::scene {
@@ -112,7 +113,40 @@ struct PlaneObject {
     }
 };
 
+/// Contour object: mesh asset + clip plane + stroke color — the plane∩mesh
+/// outline overlay (V3.8b T11, FR-app.3). Pure value, GL-free, RE-free: the
+/// plane is the abstract PlaneDesc (Space::World vs VoxelIndex; conversion to
+/// the world render::ClipPlane is broker's job), and the GPU side receives
+/// only an AssetHandle (RE-minimal, SPEC §12.4) via broker::ContourMapper.
+struct ContourObject {
+    ObjectId id{0};
+    const data::Mesh* mesh{nullptr};
+    glm::mat4 transform{1.0f};
+    /// The plane whose ∩mesh outline this object shows (lives on the object,
+    /// unlike MeshSliceObject whose plane comes from the View — a contour is
+    /// meaningful only together with its own plane).
+    PlaneDesc plane{};
+    /// Straight RGBA stroke color (default pure red = the FR-app.3 MPR
+    /// contour color, exact bytes 255,0,0,255).
+    glm::vec4 color{1.0f, 0.0f, 0.0f, 1.0f};
+    uint64_t generation{0};
+
+    void setTransform(glm::mat4 m) noexcept {
+        transform = m;
+        ++generation;
+    }
+    void setPlane(PlaneDesc p) noexcept {
+        plane = std::move(p);
+        ++generation;
+    }
+    void setColor(glm::vec4 c) noexcept {
+        color = c;
+        ++generation;
+    }
+};
+
 /// Variant over all scene object types (for store dispatch without enum switch).
-using SceneObject = std::variant<MeshObject, MeshSliceObject, VolumeObject, VolumeSliceObject, PlaneObject>;
+using SceneObject = std::variant<MeshObject, MeshSliceObject, VolumeObject,
+                                 VolumeSliceObject, PlaneObject, ContourObject>;
 
 } // namespace re::scene

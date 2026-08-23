@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <glm/glm.hpp>
 #include <glm/mat4x4.hpp>
+#include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 #include <string>
 #include <string_view>
@@ -126,6 +127,10 @@ class ShaderProgram {
 
     /// Set a 1-component float uniform. The program must be in use.
     void setUniformFloat(std::string_view name, float value) const noexcept;
+
+    /// Set a vec2 uniform. The program must be in use.
+    void setUniformVec2(std::string_view name,
+                        const glm::vec2& value) const noexcept;
 
     /// Set a vec3 uniform. The program must be in use.
     void setUniformVec3(std::string_view name,

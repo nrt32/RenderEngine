@@ -25,11 +25,15 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 > V2.7), the **T4 (V3.3) deliverable** (`scene::Camera` manipulable
 > `pan/rotate/zoom/orbit` → `render::Camera{view,proj,pos}` via
 > `broker::CameraMapper`; `2D` ortho vs `3D` perspective validated by mapper),
-> and the **T5 (V3.4) deliverable** (`render::View` (`ReView`) per screen
+> the **T5 (V3.4) deliverable** (`render::View` (`ReView`) per screen
 > section + `ViewTarget{Texture2D+Framebuffer}` + `IRenderable` type-erased
-> `drawLayer` + `core::blit`; deletes `ViewRenderer`).
+> `drawLayer` + `core::blit`; deletes `ViewRenderer`),
+> and the **T11 (V3.8b) deliverable** (`ContourRenderer`, the GPU
+> geometry-shader plane∩mesh outline for the MPR contour overlay,
+> FR-app.3 — replaces the deleted CPU `app/mpr_contour.*`
+> `meshPlaneContour`/`overlayContour` path).
 > It is part of the `docs/render.md` documentation map
-> (T7/T8/T9/T10/T11 + V2 T1/T2/T3/T7/T8 + T4 + T5; later tasks extend it).
+> (T7/T8/T9/T10/T11 + V2 T1/T2/T3/T7/T8 + T4 + T5 + T11(V3.8b); later tasks extend it).
 
 ## Components
 
@@ -64,6 +68,9 @@ numbers are preserved** and diagnostics keep their golden `ERROR: 0:N` form.
 | `slice_clip.frag.glsl` | `kClipFragmentShader` | fragment | `SliceRenderer` (clip) |
 | `slice_capture.geom.glsl` | `kCaptureGeometryShader` | geometry | `SliceRenderer` (capture) |
 | `slice_capture.frag.glsl` | `kCaptureFragmentShader` | fragment | `SliceRenderer` (capture) |
+| `contour.vert.glsl` | (new, V3.8b T11) | vertex | `ContourRenderer` |
+| `contour.geom.glsl` | (new, V3.8b T11) | geometry | `ContourRenderer` |
+| `contour.frag.glsl` | (new, V3.8b T11) | fragment | `ContourRenderer` |
 
 **Malformed-shader fixture (T3 golden substring).** The completed-loop T3 gate's
 intentionally-malformed shader (`glibberish` on line 7, golden substring
@@ -624,6 +631,109 @@ through the origin; kept side z >= 0), identity model:
 | Plane distance of every emitted vertex | `<= 1e-4 * 2 = 2e-4` | `|dot((0,0,1), v - (0,0,0))| = |v.z|`; each vertex is an edge intersection computed at `t = d[i]/(d[i]-d[j])` and lies on z=0 up to float rounding; relative tolerance 1e-4 × mesh extent 2 (SPEC §4 plane-geometry tolerance) |
 | Clipped-mesh center pixel | `{51, 102, 204}` (±1) | kept z=+1 face's geometric normal is exactly +Z → shade `dot((0,0,1),(0,0,1)) = 1` → `color = baseColor {0.2, 0.4, 0.8}` → bytes `{51,102,204}` (FR-render.4, within 1/255) |
 | Base color | `{0.2, 0.4, 0.8, 1.0}` | clean RGBA8 bytes: `0.2*255=51`, `0.4*255=102`, `0.8*255=204` |
+
+### `ContourRenderer` (`render/contour_renderer.hpp`, `.cpp`) — V3.8b T11
+
+The **outline-only peer of `SliceRenderer`** (FR-app.3): where the slice clip
+pass renders the KEPT side of a plane-clipped mesh (and captures its
+on-plane cross-section for FR-render.4), `ContourRenderer` renders ONLY the
+**plane∩mesh outline**, computed entirely **on the GPU** by
+`render/shaders/contour.geom.glsl`. It replaces the deleted CPU path
+(`app/mpr_contour.*`: `meshPlaneContour` triangle-plane edge test +
+`overlayContour` CPU rasterization): the MPR slice views now layer a
+`render::ContourObject` over the slice image as a second `ReView` item, and
+the contour pixels come from the geometry shader at draw time.
+
+**Geometry shader outline (pure GPU).** The vertex shader transforms each
+vertex to world space (`uModel`); the geometry shader classifies each triangle
+against the world-space clip plane with the same signed-distance pattern as
+`slice_clip.geom.glsl` (`d[i] = dot(uPlaneNormal, P[i] - uPlanePoint)`, sign
+classes `-1/0/+1`). A triangle strictly straddling the plane contributes ONE
+outline segment: the segment between its two distinct edge crossing points
+(`P[i] + t * (P[j] - P[i])`, `t = d[i]/(d[i]-d[j])`, near-coincident
+crossings deduplicated). Fully-on-one-side, tangent and coplanar triangles
+contribute nothing — the emitted primitive set is exactly the intersection
+outline.
+
+**Screen-space thick lines (why quads, not `line_strip`).** The natural
+emission would be a `line_strip` of the two crossing points, but OpenGL 4.6
+core caps `glLineWidth` at 1.0 — deprecated wide lines are unavailable — and
+a 1-px stroke covers only ~±0.5 px around the analytic curve, far below the
+FR-app.3 requirement that ≥ 90 % of the pixels within ±2 px of the curve
+match the contour color (~35 % coverage). The geometry shader therefore emits
+the standard GPU thick-line primitive: one **quad per segment**
+(`triangle_strip`, 4 vertices), projected to continuous viewport pixel
+coordinates, expanded perpendicular to the segment by `uHalfWidthPx` and
+extended beyond each endpoint by square caps of the same length. Every pixel
+whose center lies within `uHalfWidthPx` of an analytic segment then lies
+inside its quad (closed-form containment), so `uHalfWidthPx = 2.0` fills the
+FR-app.3 ±2 px band exactly. Degenerate projections (segment behind the eye,
+zero projected length) are skipped deterministically. The fragment shader
+writes the flat uniform `uColor`; blending stays disabled so every stroke
+pixel is exactly the stroke color.
+
+**Layer semantics + viewport plumbing.** `drawLayer(object|scene, camera,
+ctx)` assumes ReView already bind+viewport+clear via the same
+`core::DrawContext` and draws without clearing (View composes layers). The
+thick-line expansion needs the viewport pixel size; it is read from the
+DrawContext's cached viewport (`ctx.viewportRect()`, a new pure-cache
+accessor in `core/draw.hpp`) rather than a raw GL query, keeping render/
+GL-call-free. A cold context (no `setViewport` yet) is a typed error. The
+direct single-scene `render(scene, camera, target)` keeps its own
+bind+viewport+clear+disable for tests (regression lock).
+
+**Camera enclosure requirement (T11 review, user-verified defect
+2026-08-24).** The emitted quads live AT the clip plane in the object's
+display frame — for an MPR slice view that is display z = held voxel-layer
+coordinate + 0.5 (e.g. 35.5), far from the slice quad's z = 0. The drawing
+camera's near/far must enclose those z values: geometry outside the clip
+volume is discarded silently by the fixed-function clipper (no GL error, no
+failed `Result`), which is exactly how the live MPR sample lost its contours
+while the direct-render gate kept passing under its own wider camera. The
+sample's shared 2D-view camera (`app::makeSliceCamera`, docs/mpr.md) now
+guarantees enclosure (eye z = 512, far = 1024 → display z ∈ [-512, +511.9]),
+and `tests/t15_mpr_test.cpp` composes the contour through that exact camera +
+`render::View` path so a sample-vs-test wiring divergence fails the gate.
+
+A second T11 review finding, same defect family: the Sagittal axis-permutation
+model was built transposed (glm's column-major constructor read as row-major),
+which the cube-symmetric direct-render gate cannot detect but which put the
+live sample's non-cubic Sagittal outline half off-screen.
+`AxisDisplayModelsPinPermutationNotTranspose` pins each view's display mapping
+on an asymmetric probe vector so a transposition always fails the gate.
+
+Public scene structs (defined in `contour_renderer.hpp`):
+
+| Type | Purpose |
+|---|---|
+| `ContourObject` | one GPU contour layer: the contoured mesh's `AssetHandle` (RE-minimal — handle only, SPEC §12.4), the world/local-frame `ClipPlane`, the flat RGBA stroke color (default opaque red), the model matrix, and `halfWidthPx` (default 2.0 = the FR-app.3 band half-width). |
+| `ContourScene` | a vector of `ContourObject`s (CPU-side; broker/app build these). |
+
+**Broker translation.** `broker::ContourMapper`
+(`: IMapper<scene::ContourObject, render::ContourObject>`, SPEC §11) performs
+the scene→render translation: it registers the scene object's `data::Mesh` in
+the shared `AssetRegistry` (dedup by CPU-object identity) and produces the RE-minimal
+render object. Typed errors: null mesh pointer (code 1), null registry (code
+2), `Space::VoxelIndex` planes (code 3 — the voxel→world conversion needs the
+volume context and is deliberately not silently identity-mapped, SPEC §5).
+
+#### Acceptance constants (FR-app.3 via GPU readback, docs/render.md)
+
+Golden box `[16,48]^3`, one contour per axis with the axis-permutation display
+model (Transverse identity / Coronal swaps Y/Z / Sagittal maps
+`(x,y,z)->(y,z,x)`), clip plane constant Z at 32.5 in the display frame,
+shared ortho down-Z camera mapping `[0,64]^2` 1:1 onto a 64×64 target:
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| Geometry-shader outline segments | `8` | hand-counted: the box's 4 side faces contribute 2 crossing triangles each; faces perpendicular to the held axis never cross |
+| Analytic cross-section | rectangle `[16,48]^2` in pixel space | plane through voxel centers at 32.5 cuts all 4 side faces; every view shares the same display frame |
+| Pixels within 2 px of the boundary | `508` of 64×64 | closed-form band count (perimeter 128 × 4-unit band ≈ 512 minus corner overlaps); no pixel center sits at exactly 2.0 |
+| In-band match fraction | `>= 0.90` (measured ~1.00) | FR-app.3 SPEC threshold; every in-band pixel center lies inside some emitted thick-line quad (square caps included) |
+| Contour color bytes | `(255, 0, 0, 255)` within 1/255 | `app::kContourColor` = pure red straight RGBA; blending disabled → exact bytes |
+| Far-field spot pixel `(0,0)` | `(0, 0, 0, 0)` exact | ~21.9 px from the boundary — outside any stroke — so the clear color survives untouched |
+| Registry dedup across 3 view translations | `slotCount() == 1` | same CPU box mapped three times through `ContourMapper` → one GPU object (SPEC §9 V2.5) |
+| Mapper errors: null mesh / null registry / VoxelIndex plane | typed codes `1` / `2` / `3` | SPEC §5 — typed errors, no crashes, no silent reinterpretation |
 
 ### `PlaneRenderer` (`render/plane_renderer.hpp`, `.cpp`) — T8
 

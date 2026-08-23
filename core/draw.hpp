@@ -170,6 +170,22 @@ class DrawContext {
         glViewport(x, y, width, height);
     }
 
+    /// Query the cached viewport rectangle (pure cache read, no GL call).
+    /// Returns false when no setViewport happened on this context yet (cold
+    /// cache); renderers whose draw needs the pixel size (ContourRenderer's
+    /// screen-space thick-line expansion) read it from here instead of raw
+    /// glGetIntegerv(GL_VIEWPORT), keeping render/ GL-call-free.
+    bool viewportRect(int& x, int& y, int& width, int& height) const noexcept {
+        if (!cache_.hasViewport) {
+            return false;
+        }
+        x = cache_.vpX;
+        y = cache_.vpY;
+        width = cache_.vpW;
+        height = cache_.vpH;
+        return true;
+    }
+
     /// Set clear color — exact float equality cache.
     void setClearColor(float r, float g, float b, float a) noexcept {
         if (cache_.hasClearColor && cache_.ccR == r && cache_.ccG == g &&

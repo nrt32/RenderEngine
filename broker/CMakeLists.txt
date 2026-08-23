@@ -6,6 +6,7 @@ add_library(re_broker STATIC
     asset_store.cpp
     camera_mapper.cpp
     mesh_object_mapper.cpp
+    contour_mapper.cpp
     view_synchronizer.cpp
     view_compositor.cpp
     view_bridge.cpp

@@ -135,6 +135,9 @@ TEST(T8GlslVersion, ShaderFilesHeadMatchesMacro) {
         "render/shaders/slice_clip.frag.glsl",
         "render/shaders/slice_capture.geom.glsl",
         "render/shaders/slice_capture.frag.glsl",
+        "render/shaders/contour.vert.glsl",
+        "render/shaders/contour.geom.glsl",
+        "render/shaders/contour.frag.glsl",
         "render/shaders/fixtures/malformed.vert.glsl",
         "render/shaders/fixtures/malformed.frag.glsl",
     };

@@ -1,6 +1,6 @@
 // app/mpr_sample.cpp — Multi-Planar Reconstruction (MPR) sample (T14/T15,
 // FR-app.2/3; T5 V3.4 drives its composition through ReView/ViewTarget/IRenderable,
-// SPEC §3.2).
+// SPEC §3.2; V3.8b T11 moves the contour overlay to the GPU ContourRenderer).
 //
 // Demonstrates the MPR capability (SPEC §1 goal 6): a single 1280x960 window
 // with a 2x2 viewport grid (four 640x480 viewports; T top-left, C top-right,
@@ -8,17 +8,23 @@
 // Z), Coronal (constant Y) and Sagittal (constant X) views render the volume
 // slice along their pinned axis (SPEC §4 FR-app.2); the 3D view (bottom-right)
 // renders the golden box mesh (FR-app.3). Each slice view also overlays the
-// plane∩mesh cross-section contour (FR-app.3): the box's intersection with the
-// view's slice plane, computed in closed form and rasterized into the slice
-// image before the PlaneRenderer displays it.
+// plane∩mesh cross-section contour (FR-app.3): the box's intersection with
+// the view's slice plane, computed ON THE GPU by render::ContourRenderer's
+// geometry shader and layered over the slice image as a second ReView item —
+// no CPU rasterization pass (the former CPU contour image-copy overlay of
+// app/mpr_contour.* is gone).
 //
 // Rendering architecture (app-level composition, SPEC §3):
 //   - the 2x2 viewport layout and the per-axis slice sampling come from the
 //     shared app/mpr_slice scaffolding (mprViewports / makeSliceImage), which
 //     the T14 gate tests headlessly;
-//   - the contour overlay and the 3D-view camera come from the shared
-//     app/mpr_contour scaffolding (meshPlaneContour / overlayContour /
-//     make3dCamera), which the T15 gate tests headlessly;
+//   - each slice view's GPU contour is translated scene→render through the
+//     broker mediation registry (SPEC §11): the scene-side ContourObject
+//     carries the mesh pointer + abstract PlaneDesc + color; the registered
+//     mapper produces the RE-minimal render::ContourObject{AssetHandle,
+//     ClipPlane, color};
+//   - the 3D-view camera comes from app::make3dCamera (app/mpr_camera.hpp),
+//     which looks at the slice-state crosshair;
 //   - the sample shares per-view window-section handles (render::ViewRect
 //     from mprViewports) + ReView objects (render::View per screen section
 //     owning ViewTarget + IRenderable list via drawLayer, T5 V3.4) with the
@@ -40,6 +46,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <fstream>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/mat4x4.hpp>
@@ -48,9 +56,11 @@
 #include <utility>
 #include <vector>
 
-#include "app/mpr_contour.hpp"
+#include "app/mpr_camera.hpp"
 #include "app/mpr_slice.hpp"
 #include "app/sample_harness.hpp"
+#include "broker/broker.hpp"
+#include "broker/contour_mapper.hpp"
 #include "core/draw.hpp"
 #include "core/window.hpp"
 #include "data/image.hpp"
@@ -58,10 +68,14 @@
 #include "data/volume_dataset.hpp"
 #include "io/volume/nrrd_volume_loader.hpp"
 #include "render/asset_registry.hpp"
+#include "render/contour_renderer.hpp"
 #include "render/mesh_renderer.hpp" // render::MeshScene / render::Camera
 #include "render/phong_material.hpp"
 #include "render/plane_renderer.hpp"
 #include "render/view.hpp"
+#include "scene/object.hpp"
+#include "scene/plane_desc.hpp"
+#include "utils/pixel_reader.hpp"
 #include "volume/transfer_function.hpp"
 
 #ifndef RE_SOURCE_DIR
@@ -72,10 +86,12 @@ namespace {
 
 // Convenience namespace aliases for the sample's own .cpp (NAMING_CONVENTIONS
 // §7: `using`/aliases are allowed inside a .cpp translation unit).
+namespace broker = re::broker;
 namespace core = re::core;
 namespace data = re::data;
 namespace volume = re::volume;
 namespace render = re::render;
+namespace scene = re::scene;
 namespace app = re::app;
 
 // The harness window size (SPEC FR-app.2: 1280x960).
@@ -130,32 +146,13 @@ app::MprSliceState makeInitialSliceState(const data::VolumeDataset& dataset) {
     return state;
 }
 
-/// The orthographic camera for one 2D slice view (the shared 2D-view camera
-/// configuration, derived per view from that view's slice image): maps the
-/// image's pixel space [0,imgW]x[0,imgH] onto the full 640x480 viewport. The
-/// camera looks down -Z from +Z at the quad (which sits at z = 0), so the
-/// slice displays with the image's top-left at the viewport's top-left (the
-/// PlaneRenderer orientation convention, FR-render.5 /
-/// render/plane_renderer.hpp).
-render::Camera makeSliceCamera(const data::Image& image) {
-    render::Camera camera;
-    camera.position = glm::vec3(0.0f, 0.0f, 5.0f);
-    camera.view = glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f),
-                              glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::ortho(0.0f, static_cast<float>(image.width()), 0.0f,
-                             static_cast<float>(image.height()), 0.1f, 10.0f);
-    return camera;
-}
-
-/// The model matrix scaling the shared unit quad [-1,1]^2 onto the slice
-/// image's pixel rectangle [0,imgW]x[0,imgH], so the whole slice image fills
-/// the viewport (with the shared camera above).
-glm::mat4 makeSliceModel(const data::Image& image) {
-    const float halfW = static_cast<float>(image.width()) * 0.5f;
-    const float halfH = static_cast<float>(image.height()) * 0.5f;
-    return glm::translate(glm::mat4(1.0f), glm::vec3(halfW, halfH, 0.0f)) *
-           glm::scale(glm::mat4(1.0f), glm::vec3(halfW, halfH, 1.0f));
-}
+/// The orthographic camera for one 2D slice view and the model matrix scaling
+/// the shared unit quad onto that view's slice image are SHARED SCAFFOLDING
+/// (app::makeSliceCamera / app::makeSliceModel in app/mpr_camera.hpp): the
+/// gate tests drive the exact same functions, so a sample-vs-test camera
+/// divergence like the T11 user-verified defect (a slice camera whose clip
+/// volume excluded the contour geometry — every GPU outline quad silently
+/// clipped away) cannot reintroduce itself.
 
 /// The MPR sample: owns the volume + transfer function + the slice-view
 /// scaffold and renders one frame of the 2x2 grid into the window's default
@@ -176,9 +173,10 @@ class MPRView final : public app::ISample {
           box_(app::makeBoxMesh(kGoldenBoxMin, kGoldenBoxMax)),
           boxMaterial_(kBoxMaterialColor) {
         // One shared unit quad, scaled per slice view onto that view's image
-        // pixel rectangle (makeSliceModel) and viewed through a per-view
-        // orthographic camera (makeSliceCamera) — the shared 2D-view camera
-        // scaffolding that maps each slice image onto its full viewport.
+        // pixel rectangle (app::makeSliceModel) and viewed through a per-view
+        // orthographic camera (app::makeSliceCamera) — the shared 2D-view
+        // camera scaffolding (app/mpr_camera.hpp) that maps each slice image
+        // onto its full viewport.
         quad_ = render::PlaneGeometry::unitQuadXY();
 
         // The golden box mesh (FR-app.3) with an opaque material, for the 3D
@@ -200,24 +198,93 @@ class MPRView final : public app::ISample {
                                        static_cast<float>(kViewportWidth) /
                                            static_cast<float>(kViewportHeight));
 
-        // Overlay the plane∩mesh cross-section contour on each slice view
-        // (FR-app.3): the box's intersection with that view's slice plane,
-        // computed in closed form and rasterized into the slice image at the
-        // FR-app.3 contour color, so the PlaneRenderer shows the contour on
-        // top of the slice.
-        const std::array<app::MprAxis, 3> axes = {app::MprAxis::Transverse,
-                                                  app::MprAxis::Coronal,
-                                                  app::MprAxis::Sagittal};
-        const std::array<data::Image*, 3> images = {
-            &transverseImage_, &coronalImage_, &sagittalImage_};
+        // Build each slice view's GPU contour layer (FR-app.3): a scene-side
+        // ContourObject carrying the box, translated scene→render through the
+        // broker mediation layer (SPEC §11) into the RE-minimal
+        // render::ContourObject{AssetHandle, ClipPlane}. The outline itself
+        // (plane∩mesh segments + thick-line expansion) is computed ON THE GPU
+        // by render::ContourRenderer's geometry shader at draw time; there is
+        // no CPU rasterization pass.
+        //
+        // Mediation discipline: the composition root registers the contour
+        // mapper in the Broker registry ONCE (below) and afterwards translates
+        // only through the type-erased IMapper interface fetched from the
+        // Broker — app never holds a concrete mapper handle.
+        //
+        // Display-space alignment: every slice view shares the same ortho
+        // down-Z camera and the quad model that maps its slice image onto the
+        // viewport (app::makeSliceCamera / app::makeSliceModel, shared
+        // scaffolding in app/mpr_camera.hpp), so the image's pixel space is
+        // [0,W]x[0,H] at z=0 for ALL views. Each view's contour
+        // object therefore carries the axis-permutation MODEL that maps mesh
+        // voxel-index space into ITS image space (Transverse identity;
+        // Coronal swaps Y/Z; Sagittal maps (x,y,z)->(y,z,x)), and a clip plane
+        // already expressed in that local/display frame — matching
+        // render::ClipPlane's post-model evaluation in the shader. The
+        // constant-Z display plane then cuts exactly the voxel layer the image
+        // shows, so the GPU outline lands pixel-exact on the displayed slice.
+        const float heldCoord[3] = {
+            static_cast<float>(sliceState_.transverseZ) + 0.5f,
+            static_cast<float>(sliceState_.coronalY) + 0.5f,
+            static_cast<float>(sliceState_.sagittalX) + 0.5f};
+        // Axis-permutation model per view (column-major glm::mat4 — the
+        // constructor takes COLUMNS, so each initializer list below is read
+        // down the matrix, not across; getting this wrong silently transposes
+        // the permutation, which the cubic golden box of the direct-render
+        // gate cannot see but the sample's non-cubic box immediately shows as
+        // a misplaced/clipped Sagittal outline — T11 review finding 2):
+        //   Transverse: identity — display (x,y) = voxel (x,y).
+        //   Coronal:    swap Y/Z  — display (x,y) = voxel (x,z).
+        //   Sagittal:   (x,y,z)->(y,z,x) — display (x,y) = voxel (y,z).
+        const std::array<glm::mat4, 3> axisModel = {
+            glm::mat4(1.0f),
+            // Coronal: rows (x'|y'|z') = (x|z|y) => columns (1,0,0)(0,0,1)(0,1,0)
+            glm::mat4(1.0f, 0.0f, 0.0f, 0.0f, // col0: row0 gets x
+                      0.0f, 0.0f, 1.0f, 0.0f, // col1: row2 gets y -> y' = z
+                      0.0f, 1.0f, 0.0f, 0.0f, // col2: row1 gets z -> z' = y
+                      0.0f, 0.0f, 0.0f, 1.0f),
+            // Sagittal: rows (x'|y'|z') = (y|z|x) => reading the matrix DOWN,
+            // columns = (0,0,1)(1,0,0)(0,1,0) — NOT the cyclic shift
+            // (0,1,0)(0,0,1)(1,0,0), which encodes the transposed (z,x,y)
+            // permutation that put the live Sagittal outline half off-screen.
+            glm::mat4(0.0f, 0.0f, 1.0f, 0.0f, // col0: row2 gets x -> z' = x
+                      1.0f, 0.0f, 0.0f, 0.0f, // col1: row0 gets y -> x' = y
+                      0.0f, 1.0f, 0.0f, 0.0f, // col2: row1 gets z -> y' = z
+                      0.0f, 0.0f, 0.0f, 1.0f)};
+        // Composition root: register the contour mapper with the Broker
+        // registry (one mapper per AppT, OCP via type_index — SPEC §11).
+        broker_.registerMapper(std::make_unique<broker::ContourMapper>(&registry_));
+        auto* contourMapper =
+            broker_.get<scene::ContourObject, render::ContourObject>();
+        constexpr std::array<const char*, 3> kAxisNames = {"Transverse",
+                                                           "Coronal",
+                                                           "Sagittal"};
         for (std::size_t i = 0u; i < 3u; ++i) {
-            const app::SlicePlane plane = app::slicePlane(axes[i], sliceState_);
-            const std::vector<app::ContourSegment> curve =
-                app::meshPlaneContour(box_, plane);
-            *images[i] =
-                app::overlayContour(*images[i], curve, app::kContourColor);
-        }
+            scene::ContourObject appContour;
+            appContour.mesh = &box_;
+            appContour.transform = axisModel[i];
+            // The clip plane in the object's local (= display) frame: constant
+            // Z at the sliced voxel layer's coordinate.
+            appContour.plane.setNormal(glm::vec3(0.0f, 0.0f, 1.0f));
+            appContour.plane.setPoint(glm::vec3(0.0f, 0.0f, heldCoord[i]));
+            appContour.color = app::kContourColor;
 
+            scene::TranslateContext ctx;
+            auto mapped = contourMapper->map(appContour, ctx);
+            if (mapped.failed()) {
+                // Typed errors are surfaced, never swallowed: a skipped
+                // contour layer is visually indistinguishable from "no
+                // contour", so the log names the view axis and the typed code
+                // (T11 review checklist item 4).
+                spdlog::error(
+                    "mpr sample: {} contour translation failed (code {}): {}"
+                    " — the view will show NO contour overlay",
+                    kAxisNames[i], mapped.error().code,
+                    mapped.error().message);
+                continue;
+            }
+            contourScenes_[i].contours.push_back(*mapped);
+        }
     }
 
     data::Result<void> renderFrame(int width, int height) override {
@@ -246,11 +313,18 @@ class MPRView final : public app::ISample {
         views.reserve(4u);
         for (std::size_t i = 0u; i < 3u; ++i) {
             sliceScenes[i].planes.push_back(render::PlaneInstance{
-                &quad_, sliceImages[i], makeSliceModel(*sliceImages[i])});
+                &quad_, sliceImages[i],
+                app::makeSliceModel(*sliceImages[i])});
             render::ViewRect rect{grid[i].x, grid[i].y, grid[i].width, grid[i].height};
             render::View view(rect, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-            view.setCamera(makeSliceCamera(*sliceImages[i]));
+            view.setCamera(app::makeSliceCamera(*sliceImages[i]));
             view.addItem(sliceScenes[i], &sliceRenderer_);
+            // Second layer: the GPU-computed plane∩mesh contour over the
+            // slice (FR-app.3). View::render draws layers without clearing,
+            // so the contour strokes overwrite exactly their own pixels.
+            if (!contourScenes_[i].contours.empty()) {
+                view.addItem(contourScenes_[i], &contourRenderer_);
+            }
             core::DrawContext ctx;
             auto r = view.renderWithEnsure(ctx);
             if (r.failed()) return r;
@@ -271,6 +345,31 @@ class MPRView final : public app::ISample {
             if (b.failed()) return b;
             views.push_back(std::move(view));
         }
+
+        // Optional single-frame capture of the composed window content
+        // (T11 user-verified defect verification aid): with
+        // RE_SAMPLE_DUMP_FRAME=<path> set, the FIRST frame is written as a
+        // binary PPM (P6) so the live window path — the exact composition the
+        // interactive sample shows — can be verified pixel-wise without a
+        // display-side screenshot tool. Off by default and free when unset
+        // (pixels are read through utils::PixelReader, which delegates to the
+        // core/ readback anchor; no raw readback call lives in app/).
+        if (!frameDumped_) {
+            frameDumped_ = true;
+            const char* dumpPath = std::getenv("RE_SAMPLE_DUMP_FRAME");
+            if (dumpPath != nullptr && dumpPath[0] != '\0') {
+                auto dumped = dumpWindowFramePpm(dumpPath,
+                                                 static_cast<std::uint32_t>(width),
+                                                 static_cast<std::uint32_t>(height));
+                if (dumped.ok()) {
+                    spdlog::info("mpr sample: first-frame window capture "
+                                 "written to {}", dumpPath);
+                } else {
+                    spdlog::error("mpr sample: frame capture failed: {}",
+                                  dumped.error().message);
+                }
+            }
+        }
         return data::Result<void>(data::value);
     }
 
@@ -282,18 +381,67 @@ class MPRView final : public app::ISample {
         return "Capability: Multi-Planar Reconstruction (SPEC FR-app.2/3).\n"
                "A single 1280x960 window shows four 640x480 viewports in a "
                "2x2 grid:\n"
-               "T (top-left) = Transverse slice (constant Z) + mesh contour,\n"
-               "C (top-right) = Coronal slice (constant Y) + mesh contour,\n"
-               "S (bottom-left) = Sagittal slice (constant X) + mesh "
+               "T (top-left) = Transverse slice (constant Z) + GPU mesh "
+               "contour,\n"
+               "C (top-right) = Coronal slice (constant Y) + GPU mesh "
+               "contour,\n"
+               "S (bottom-left) = Sagittal slice (constant X) + GPU mesh "
                "contour,\n"
                "3D (bottom-right) = the golden box mesh, viewed from the "
                "slice-state crosshair (the intersection of the three slice "
                "planes).\n"
+               "Contours are computed on the GPU (ContourRenderer geometry "
+               "shader).\n"
                "Run the sample, then close the window (or set "
                "RE_SAMPLE_MAX_FRAMES) to exit.";
     }
 
    private:
+    /// Read the composed window content back (default framebuffer, via
+    /// utils::PixelReader -> core::readRgba8) and write it as a binary PPM
+    /// (P6, top-down rows). Diagnostic only: used by the T11 defect gate to
+    /// verify the LIVE sample path pixel-wise (the readback tests render into
+    /// offscreen FBOs and cannot see a window-path regression like the
+    /// camera-enclosure defect that hid every contour quad).
+    data::Result<void> dumpWindowFramePpm(const std::string& path,
+                                          std::uint32_t width,
+                                          std::uint32_t height) {
+        // The blits left the draw framebuffer at the window's default FB;
+        // bind it explicitly so the read source is deterministic.
+        core::bindDefaultFramebuffer();
+        re::utils::PixelReader reader;
+        std::vector<std::uint8_t> rgba;
+        auto read = reader.read(0u, 0u, width, height, rgba);
+        if (read.failed()) {
+            return data::makeError<void>(read.error().code,
+                                         read.error().message);
+        }
+        // GL readback is bottom-up; PPM is top-down — flip rows.
+        std::vector<std::uint8_t> ppm(static_cast<std::size_t>(width) *
+                                      height * 3u);
+        for (std::uint32_t row = 0u; row < height; ++row) {
+            const std::size_t src =
+                static_cast<std::size_t>(height - 1u - row) * width * 4u;
+            const std::size_t dst = static_cast<std::size_t>(row) * width * 3u;
+            for (std::uint32_t col = 0u; col < width; ++col) {
+                ppm[dst + col * 3u + 0u] = rgba[src + col * 4u + 0u];
+                ppm[dst + col * 3u + 1u] = rgba[src + col * 4u + 1u];
+                ppm[dst + col * 3u + 2u] = rgba[src + col * 4u + 2u];
+            }
+        }
+        std::ofstream out(path, std::ios::binary);
+        if (!out) {
+            return data::makeError<void>(1, "cannot open '" + path + "'");
+        }
+        out << "P6\n" << width << " " << height << "\n255\n";
+        out.write(reinterpret_cast<const char*>(ppm.data()),
+                  static_cast<std::streamsize>(ppm.size()));
+        if (!out) {
+            return data::makeError<void>(2, "short write to '" + path + "'");
+        }
+        return data::Result<void>(data::value);
+    }
+
     data::VolumeDataset dataset_;
     volume::TransferFunction tf_;
     app::MprSliceState sliceState_;
@@ -306,15 +454,27 @@ class MPRView final : public app::ISample {
     data::Mesh box_;
     render::PhongMaterial boxMaterial_;
     // The shared asset registry (SPEC §9 V2.5): owns the box's GPU geometry;
-    // declared before the renderer so `&registry_` is valid at its
-    // construction.
+    // declared before the renderer(s) and the mapper so `&registry_` is valid
+    // at their construction.
     render::AssetRegistry registry_;
     render::MeshScene boxScene_;
     render::Camera boxCamera_;
     render::MeshRenderer boxRenderer_{&registry_};
 
+    // Per-slice-view GPU contour layers (FR-app.3): translated scene→render
+    // through the Broker-mediated contour mapper and drawn by the
+    // ContourRenderer as the second ReView layer of each slice view (V3.8b
+    // T11). The Broker owns the mapper; app only fetches the type-erased
+    // IMapper interface from it (no mapper handle held).
+    broker::Broker broker_;
+    std::array<render::ContourScene, 3> contourScenes_{};
+    render::ContourRenderer contourRenderer_{&registry_};
+
     render::PlaneGeometry quad_;
     render::PlaneRenderer sliceRenderer_;
+
+    /// One-shot guard for the RE_SAMPLE_DUMP_FRAME diagnostic capture.
+    bool frameDumped_{false};
 };
 
 } // namespace

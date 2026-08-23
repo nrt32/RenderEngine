@@ -348,6 +348,12 @@ void ShaderProgram::setUniformFloat(std::string_view name,
     glUniform1f(glGetUniformLocation(id_, nameString.c_str()), value);
 }
 
+void ShaderProgram::setUniformVec2(std::string_view name,
+                                   const glm::vec2& value) const noexcept {
+    const std::string nameString(name);
+    glUniform2fv(glGetUniformLocation(id_, nameString.c_str()), 1, &value.x);
+}
+
 void ShaderProgram::setUniformVec3(std::string_view name,
                                    const glm::vec3& value) const noexcept {
     const std::string nameString(name);

@@ -22,7 +22,9 @@ scene/       app-side scene description — GL-free, RE-free   (SPEC §3.1, NEW)
                |    Camera { pan/rotate/zoom/orbit, sends view matrix to RE }  (view.matrix = lookAt)
                |    PlaneDesc { normal, point, Space::World|VoxelIndex } — plane lives on View, not on item
                |- SceneObject family { MeshObject, MeshSliceObject, VolumeObject,
-               |    VolumeSliceObject, PlaneObject } — each = { asset ref, transform, presentation }
+               |    VolumeSliceObject, PlaneObject, ContourObject (V3.8b: mesh +
+               |    PlaneDesc + stroke color, the plane∩mesh outline overlay) }
+               |    — each = { asset ref, transform, presentation }
                |- Presentation { MaterialDesc variant, VolumePresentation { VolumeMaterial+TransferFunction, stepLength, shading } }  // TF separate per §12.5 decision
                |- LightDesc variant<Directional,Point,Spot> per-View, per-View LightConfigs — vector<LightDesc> inline default
                |- SceneStore { stable handles + per-field generation + ContentHash per object/View/Layout } // CompositeKey{Version,LayoutId,Id,Gen,Hash}
@@ -76,7 +78,7 @@ tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; b
   needed), `MaterialDesc`/`VolumePresentation` (Phong-only `MeshMaterialDesc` + `VolumeMaterialDesc`
   `+ TransferFunction` per §12.5), `LightDesc` hierarchy (`Directional/Point/Spot` per
   view, many per view, deferred inline vector), and the `SceneObject` family
-  (`MeshObject/MeshSliceObject/VolumeObject/VolumeSliceObject/PlaneObject = {AssetRef,transform,presentation}`).
+  (`MeshObject/MeshSliceObject/VolumeObject/VolumeSliceObject/PlaneObject/ContourObject = {AssetRef,transform,presentation}`; `ContourObject` adds its own `PlaneDesc` + stroke color — V3.8b T11, the GPU contour overlay's scene side).
   `SceneStore`/`ViewStore` carry stable `uint64_t` handles + `generation`/`storeGeneration` + `bump(FieldId)`
   single entry point (SPEC §10.4). No `GL`, no `AssetHandle`, no `core::` types; only `glm` + `data/` + `volume/`. No `render/` type leaks into `scene/` (disposition_scene, T4).
 - **Naming:** types are **unprefixed** inside `re::scene` (accepted name `re::scene::MeshObject`,

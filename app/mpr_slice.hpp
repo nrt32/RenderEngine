@@ -15,6 +15,13 @@
 // transfer function to an RGBA slice image (the CPU-side of what the T/C/S
 // views display; the shared slice-state/camera scaffolding for the 2D views).
 //
+// Since V3.8b (T11) this header also hosts the plane∩mesh scaffolding that
+// used to live in app/mpr_contour.hpp (deleted): the per-view `SlicePlane`,
+// its derivation from the slice state (`slicePlane`), and the golden box mesh
+// builder (`makeBoxMesh`). These are pure CPU value helpers (data/ + volume/
+// only, still GL-free); the contour itself is now computed ON THE GPU by
+// render::ContourRenderer via broker::ContourMapper — see docs/render.md.
+//
 // The 2x2 viewport grid (SPEC §4 FR-app.2): a 1280x960 window split into four
 // 640x480 viewports, with T (top-left), C (top-right), S (bottom-left) and the
 // 3D view (bottom-right). `mprViewports` returns the four rectangles (GL
@@ -23,7 +30,11 @@
 #include <array>
 #include <cstdint>
 
+#include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
+
 #include "data/image.hpp"
+#include "data/mesh.hpp"
 #include "data/volume_dataset.hpp"
 #include "volume/transfer_function.hpp"
 
@@ -51,14 +62,32 @@ struct MprViewport {
 
 /// The slice-state scaffolding: which voxel-index plane each 2D view is on.
 /// v1 holds each view on a fixed (constructor-chosen) index. The slice state
-/// DRIVES the T15 composition: each slice view's contour plane
-/// (app::slicePlane, app/mpr_contour.hpp) and the 3D view's camera look-at
-/// target (app::make3dCamera) are both derived from it — the slice-state ↔
-/// 3D-view camera interplay (FR-app.3).
+/// DRIVES the MPR composition: each slice view's contour plane (`slicePlane`)
+/// and the 3D view's camera look-at target (app::make3dCamera, app/mpr_camera.hpp)
+/// are both derived from it — the slice-state ↔ 3D-view camera interplay
+/// (FR-app.3).
 struct MprSliceState {
     std::uint32_t transverseZ{0}; ///< Transverse slice index (constant Z).
     std::uint32_t coronalY{0};    ///< Coronal slice index (constant Y).
     std::uint32_t sagittalX{0};   ///< Sagittal slice index (constant X).
+};
+
+/// The FR-app.3 contour stroke color: pure red straight RGBA, mapping to the
+/// exact RGBA8 bytes (255, 0, 0, 255). The GPU contour layer
+/// (render::ContourObject via broker::ContourMapper + render::ContourRenderer)
+/// draws its opaque strokes in exactly this color; the FR-app.3 gate asserts
+/// pixels within the ±2 px band of the plane∩mesh curve match it within
+/// 1/255.
+inline constexpr glm::vec4 kContourColor{1.0f, 0.0f, 0.0f, 1.0f};
+
+/// The plane of one MPR slice view in the shared voxel-index coordinate space:
+/// a plane perpendicular to `axis` at `coordinate` (voxel-index units, through
+/// the centers of the sliced voxel layer). Feeds both the slice views' GPU
+/// contour planes (scene::ContourObject::plane / render::ClipPlane) and the
+/// analytic cross-section rectangles the gate asserts against.
+struct SlicePlane {
+    MprAxis axis;     ///< The axis the plane is perpendicular to.
+    float coordinate; ///< The held coordinate (voxel-index units).
 };
 
 /// The four MPR viewports in a 2x2 grid for a `windowWidth` x `windowHeight`
@@ -90,5 +119,28 @@ std::array<MprViewport, 4> mprViewports(int windowWidth, int windowHeight);
 data::Image makeSliceImage(const data::VolumeDataset& dataset,
                            const volume::TransferFunction& tf, MprAxis axis,
                            std::uint32_t index);
+
+/// The plane of the slice view `axis` driven by the slice state `state`: the
+/// plane through the centers of the voxel layer `index` —
+///   - Transverse: z = transverseZ + 0.5,
+///   - Coronal:    y = coronalY + 0.5,
+///   - Sagittal:   x = sagittalX + 0.5.
+SlicePlane slicePlane(MprAxis axis, const MprSliceState& state);
+
+/// Build the golden box mesh spanning `[min, max]` in voxel-index coordinates:
+/// 8 corners and 12 outward-facing CCW triangles (the T11 cube winding
+/// generalized to arbitrary bounds). Closed form and deterministic; the box's
+/// bounds are integers and slice planes are at half-integer coordinates, so no
+/// triangle lies in a slice plane (the FR-app.3 analytic cross-sections are
+/// non-degenerate rectangles).
+///
+/// The box is a NON-MANIFOLD quad shell (6 faces x 4 vertices = 24 vertices,
+/// 12 triangles; each face owns its four corner vertices), so every vertex's
+/// area-weighted normal equals its face's geometric normal — each face renders
+/// FLAT under the v1 deterministic lighting. Faces are emitted in painter's
+/// order for the make3dCamera view (eye along the (1,1,1) diagonal): far faces
+/// (-Z, -X, -Y) first, near faces (+X, +Y) next, +Z last — with depth test off
+/// the near +Z face overdraws the far ones at the viewport center.
+data::Mesh makeBoxMesh(const glm::vec3& min, const glm::vec3& max);
 
 } // namespace re::app
