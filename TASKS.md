@@ -62,6 +62,8 @@ Pure-redesign iteration (no new FRs). Priority order **redesign-first** per `ope
 | T8 | V3.7 | `docs/spec/materials_lights.md` (§12.2/§12.3 deferred note — Phong-only stays), `docs/render.md` (RE-minimal `Re*` note) |
 | T9 | V3.8 | `docs/re_scene_inventory.md` (binding inventory — 6 tables/23 fields) + `render/re_scene/mesh_object.hpp` reference, `tools/audit.rules` (`asset_indirection` active) |
 | T10 | V3.9 | `docs/spec/nfr.md` (stretch tags) + `docs/spec/modules.md` (EOL skeletons deferred — stretch, no code) |
+| T11 | V3.8b | `render/contour_renderer.*` + `render/shaders/contour.geom.glsl` (`ContourRenderer` GPU), `broker/contour_mapper.*`, `docs/render.md` (contour GPU), `app/mpr_contour.hpp` deleted |
+| T12 | V3.4b | `render/plane_renderer.hpp` (audit plane via `PlaneRenderer`), `docs/render.md` (plane GPU), `app/` CPU quad parsing removed |
 
 > **Naming:** active backlog is `T1..T10` for this iteration (resets after archive — `V2-T1..V2-T8` remain in `COMPLETED_TASKS.md`). `V3.x` survives only as Spec alias in `docs/spec/roadmap.md` §9.1 and parentheses below.
 
@@ -167,6 +169,26 @@ Pure-redesign iteration (no new FRs). Priority order **redesign-first** per `ope
 
 **G** — (stretch) audit green, `rhi_ownership` / `IJobExecutor` not yet enforced.
 
+## T11: GPU mesh contour — `ContourRenderer` via geometry shader (SPEC §3, FR-app.3 — V3.8b)
+
+**D** — **GPU contour, not CPU `mpr_contour`.** Replace `app/mpr_contour.{hpp,cpp}` CPU `meshPlaneContour` (triangle-plane edge test on `data::Mesh::positions`) + `overlayContour` CPU rasterization with GPU `render::ContourRenderer` (or `SliceRenderer` contour mode) that computes the `plane∩mesh` outline **on GPU** via a geometry shader (clip pattern `slice_clip.geom.glsl` → emit line strip). New `ContourObject{AssetHandle, ClipPlane}` via `ContourMapper` + `ContourRenderer::drawLayer(ContourObject, Camera, DrawContext&)` through `broker/` (`ContourMapper : IMapper<scene::ContourObject, render::ContourObject>`). `Re*` keeps `AssetHandle` only (RE-minimal). `app/mpr_contour.hpp` deleted — MPR contour overlay now comes from `ReView`'s `ContourObject` rendered by `ViewCompositor`, not from CPU `overlayContour` image copy. `SliceRenderer` cross-section capture (`captureCrossSection` + `TransformFeedback` for `FR-render.4`) stays for sliced-mesh fill; contour is its outline-only peer.
+
+**FR:** `FR-app.3` — same ≥90% within 2 px of analytic box curve, now verified via GPU `ContourRenderer` readback (`core::readRgba8` via `utils::PixelReader`, `core/rhi/gl` only) within 1/255, `N>=3`.
+
+**T** — suite green (N>=3, contour): golden box `plane∩mesh` contour via `ContourRenderer` matches analytic rectangle boundary (same 8 triangle-segments, 4 edges) within 1/255; `app/mpr_contour.cpp` gone (`grep "meshPlaneContour|overlayContour" app/ → 0 hits`); `render::ContourRenderer` geometry shader `contour.geom.glsl` compiled (`RE_GLSL_VERSION` 450); `SliceRenderer` slice tests still green (no regression).
+
+**G** — suite green (N>=3), audit green, `mpr_contour` CPU remnants removed, `asset_indirection` still 0 hits.
+
+## T12: Plane rendering via `PlaneRenderer` — no CPU quad parsing (SPEC §3, FR-render.5 — V3.4b)
+
+**D** — **Audit plane path uses `PlaneRenderer`, not CPU-parsed quad.** All textured-plane displays (`plane_sample`, MPR `PlaneObject` via `View`'s `IRenderable` list) go through `render::PlaneRenderer::drawLayer(PlaneScene, Camera, DrawContext&)` (GPU `.glsl` `plane.vert/frag.glsl`, `core::blit` present). No `app/` CPU parsing of `PlaneGeometry` corners/UVs into vertex buffers outside `PlaneRenderer` — `PlaneGeometry::unitQuadXY()` stays in `render/`, `app` sends only `PlaneDesc{AssetRef, transform, presentation}` via `PlaneMapper`. `data::Image → Texture2D` upload stays in `PlaneRenderer::textureFor` (GPU); `imageToRgba8` CPU row-flip is internal to renderer, not app-parsed quad. Remove any `app/` CPU quad vertex generation that bypasses `PlaneRenderer`.
+
+**FR:** `FR-render.5` — textured quad corner/center pixel matches texture sample within 1/255 via `PlaneRenderer` (same gate as `V2` plane, now via `ReView`/`Broker`).
+
+**T** — suite green (N>=3, plane): `PlaneRenderer` quad center pixel matches source gradient within 1/255 via `utils::PixelReader`; `grep -R "PlaneGeometry" app/ --include="*.cpp" --include="*.hpp" | grep -v "mpr_contour"` → only `PlaneDesc`/`PlaneObject` (no quad vertex parsing); `PlaneRenderer` still owns `planeProgram_` + `quadGeometry` (`RE_GLSL_VERSION` 450); MPR `PlaneObject` via `PlaneMapper` still green.
+
+**G** — suite green (N>=3), audit green, no CPU quad parsing outside `render/`.
+
 ## Definition of Done (end-of-loop evidence, finalized at V2-T8 — archived)
 
 - [x] All 8 V2 task gates green (see `COMPLETED_TASKS.md` V2 `V2-T1..V2-T8`); full suite green on a clean tree at the last V2 task.
@@ -176,9 +198,9 @@ Pure-redesign iteration (no new FRs). Priority order **redesign-first** per `ope
 - [x] Documentation map complete: `docs/render.md`, `docs/core.md`, `AGENTS.md`, `docs/spec/env.md`, `tools/env.sh`, `TASKS.md` preamble — exactly as listed per task.
 - [x] Sample smoke set (mesh/plane/volume/slice/oit/mpr) still green.
 
-## Definition of Done (end-of-loop evidence, finalized at T9 — pure-redesign; T10 stretch)
+## Definition of Done (end-of-loop evidence, finalized at T12 — pure-redesign; T10 stretch)
 
-V2 DoD above **plus** (checked at `T9` — `T10` is stretch/deferred):
+V2 DoD above **plus** (checked at `T12` — `T10` is stretch/deferred):
 
 - [ ] `scene/` value library `re::scene` `STATIC` exists with `camera.hpp`/`view.hpp`/`object.hpp` + `SceneStore` (`AssetId` per `T7`) — no `App` prefix, `scene/` links to `data/`+`volume/`+`glm` only (§3.1, `disposition_scene`).
 - [ ] `broker/` `STATIC` exists with `IMapper`/`ICachedMapper` ISP-split + `Broker` `type_index` registry (OCP, no `enum` switch) + `IViewBridge` composing `ViewSynchronizer`+`ViewCompositor` (SRP) — one file per mapper, no god `Translator` (§11.2.1, `broker_per_type`).
@@ -189,6 +211,8 @@ V2 DoD above **plus** (checked at `T9` — `T10` is stretch/deferred):
 - [ ] `SceneStore`-owned `AssetId{generation,contentHash}` via `AssetRegistry<T>` template — same `data::Mesh` deduped to one `AssetId`+one `Handle`, content-hash alias, `data::Mesh` stays pure (see `T7`, §7 addendum).
 - [ ] RE-minimal `render/re_scene/` inventory `docs/re_scene_inventory.md` exists — every `Re*` field rationale `derived|uniform-ready|handle`, no verbatim `app::MaterialDesc` copy (`asset_indirection`).
 - [ ] `T8` note: `IMaterial→Phong` single path kept (PBR/`Slice`/`Contour` + `ILight` deferred — Phong-only non-goal §1) — `TransferFunction` stays beside `VolumeMaterial` (see `T8`, §12.5).
+- [ ] `render::ContourRenderer` GPU contour (`contour.geom.glsl`) via `ContourMapper` — `app/mpr_contour` CPU `meshPlaneContour`/`overlayContour` gone, `FR-app.3` 2 px band still green via GPU readback (see `T11`, §3, geometry shader)
+- [ ] `render::PlaneRenderer` owns all textured-plane draws — no `app/` CPU `PlaneGeometry` quad parsing outside `render/` (see `T12`, §3, `FR-render.5`)
 - [ ] Full audit green including `disposition_scene`, `disposition_render`, `broker_per_type`, `isp_mapper_forbid`, `no_dump_sync`, `asset_indirection`, `broker_app_reach` (plus `scene`/`broker`/`utils` in `AUDIT_SOURCE_DIRS` `io data volume scene core broker render app utils tests`). `rhi_ownership`/`require_only` remain stretch (`T10` deferred — `core|` anchor stays; `core/rhi/gl|` lands with V3.2a skeleton).
 - [ ] `ASan+UBSan` clean on all test binaries (no leaks, no UB, `GALLIUM_DRIVER=llvmpipe` `MESA_GL_VERSION_OVERRIDE=4.6`).
 - [ ] `GPU/readback` gates (`T5` 1280×480 blit, `T6` persistence) verified `N>=3` consecutive green (`tools/logs/*.gate.log` records).
