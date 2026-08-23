@@ -41,6 +41,8 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
+
 #include <functional>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -184,16 +186,17 @@ TEST(T8RenderPlane, CenterPixelMatchesSolidTextureSample) {
     constexpr std::uint8_t kG = 102u; // 0.4 * 255
     constexpr std::uint8_t kB = 204u; // 0.8 * 255
     constexpr std::uint8_t kA = 255u;
-    data::Image image = makeGradientImage(
+    auto image = std::make_shared<data::Image>(makeGradientImage(
         kImageWidth, kImageHeight,
         [kR, kG, kB, kA](int, int) -> std::array<std::uint8_t, 4> {
             return {kR, kG, kB, kA};
-        });
+        }));
 
-    render::PlaneGeometry geometry = render::PlaneGeometry::unitQuadXY();
+    auto geometry = std::make_shared<const render::PlaneGeometry>(
+        render::PlaneGeometry::unitQuadXY());
     render::PlaneScene scene;
     scene.planes.push_back(
-        render::PlaneInstance{&geometry, &image, glm::mat4(1.0f)});
+        render::PlaneInstance{geometry, image, glm::mat4(1.0f)});
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
     render::PlaneRenderer renderer;
@@ -223,11 +226,12 @@ TEST(T8RenderPlane, CornerPixelsMatchGradientTextureSamples) {
     constexpr std::uint8_t kBlue128 = 128u;
     constexpr std::uint8_t kAlpha255 = 255u;
 
-    data::Image image = makeGradientImage();
-    render::PlaneGeometry geometry = render::PlaneGeometry::unitQuadXY();
+    auto image = std::make_shared<data::Image>(makeGradientImage());
+    auto geometry = std::make_shared<const render::PlaneGeometry>(
+        render::PlaneGeometry::unitQuadXY());
     render::PlaneScene scene;
     scene.planes.push_back(
-        render::PlaneInstance{&geometry, &image, glm::mat4(1.0f)});
+        render::PlaneInstance{geometry, image, glm::mat4(1.0f)});
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
     render::PlaneRenderer renderer;
@@ -275,11 +279,12 @@ TEST(T8RenderPlane, CenterPixelMatchesGradientWithRowFlip) {
     constexpr std::uint8_t kB = 128u;
     constexpr std::uint8_t kA = 255u;
 
-    data::Image image = makeGradientImage();
-    render::PlaneGeometry geometry = render::PlaneGeometry::unitQuadXY();
+    auto image = std::make_shared<data::Image>(makeGradientImage());
+    auto geometry = std::make_shared<const render::PlaneGeometry>(
+        render::PlaneGeometry::unitQuadXY());
     render::PlaneScene scene;
     scene.planes.push_back(
-        render::PlaneInstance{&geometry, &image, glm::mat4(1.0f)});
+        render::PlaneInstance{geometry, image, glm::mat4(1.0f)});
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
     render::PlaneRenderer renderer;
@@ -335,15 +340,16 @@ TEST(T8RenderPlane, RotatedPlaneMapsTextureAnalytically) {
     constexpr std::uint8_t kBlue128 = 128u;
     constexpr std::uint8_t kAlpha255 = 255u;
 
-    data::Image image = makeGradientImage();
-    render::PlaneGeometry geometry = render::PlaneGeometry::unitQuadXY();
+    auto image = std::make_shared<data::Image>(makeGradientImage());
+    auto geometry = std::make_shared<const render::PlaneGeometry>(
+        render::PlaneGeometry::unitQuadXY());
 
     glm::mat4 model(1.0f);
     model =
         glm::rotate(model, glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
     render::PlaneScene scene;
-    scene.planes.push_back(render::PlaneInstance{&geometry, &image, model});
+    scene.planes.push_back(render::PlaneInstance{geometry, image, model});
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
     render::PlaneRenderer renderer;

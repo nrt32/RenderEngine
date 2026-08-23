@@ -45,16 +45,25 @@ class SceneStore {
     uint64_t addVolumeSliceObject(VolumeSliceObject obj);
     uint64_t addPlaneObject(PlaneObject obj);
 
-    /// Getters — nullptr if not found or generation mismatch (stale handle is nullptr).
-    const MeshObject* getMeshObject(uint64_t id) const noexcept;
-    const MeshSliceObject* getMeshSliceObject(uint64_t id) const noexcept;
-    const VolumeObject* getVolumeObject(uint64_t id) const noexcept;
-    const VolumeSliceObject* getVolumeSliceObject(uint64_t id) const noexcept;
-    const PlaneObject* getPlaneObject(uint64_t id) const noexcept;
+    /// Getters — borrow into the store's OWNED storage. Nullptr if
+    /// not found or generation mismatch (stale handle is nullptr).
+    ///
+    /// @note lifetime: the SceneStore owns every object value (its member
+    /// maps); a returned pointer is valid only until the next store mutation
+    /// (add/remove/erase rehashes or erases the entry). Never delete through
+    /// it; never retain it across mutations.
+    const MeshObject* /*borrow*/ getMeshObject(uint64_t id) const noexcept;
+    const MeshSliceObject* /*borrow*/ getMeshSliceObject(uint64_t id) const noexcept;
+    const VolumeObject* /*borrow*/ getVolumeObject(uint64_t id) const noexcept;
+    const VolumeSliceObject* /*borrow*/ getVolumeSliceObject(uint64_t id) const noexcept;
+    const PlaneObject* /*borrow*/ getPlaneObject(uint64_t id) const noexcept;
 
     /// Mutable getters for mutation (bump via bump()).
-    MeshObject* getMeshObjectMut(uint64_t id) noexcept;
-    VolumeObject* getVolumeObjectMut(uint64_t id) noexcept;
+    ///
+    /// @note lifetime: same store-owned storage borrow as the const getters
+    /// above — valid until the next add/remove/erase on this store.
+    MeshObject* /*borrow*/ getMeshObjectMut(uint64_t id) noexcept;
+    VolumeObject* /*borrow*/ getVolumeObjectMut(uint64_t id) noexcept;
 
     /// Remove by id; bumps storeGen; retains generation tombstone for stale detection.
     /// Returns true if existed.
@@ -82,10 +91,14 @@ class SceneStore {
     std::vector<FieldId> dirtyFieldsSince(uint64_t lastGen) const noexcept;
 
     // --- Asset identity V3.6 (T7) — SceneStore-owned AssetId -----------------
-    /// Register mesh asset; dedup by content hash (identical bytes alias).
-    data::Result<AssetId> registerMeshAsset(const data::Mesh& mesh);
-    /// Resolve AssetId to live mesh pointer; stale generation+1 → code 2.
-    data::Result<const data::Mesh*> resolveMeshAsset(AssetId id) const;
+    /// Register mesh asset (the store takes a SHARED reference — co-ownership
+    /// with the caller, T13); dedup by content hash (identical bytes alias).
+    data::Result<AssetId> registerMeshAsset(
+        AssetRegistry<data::Mesh>::SharedAsset mesh);
+    /// Resolve AssetId to its live asset as a SHARED reference (co-owned —
+    /// no borrow to track, T13); stale generation+1 → code 2.
+    data::Result<AssetRegistry<data::Mesh>::SharedAsset> resolveMeshAsset(
+        AssetId id) const;
     /// Free asset slot; bumps generation.
     data::Result<void> unregisterMeshAsset(AssetId id);
     /// Live mesh asset count (distinct content hashes).
@@ -145,8 +158,13 @@ class ViewStore {
 
     /// Add view; returns stable id. Bumps storeGen.
     uint64_t addView(View view);
-    const View* getView(uint64_t id) const noexcept;
-    View* getViewMut(uint64_t id) noexcept;
+    /// Borrow into the store's OWNED storage.
+    /// @note lifetime: the ViewStore owns every view value (its member map);
+    /// a returned pointer is valid only until the next add/remove mutation on
+    /// this store. Never delete through it.
+    const View* /*borrow*/ getView(uint64_t id) const noexcept;
+    /// @note lifetime: same ViewStore-owned storage borrow as getView().
+    View* /*borrow*/ getViewMut(uint64_t id) noexcept;
     bool removeView(uint64_t id) noexcept;
 
     uint64_t storeGeneration() const noexcept { return storeGen_; }

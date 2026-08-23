@@ -100,5 +100,32 @@ asset_indirection	forbid_grep	data::Mesh::positions|data::VolumeDataset::voxels	
 # Review-only until V3.2 ViewBridge lands.
 broker_app_reach	forbid_grep	broker.*IMapper|broker.*Mapper.*translate	app must not hold a broker mapper handle directly (use ViewBridge façade)
 
+# --- Ownership discipline (T13, user mandate 2026-08-23) ----------------------
+# No raw pointers where ownership/lifetime matters. scene/, broker/ and app/
+# must not DECLARE a raw pointer (members, parameters, returns, locals) unless
+# the borrow is explicitly marked by writing the marker comment between the
+# star and the identifier:
+#
+#     Type* /*borrow*/ name
+#
+# A marked borrow MUST also carry a Doxygen `@note lifetime:` tag naming its
+# owner (review-gate enforced; see docs/spec/guardrails.md "Ownership
+# discipline"). The marker breaks the mechanical pattern below, so the
+# allowlist of documented borrows is exactly the set of `/*borrow*/` sites,
+# each individually reviewable via `rg '/\*borrow\*/'`. Everything else uses
+# unique_ptr (sole owner), shared_ptr (shared owner), weak_ptr (observer), or
+# a generational handle (AssetHandle / AssetId). The rule scans .hpp AND .cpp:
+# sample classes define members in app/*.cpp, and scope-bounded borrows there
+# are just as visible and just as markable.
+#
+# Pattern: `(const )?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]` — an identifier
+# starting with an uppercase letter, star attached to it, then a lowercase
+# name (this project's `Type* name` pointer style). Map-key/template-argument
+# stars (`Map<Key*, Value>`) do NOT match (followed by ',' or '>'), and
+# multiplication (`A * b`) does not match (space before the star).
+ownership_raw_ptr_scene	forbid_inside	scene|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]	scene/ must not declare unmarked raw pointers — mark documented borrows `Type* /*borrow*/ name` + @note lifetime: owner, or use smart/handle types
+ownership_raw_ptr_broker	forbid_inside	broker|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]	broker/ must not declare unmarked raw pointers — mark documented borrows `Type* /*borrow*/ name` + @note lifetime: owner, or use smart/handle types
+ownership_raw_ptr_app	forbid_inside	app|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]	app/ must not declare unmarked raw pointers — mark documented borrows `Type* /*borrow*/ name` + @note lifetime: owner, or use smart/handle types
+
 # --- Build hygiene (generic, reinforce here) -----------------------------------
 # (built-in checks already cover warning-suppression flags/pragmas)

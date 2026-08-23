@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <memory>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -141,9 +142,9 @@ TEST(T1SceneStore, AddRemovePreservesGenerationBump) {
     scene::SceneStore store;
     EXPECT_EQ(store.storeGeneration(), 0u) << "initial storeGen must be 0 (explainable constant)";
 
-    auto mesh = makeDummyMesh();
+    auto mesh = std::make_shared<data::Mesh>(makeDummyMesh());
     scene::MeshObject obj;
-    obj.mesh = &mesh;
+    obj.mesh = mesh; // shared asset reference (T13)
     obj.transform = glm::mat4{1.0f};
 
     uint64_t id1 = store.addMeshObject(obj);
@@ -177,9 +178,9 @@ TEST(T1SceneStore, AddRemovePreservesGenerationBump) {
 
 TEST(T1SceneStore, VolumeAndPlaneAddRemove) {
     scene::SceneStore store;
-    auto vol = makeDummyVolume();
+    auto vol = std::make_shared<data::VolumeDataset>(makeDummyVolume());
     scene::VolumeObject vobj;
-    vobj.volume = &vol;
+    vobj.volume = vol; // shared asset reference (T13)
     uint64_t vid = store.addVolumeObject(vobj);
     EXPECT_EQ(store.storeGeneration(), 1u);
     EXPECT_NE(store.getVolumeObject(vid), nullptr);
@@ -192,9 +193,9 @@ TEST(T1SceneStore, VolumeAndPlaneAddRemove) {
 TEST(T1SceneStore, DirtyFieldsSince) {
     scene::SceneStore store;
     EXPECT_TRUE(store.dirtyFieldsSince(0).empty()) << "no dirty when storeGen==lastGen (0==0)";
-    auto mesh = makeDummyMesh();
+    auto mesh = std::make_shared<data::Mesh>(makeDummyMesh());
     scene::MeshObject obj;
-    obj.mesh = &mesh;
+    obj.mesh = mesh; // shared asset reference (T13)
     store.addMeshObject(obj);
     auto dirty = store.dirtyFieldsSince(0);
     // Bounded set: implementation returns exactly 4 fields (Transform, Material, TransferFunction, Items) when storeGen != lastGen.
@@ -296,9 +297,9 @@ TEST(T1ScenePlaneDesc, SpaceAndGeneration) {
 }
 
 TEST(T1SceneObject, PureValueCopyable) {
-    auto mesh = makeDummyMesh();
+    auto mesh = std::make_shared<data::Mesh>(makeDummyMesh());
     scene::MeshObject a;
-    a.mesh = &mesh;
+    a.mesh = mesh; // shared asset reference (T13)
     a.transform = glm::translate(glm::mat4{1.0f}, glm::vec3{1, 2, 3});
     scene::MeshObject b = a; // copyable
     EXPECT_EQ(b.mesh, a.mesh);

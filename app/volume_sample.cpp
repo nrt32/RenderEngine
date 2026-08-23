@@ -65,9 +65,10 @@ class VolumeSample final : public re::app::ISample {
    public:
     VolumeSample(re::data::VolumeDataset dataset,
                  re::volume::TransferFunction tf)
-        : dataset_(std::move(dataset)), tf_(std::move(tf)) {
-        scene_.volumes.push_back(
-            re::render::VolumeInstance{&dataset_, &tf_, glm::mat4(1.0f)});
+        : dataset_(std::make_shared<re::data::VolumeDataset>(std::move(dataset))),
+          tf_(std::move(tf)) {
+        scene_.volumes.push_back(re::render::VolumeInstance{
+            dataset_, tf_, glm::mat4(1.0f)}); // dataset shared, TF by value (T13)
 
         const glm::vec3 center(0.5f, 0.5f, 0.5f);
         camera_.position = glm::vec3(0.5f, 0.5f, 3.0f);
@@ -102,7 +103,7 @@ class VolumeSample final : public re::app::ISample {
     }
 
    private:
-    re::data::VolumeDataset dataset_;
+    std::shared_ptr<re::data::VolumeDataset> dataset_;
     re::volume::TransferFunction tf_;
     re::render::VolumeScene scene_;
     re::render::Camera camera_;

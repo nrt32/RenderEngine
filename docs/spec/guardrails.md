@@ -55,5 +55,33 @@
   repeat across loaders/renderers/broker; consumers disambiguate via the
   domain tag on `data::Error`, never by string-parsing messages. Failed
   `Result` dereference asserts in debug builds. *Review gate; T22.*
+- **Ownership discipline (T13, user mandate 2026-08-23)** — no raw pointers
+  where ownership/lifetime matters. The ownership tool ladder:
+  `unique_ptr` for sole owners (Broker's mappers, ReView's IRenderable items),
+  shared handles for wiring whose participants must cross-reference each other
+  (`ViewBridge` holds `shared_ptr` synchronizer/compositor precisely so the
+  synchronizer can hold a real `weak_ptr` OBSERVER of its compositor — the
+  textbook mutual-back-pointer fix; the bridge is the composition root and the
+  only external owner), generational handles
+  for GPU resources (`AssetHandle` into the shared registry — matches the
+  industry-standard handle-based model; atomic refcount churn per frame and
+  post-teardown zombie resources are documented pitfalls of
+  smart-pointer-everywhere GPU designs), `shared_ptr` ONLY for genuinely
+  shared CPU-side assets across layers (immutable `data::Mesh` /
+  `VolumeDataset` / `Image` co-owned by scene objects, stores and RE
+  instances via `scene::AssetRef<T>`), `std::weak_ptr` for observers (GPU
+  texture caches keyed by weak asset observers so a destroyed asset's cache
+  key expires with it; mutual wiring back-pointers such as
+  ViewSynchronizer→ViewCompositor). Raw pointers survive only as **marked
+  borrows** — structurally scope-bounded (call-scoped destination
+  framebuffer, store-getter storage borrow) — written `Type* /*borrow*/
+  name` with a Doxygen `@note lifetime:` tag naming its owner. Renderer
+  constructor injection takes shared handles and validates them per draw
+  (null registry → typed error code 4), so sample member declaration order
+  can never silently break initialization — the worst case is a loud typed
+  error. *Audit: `ownership_raw_ptr_scene` / `ownership_raw_ptr_broker` /
+  `ownership_raw_ptr_app` (`forbid_inside`, unmarked raw-pointer
+  declarations fail; the marked-borrow sites are the reviewable allowlist).*
+  Notation: NAMING_CONVENTIONS §8b.
 - **Build hygiene** — warnings-as-errors, no warning-suppression flags/pragmas
   (generic built-in checks).

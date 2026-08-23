@@ -29,7 +29,8 @@ namespace re::scene {
 /// - TypeHash: hash of TypeIndex (stable type identity, added V3.5 to complete
 ///   CompositeKey{Version,LayoutId,ViewId,Type,Gen,Hash} per SPEC §10.1).
 struct CompositeKey {
-    /// Schema version — bump when Re* field inventory or hash algorithm changes.
+    /// Schema version — bump whenever the render-side field inventory or the
+    /// hash algorithm changes, invalidating every cached key.
     uint32_t version{1};
     /// Owning layout/page scope.
     uint64_t layoutId{0};

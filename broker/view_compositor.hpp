@@ -24,9 +24,14 @@
 namespace re::broker {
 
 /// View compositor — dispatch/present side of IViewBridge (SRP via composition).
+///
+/// Ownership (T13): the Broker is a SHARED reference (co-owned wiring); the
+/// ReViews in `views_` are SOLELY OWNED (`unique_ptr`) — accessors returning
+/// raw View pointers are documented non-owning views over that storage.
 class ViewCompositor {
    public:
-    explicit ViewCompositor(Broker* broker) : broker_(broker) {}
+    explicit ViewCompositor(std::shared_ptr<Broker> broker)
+        : broker_(std::move(broker)) {}
 
     // --- ReView lifetime (persistence by CompositeKey stable part) ------------
 
@@ -49,12 +54,19 @@ class ViewCompositor {
     };
 
     /// Get existing ReView by stable key (or nullptr).
-    render::View* getView(uint64_t layoutId, uint64_t viewId) noexcept;
-    const render::View* getView(uint64_t layoutId, uint64_t viewId) const noexcept;
+    /// @note lifetime: non-owning view over compositor-owned `unique_ptr`
+    /// storage (views_) — valid until the ReView is pruned/cleared or the
+    /// compositor dies; never delete through it.
+    render::View* /*borrow*/ getView(uint64_t layoutId, uint64_t viewId) noexcept;
+    /// @note lifetime: same views_-owned storage borrow as the non-const
+    /// getView().
+    const render::View* /*borrow*/ getView(uint64_t layoutId, uint64_t viewId) const noexcept;
 
     /// Ensure ReView exists for appView (create if missing, otherwise return existing).
     /// Returned pointer is stable identity (same &ReView across syncs when layoutId+viewId same).
-    render::View* ensureView(uint64_t layoutId, const scene::View& appView);
+    /// @note lifetime: same views_-owned storage borrow as getView() —
+    /// identity-stable across syncs while layoutId+viewId are unchanged.
+    render::View* /*borrow*/ ensureView(uint64_t layoutId, const scene::View& appView);
 
     /// Prune ReViews for a layout to activeViewIds set (layout count/set change -> insert/erase).
     void pruneLayout(uint64_t layoutId, const std::vector<uint64_t>& activeViewIds);
@@ -71,13 +83,15 @@ class ViewCompositor {
     data::Result<void> renderAll();
 
     /// Present already-rendered ReViews via core::blit to destination.
-    data::Result<void> presentAll(core::Framebuffer* destination);
+    /// @note lifetime: `destination` is borrowed for the DURATION OF THIS
+    /// CALL only (null = window default framebuffer); owned by the caller.
+    data::Result<void> presentAll(core::Framebuffer* /*borrow*/ destination);
 
     /// For determinism: clear all cached ReViews.
     void clear() noexcept;
 
    private:
-    Broker* broker_;
+    std::shared_ptr<Broker> broker_;
     std::unordered_map<StableKey, std::unique_ptr<render::View>, StableKeyHash> views_{};
 };
 

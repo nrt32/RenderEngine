@@ -23,6 +23,8 @@
 // expresses its slice plane in that display frame (see app/mpr_sample.cpp).
 // No raw gl* (guardrail gpu_api_ownership — render/ owns GL via core/).
 
+#include <memory>
+
 #include "broker/i_mapper.hpp"
 #include "render/asset_registry.hpp"
 #include "render/contour_renderer.hpp"
@@ -40,23 +42,27 @@ class ContourMapper : public IMapper<scene::ContourObject,
     using AppType = scene::ContourObject;
     using ReType = render::ContourObject;
 
-    /// Construct with the shared asset registry (must outlive mapper).
-    explicit ContourMapper(render::AssetRegistry* registry)
-        : registry_(registry) {}
+    /// Construct with the shared asset registry (SHARED ownership, T13 —
+    /// co-owned with the renderers and other mappers; can never dangle).
+    explicit ContourMapper(std::shared_ptr<render::AssetRegistry> registry)
+        : registry_(std::move(registry)) {}
 
     /// Pure translation: registers the mesh in the AssetRegistry (deduped by
     /// CPU-object identity) and carries plane/color/model across. Typed
-    /// errors: code 1 null mesh pointer; code 2 null AssetRegistry; code 3
+    /// errors: code 1 null mesh reference; code 2 null AssetRegistry; code 3
     /// Space::VoxelIndex plane (voxel→world conversion not performed here).
     data::Result<render::ContourObject> map(
         const scene::ContourObject& app,
         const scene::TranslateContext& ctx) const override;
 
-    /// Access registry (for test dedup invariant — slotCount).
-    render::AssetRegistry* registry() const noexcept { return registry_; }
+    /// Access registry (for test dedup invariant — slotCount). Shared handle:
+    /// the mapper co-owns it (non-null unless constructed with nullptr).
+    const std::shared_ptr<render::AssetRegistry>& registry() const noexcept {
+        return registry_;
+    }
 
    private:
-    render::AssetRegistry* registry_;
+    std::shared_ptr<render::AssetRegistry> registry_;
 };
 
 } // namespace re::broker

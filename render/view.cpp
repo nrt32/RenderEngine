@@ -51,7 +51,7 @@ data::Result<void> View::render(core::DrawContext& ctx) {
     return data::Result<void>(data::value);
 }
 
-data::Result<void> View::blitTo(core::Framebuffer* destination) const {
+data::Result<void> View::blitTo(core::Framebuffer* /*borrow*/ destination) const {
     if (!target_.has_value()) {
         return data::makeError<void>(3, "View: target not created (call ensureTarget/render first)");
     }

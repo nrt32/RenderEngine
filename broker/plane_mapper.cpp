@@ -1,24 +1,27 @@
 // broker/plane_mapper.cpp — PlaneMapper pure translation (no raw gl*).
 //
 // The shared unit quad: one program-duration PlaneGeometry built once from
-// render::PlaneGeometry::unitQuadXY() and lent to every mapped instance. A
-// function-local static (not a mapper member) keeps the borrow valid for the
-// whole run regardless of mapper copy/move/destroy order, so a mapped
-// render::PlaneInstance can never dangle through broker lifetime choices; the
-// geometry is immutable after construction (all corners/UVs/normal analytic —
-// see the unitQuadXY contract in render/plane_renderer.hpp), so sharing it
-// across instances and mappers is race-free in the engine's single-threaded
-// draw model.
+// render::PlaneGeometry::unitQuadXY() and SHARED (T13 shared_ptr, not lent by
+// raw pointer) into every mapped instance. A function-local static holds the
+// owning reference for the whole run regardless of mapper copy/move/destroy
+// order; each mapped render::PlaneInstance co-owns a reference, so an
+// instance can never outlive its geometry. The geometry is immutable after
+// construction (all corners/UVs/normal analytic — see the unitQuadXY contract
+// in render/plane_renderer.hpp), so sharing it across instances and mappers
+// is race-free in the engine's single-threaded draw model.
 
 #include "broker/plane_mapper.hpp"
+
+#include <memory>
 
 namespace re::broker {
 namespace {
 
-/// The program-duration shared unit quad every mapped instance points at.
-const render::PlaneGeometry& sharedUnitQuad() {
-    static const render::PlaneGeometry kUnit =
-        render::PlaneGeometry::unitQuadXY();
+/// The program-duration shared unit quad every mapped instance references.
+const std::shared_ptr<const render::PlaneGeometry>& sharedUnitQuad() {
+    static const auto kUnit =
+        std::make_shared<const render::PlaneGeometry>(
+            render::PlaneGeometry::unitQuadXY());
     return kUnit;
 }
 
@@ -27,13 +30,13 @@ const render::PlaneGeometry& sharedUnitQuad() {
 data::Result<render::PlaneInstance> PlaneMapper::map(
     const scene::PlaneObject& app,
     const scene::TranslateContext& /*ctx*/) const {
-    if (app.image == nullptr) {
+    if (!app.image) {
         return data::makeError<render::PlaneInstance>(
-            1, "PlaneMapper: null image pointer");
+            1, "PlaneMapper: null image asset reference");
     }
     render::PlaneInstance out;
-    out.geometry = &sharedUnitQuad();
-    out.image = app.image;
+    out.geometry = sharedUnitQuad(); // shared ownership — instance co-owns
+    out.image = app.image;           // shared ownership — instance co-owns
     out.model = app.transform;
     return data::makeValue<render::PlaneInstance>(out);
 }

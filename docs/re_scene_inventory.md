@@ -23,7 +23,7 @@ Reference header this iteration: `render/re_scene/mesh_object.hpp` exposes
 | mesh | `AssetHandle` | handle | `scene::MeshObject::mesh` → `AssetRegistry::registerAsset` handle `{index,generation}` (content-hash dedup T7); never `data::Mesh::positions` copy |
 | model | `glm::mat4` | uniform-ready | `scene::MeshObject::transform` directly as `uModel` uniform (no conversion) |
 | bounds | `Aabb` | derived | `model * data::Mesh::bounds()` → world-space AABB `worldBounds` for culling/picking (RE needs world, not local) |
-| material | `const IMaterial*` | handle | `scene::MeshMaterialDesc` → `ReMaterial*` via `MaterialMapper` value-hash dedup (never verbatim desc); `PhongMaterial*` today |
+| material | `shared_ptr<IMaterial>` | handle | `scene::MeshMaterialDesc` → shared deduped material via `MaterialMapper` value-hash dedup (never verbatim desc); `PhongMaterial` today. T13: shared ownership, no raw borrow |
 
 ---
 

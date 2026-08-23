@@ -132,9 +132,13 @@ class AssetRegistry {
     /// and generation (0 = never allocated; bumped on every free and reuse).
     /// `cpuObject` is the diagnostic pointer shim retained in V3.6 dual-key
     /// mode (not the dedup key — `contentHash` is).
+    /// @note lifetime: `cpuObject` borrows the CALLER-owned CPU mesh purely
+    /// for diagnostics; entries keyed by it are erased in unregister(), and
+    /// the registry never dereferences or frees it (the CPU mesh stays
+    /// RE-agnostic, SPEC §7).
     struct Slot {
         std::unique_ptr<MeshGeometry> geometry;
-        const data::Mesh* cpuObject = nullptr;
+        const data::Mesh* /*borrow*/ cpuObject = nullptr;
         std::uint64_t contentHash{0u};
         std::uint32_t generation = 0u;
     };

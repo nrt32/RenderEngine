@@ -26,20 +26,30 @@ namespace re::broker {
 /// Single responsibility is orchestration: delegates sync()->synchronizer,
 /// renderAll()/presentAll()->compositor. App code path uses only IViewBridge&
 /// (app never calls CameraMapper etc. directly).
+///
+/// Ownership (T13): the bridge is the only external owner of both
+/// collaborators (`shared_ptr` handles — the shared control block exists so
+/// the synchronizer can hold a real `weak_ptr` OBSERVER of its compositor,
+/// the textbook mutual-back-pointer fix). No other component may retain these
+/// handles: the bridge is the composition root.
 class ViewBridge : public IViewBridge {
    public:
-    /// Construct with explicit synchronizer/compositor (SRP injection).
-    ViewBridge(std::unique_ptr<ViewSynchronizer> sync,
-               std::unique_ptr<ViewCompositor> comp)
+    /// Construct with explicit synchronizer/compositor (SRP injection). The
+    /// bridge takes ownership of both and wires the (weak) compositor
+    /// back-pointer on the synchronizer.
+    ViewBridge(std::shared_ptr<ViewSynchronizer> sync,
+               std::shared_ptr<ViewCompositor> comp)
         : sync_(std::move(sync)), comp_(std::move(comp)) {
-        if (sync_ && comp_) sync_->setCompositor(comp_.get());
+        if (sync_ && comp_) sync_->setCompositor(comp_);
     }
 
     /// Convenience: build from Broker (creates default synchronizer+compositor).
-    explicit ViewBridge(Broker* broker)
-        : sync_(std::make_unique<ViewSynchronizer>(broker, nullptr)),
-          comp_(std::make_unique<ViewCompositor>(broker)) {
-        sync_->setCompositor(comp_.get());
+    /// @note lifetime: `broker` is a SHARED reference co-owned by both
+    /// collaborators — wiring can never outlive it.
+    explicit ViewBridge(std::shared_ptr<Broker> broker)
+        : sync_(std::make_unique<ViewSynchronizer>(broker)),
+          comp_(std::make_unique<ViewCompositor>(std::move(broker))) {
+        sync_->setCompositor(comp_);
     }
 
     data::Result<void> sync(std::span<const scene::View> views,
@@ -55,16 +65,23 @@ class ViewBridge : public IViewBridge {
 
     data::Result<void> renderAll() override { return comp_->renderAll(); }
 
-    data::Result<void> presentAll(core::Framebuffer* destination) override {
+    /// @note lifetime: `destination` is a call-scoped borrow (see
+    /// ViewCompositor::presentAll).
+    data::Result<void> presentAll(core::Framebuffer* /*borrow*/ destination) override {
         return comp_->presentAll(destination);
     }
 
-    ViewSynchronizer* synchronizer() noexcept { return sync_.get(); }
-    ViewCompositor* compositor() noexcept { return comp_.get(); }
+    /// Non-owning views over bridge-owned storage.
+    /// @note lifetime: both collaborators are solely owned by this bridge
+    /// (shared handles so the synchronizer can observe the compositor weakly
+    /// — see the class comment); the returned aliases are valid while the
+    /// bridge is. Never delete through them.
+    ViewSynchronizer* /*borrow*/ synchronizer() noexcept { return sync_.get(); }
+    ViewCompositor* /*borrow*/ compositor() noexcept { return comp_.get(); }
 
    private:
-    std::unique_ptr<ViewSynchronizer> sync_;
-    std::unique_ptr<ViewCompositor> comp_;
+    std::shared_ptr<ViewSynchronizer> sync_;
+    std::shared_ptr<ViewCompositor> comp_;
 };
 
 } // namespace re::broker

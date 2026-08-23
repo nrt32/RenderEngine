@@ -106,7 +106,7 @@ data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
         freeIndices_.pop_back();
         Slot& slot = slots_[index];
         slot.geometry = std::make_unique<MeshGeometry>(std::move(*geometry));
-        slot.cpuObject = &mesh;
+        slot.cpuObject = &mesh; // diagnostic borrow (see Slot @note lifetime)
         slot.contentHash = hash;
         ++slot.generation;
     } else {
@@ -114,7 +114,7 @@ data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
         // handle marker).
         Slot slot;
         slot.geometry = std::make_unique<MeshGeometry>(std::move(*geometry));
-        slot.cpuObject = &mesh;
+        slot.cpuObject = &mesh; // diagnostic borrow (see Slot @note lifetime)
         slot.contentHash = hash;
         ++slot.generation;
         index = slots_.size();

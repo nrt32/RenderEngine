@@ -71,21 +71,22 @@ class MeshSample final : public re::app::ISample {
    public:
     explicit MeshSample(re::data::Mesh mesh)
         : mesh_(std::move(mesh)),
-          material_(glm::vec4(0.85f, 0.45f, 0.15f, 1.0f)),
+          material_(std::make_shared<re::render::PhongMaterial>(
+              glm::vec4(0.85f, 0.45f, 0.15f, 1.0f))),
           camera_(makeFramingCamera(mesh_)) {
         // Register the mesh once with the shared registry (SPEC §9 V2.5): the
         // scene carries its AssetHandle, resolved by the renderer. The window
         // (and thus a GL context) exists before the sample is constructed, so
         // the upload succeeds; on the impossible failure the scene stays empty
         // and the sample degrades gracefully (logged, never silent).
-        const auto handle = registry_.registerAsset(mesh_);
+        const auto handle = registry_->registerAsset(mesh_);
         if (handle.failed()) {
             spdlog::error("mesh sample: failed to register mesh: {}",
                           handle.error().message);
             return;
         }
         scene_.meshes.push_back(
-            re::render::MeshInstance{*handle, &material_, glm::mat4(1.0f)});
+            re::render::MeshInstance{*handle, material_, glm::mat4(1.0f)});
     }
 
     re::data::Result<void> renderFrame(int width, int height) override {
@@ -110,14 +111,16 @@ class MeshSample final : public re::app::ISample {
 
    private:
     re::data::Mesh mesh_;
-    re::render::PhongMaterial material_;
+    std::shared_ptr<re::render::PhongMaterial> material_;
     re::render::Camera camera_;
-    // The shared asset registry (SPEC §9 V2.5): owns the mesh's GPU geometry;
-    // declared before the renderer so `&registry_` is valid at its
-    // construction.
-    re::render::AssetRegistry registry_;
+    // Shared asset registry (SPEC §9 V2.5, T13): self-initializing NSDMI, so
+    // the renderer group below has NO declaration-order hazard — it holds a
+    // shared reference and validates it per draw (a null registry would fail
+    // with typed error code 4, never crash).
+    std::shared_ptr<re::render::AssetRegistry> registry_{
+        std::make_shared<re::render::AssetRegistry>()};
     re::render::MeshScene scene_;
-    re::render::MeshRenderer renderer_{&registry_};
+    re::render::MeshRenderer renderer_{registry_};
 };
 
 } // namespace

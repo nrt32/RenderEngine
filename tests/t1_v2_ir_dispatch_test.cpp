@@ -279,19 +279,20 @@ TEST(T1V2IrDispatch, SceneVariantHoldsTheScenePointer) {
 // ---------------------------------------------------------------------------
 
 TEST(T1V2IrDispatch, MeshDispatchRendersGoldenQuad) {
-    render::PhongMaterial material(kBaseColor);
+    auto material =
+        std::make_shared<render::PhongMaterial>(kBaseColor);
     data::Mesh quad = makeQuadMesh();
     // The scene carries the mesh's AssetHandle (SPEC §9 V2.5); the renderer
     // resolves it through the shared registry.
-    render::AssetRegistry registry;
-    const auto handle = registry.registerAsset(quad);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, material, glm::mat4(1.0f)});
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-    render::MeshRenderer renderer(&registry);
+    render::MeshRenderer renderer(registry);
     render::IRenderer& iface = renderer;
     const render::Scene dispatchScene = &scene;
 
@@ -312,11 +313,12 @@ TEST(T1V2IrDispatch, MeshDispatchRendersGoldenQuad) {
 // ---------------------------------------------------------------------------
 
 TEST(T1V2IrDispatch, PlaneDispatchRendersSolidImage) {
-    data::Image image = makeSolidImage();
-    render::PlaneGeometry geometry = render::PlaneGeometry::unitQuadXY();
+    auto image = std::make_shared<data::Image>(makeSolidImage());
+    auto geometry = std::make_shared<const render::PlaneGeometry>(
+        render::PlaneGeometry::unitQuadXY());
     render::PlaneScene scene;
     scene.planes.push_back(
-        render::PlaneInstance{&geometry, &image, glm::mat4(1.0f)});
+        render::PlaneInstance{geometry, image, glm::mat4(1.0f)});
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
     render::PlaneRenderer renderer;
@@ -340,9 +342,9 @@ TEST(T1V2IrDispatch, PlaneDispatchRendersSolidImage) {
 // ---------------------------------------------------------------------------
 
 TEST(T1V2IrDispatch, VolumeDispatchRendersAnalyticRayCast) {
-    data::VolumeDataset dataset = makeUniformDataset();
+    auto dataset = std::make_shared<const data::VolumeDataset>(makeUniformDataset());
     volume::TransferFunction tf = makeGreenTransferFunction();
-    render::VolumeInstance instance{&dataset, &tf, glm::mat4(1.0f)};
+    render::VolumeInstance instance{dataset, tf, glm::mat4(1.0f)}; // shared + by value (T13)
     render::VolumeScene scene;
     scene.volumes.push_back(instance);
 
@@ -370,18 +372,19 @@ TEST(T1V2IrDispatch, VolumeDispatchRendersAnalyticRayCast) {
 
 TEST(T1V2IrDispatch, SliceDispatchRendersClippedCube) {
     data::Mesh cube = makeCubeMesh();
-    render::AssetRegistry registry;
-    const auto handle = registry.registerAsset(cube);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    const auto handle = registry->registerAsset(cube);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
-    render::PhongMaterial material(kBaseColor);
+    auto material =
+        std::make_shared<render::PhongMaterial>(kBaseColor);
     render::SliceScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, material, glm::mat4(1.0f)});
     scene.plane.normal = kPlaneNormal;
     scene.plane.point = kPlanePoint;
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-    render::SliceRenderer renderer(&registry);
+    render::SliceRenderer renderer(registry);
     render::IRenderer& iface = renderer;
     const render::Scene dispatchScene = &scene;
 
@@ -398,13 +401,14 @@ TEST(T1V2IrDispatch, SliceDispatchRendersClippedCube) {
 
 TEST(T1V2IrDispatch, SliceDispatchUsesSceneCarriedPlane) {
     data::Mesh cube = makeCubeMesh();
-    render::AssetRegistry registry;
-    const auto handle = registry.registerAsset(cube);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    const auto handle = registry->registerAsset(cube);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
-    render::PhongMaterial material(kBaseColor);
+    auto material =
+        std::make_shared<render::PhongMaterial>(kBaseColor);
     render::SliceScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, material, glm::mat4(1.0f)});
     // Plane z = 2 (normal +Z, point (0,0,2); kept side z >= 2). The cube tops
     // out at z = 1 < 2, so every triangle is clipped away and the target stays
     // at its clear color (transparent black) — proving the dispatch path uses
@@ -413,7 +417,7 @@ TEST(T1V2IrDispatch, SliceDispatchUsesSceneCarriedPlane) {
     scene.plane.point = glm::vec3(0.0f, 0.0f, 2.0f);
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-    render::SliceRenderer renderer(&registry);
+    render::SliceRenderer renderer(registry);
     render::IRenderer& iface = renderer;
     const render::Scene dispatchScene = &scene;
 
@@ -434,14 +438,15 @@ TEST(T1V2IrDispatch, SliceDispatchUsesSceneCarriedPlane) {
 // ---------------------------------------------------------------------------
 
 TEST(T1V2IrDispatch, MeshRendererRejectsWrongSceneKind) {
-    data::Image image = makeSolidImage();
-    render::PlaneGeometry geometry = render::PlaneGeometry::unitQuadXY();
+    auto image = std::make_shared<data::Image>(makeSolidImage());
+    auto geometry = std::make_shared<const render::PlaneGeometry>(
+        render::PlaneGeometry::unitQuadXY());
     render::PlaneScene planeScene;
     planeScene.planes.push_back(
-        render::PlaneInstance{&geometry, &image, glm::mat4(1.0f)});
+        render::PlaneInstance{geometry, image, glm::mat4(1.0f)});
 
-    render::AssetRegistry registry;
-    render::MeshRenderer renderer(&registry);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    render::MeshRenderer renderer(registry);
     render::IRenderer& iface = renderer;
     const render::Scene dispatchScene = &planeScene; // a PlaneScene, not a MeshScene
 
@@ -460,12 +465,12 @@ TEST(T1V2IrDispatch, NullSceneDispatchRejectedByEveryRenderer) {
     // promises a typed error (code 2) from each renderer — never a crash.
     const render::Scene nullScene; // all alternatives null
 
-    render::AssetRegistry meshRegistry;
-    render::AssetRegistry sliceRegistry;
-    render::MeshRenderer mesh(&meshRegistry);
+    auto meshRegistry = std::make_shared<render::AssetRegistry>();
+    auto sliceRegistry = std::make_shared<render::AssetRegistry>();
+    render::MeshRenderer mesh(meshRegistry);
     render::PlaneRenderer plane;
     render::VolumeRenderer volume;
-    render::SliceRenderer slice(&sliceRegistry);
+    render::SliceRenderer slice(sliceRegistry);
     render::IRenderer* const renderers[] = {&mesh, &plane, &volume, &slice};
 
     render::RenderTarget rt; // never reached: rejection aborts before any draw

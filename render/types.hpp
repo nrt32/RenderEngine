@@ -51,7 +51,14 @@ struct Camera {
 /// null framebuffer means the window's on-screen default framebuffer (samples,
 /// T12).
 struct RenderTarget {
-    core::Framebuffer* framebuffer = nullptr;
+    /// Borrow for the DURATION OF ONE render/blit call only (structurally
+    /// guaranteed: renderers use it synchronously inside
+    /// IRenderer::render/View::blitTo and never retain it — stateless-renderer
+    /// contract, SPEC §3). Null = the window's default framebuffer.
+    /// @note lifetime: owned by the caller — a ViewTarget's inner framebuffer
+    /// or the window's default FB; must outlive the single call that consumes
+    /// this target.
+    core::Framebuffer* /*borrow*/ framebuffer = nullptr;
     std::uint32_t width = 0u;
     std::uint32_t height = 0u;
     glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 0.0f};
@@ -73,6 +80,13 @@ struct SliceScene;
 /// undefined behavior. The multi-view workstream (T2, SPEC §9 V2.4) dispatches
 /// scene objects to the correct renderer by building this variant and calling
 /// IRenderer::render.
+///
+/// @note lifetime: each alternative borrows a scene OWNED BY THE CALLER for
+/// the DURATION OF ONE dispatch — the variant is built at the call site from
+/// an lvalue scene and consumed synchronously by IRenderer::render, which
+/// never retains it (stateless-renderer contract, SPEC §3). This is a
+/// structurally guaranteed scope-bounded borrow, not ownership; long-lived
+/// scene state lives in render::View items or broker-side caches instead.
 using Scene = std::variant<const MeshScene*, const PlaneScene*,
                            const VolumeScene*, const SliceScene*>;
 

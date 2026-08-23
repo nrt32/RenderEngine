@@ -54,31 +54,31 @@ uint64_t SceneStore::addPlaneObject(PlaneObject obj) {
     return id;
 }
 
-const MeshObject* SceneStore::getMeshObject(uint64_t id) const noexcept {
+const MeshObject* /*borrow*/ SceneStore::getMeshObject(uint64_t id) const noexcept {
     auto it = meshObjects_.find(id);
     return it == meshObjects_.end() ? nullptr : &it->second;
 }
-const MeshSliceObject* SceneStore::getMeshSliceObject(uint64_t id) const noexcept {
+const MeshSliceObject* /*borrow*/ SceneStore::getMeshSliceObject(uint64_t id) const noexcept {
     auto it = meshSliceObjects_.find(id);
     return it == meshSliceObjects_.end() ? nullptr : &it->second;
 }
-const VolumeObject* SceneStore::getVolumeObject(uint64_t id) const noexcept {
+const VolumeObject* /*borrow*/ SceneStore::getVolumeObject(uint64_t id) const noexcept {
     auto it = volumeObjects_.find(id);
     return it == volumeObjects_.end() ? nullptr : &it->second;
 }
-const VolumeSliceObject* SceneStore::getVolumeSliceObject(uint64_t id) const noexcept {
+const VolumeSliceObject* /*borrow*/ SceneStore::getVolumeSliceObject(uint64_t id) const noexcept {
     auto it = volumeSliceObjects_.find(id);
     return it == volumeSliceObjects_.end() ? nullptr : &it->second;
 }
-const PlaneObject* SceneStore::getPlaneObject(uint64_t id) const noexcept {
+const PlaneObject* /*borrow*/ SceneStore::getPlaneObject(uint64_t id) const noexcept {
     auto it = planeObjects_.find(id);
     return it == planeObjects_.end() ? nullptr : &it->second;
 }
-MeshObject* SceneStore::getMeshObjectMut(uint64_t id) noexcept {
+MeshObject* /*borrow*/ SceneStore::getMeshObjectMut(uint64_t id) noexcept {
     auto it = meshObjects_.find(id);
     return it == meshObjects_.end() ? nullptr : &it->second;
 }
-VolumeObject* SceneStore::getVolumeObjectMut(uint64_t id) noexcept {
+VolumeObject* /*borrow*/ SceneStore::getVolumeObjectMut(uint64_t id) noexcept {
     auto it = volumeObjects_.find(id);
     return it == volumeObjects_.end() ? nullptr : &it->second;
 }
@@ -143,10 +143,12 @@ std::vector<FieldId> SceneStore::dirtyFieldsSince(uint64_t lastGen) const noexce
     return {FieldId::Transform, FieldId::Material, FieldId::TransferFunction, FieldId::Items};
 }
 
-data::Result<AssetId> SceneStore::registerMeshAsset(const data::Mesh& mesh) {
-    return meshAssets_.registerAsset(mesh);
+data::Result<AssetId> SceneStore::registerMeshAsset(
+    AssetRegistry<data::Mesh>::SharedAsset mesh) {
+    return meshAssets_.registerAsset(std::move(mesh));
 }
-data::Result<const data::Mesh*> SceneStore::resolveMeshAsset(AssetId id) const {
+data::Result<AssetRegistry<data::Mesh>::SharedAsset>
+SceneStore::resolveMeshAsset(AssetId id) const {
     return meshAssets_.resolve(id);
 }
 data::Result<void> SceneStore::unregisterMeshAsset(AssetId id) {
@@ -173,11 +175,11 @@ uint64_t ViewStore::addView(View view) {
     dirtyLog_.emplace_back(storeGen_, FieldId::Items);
     return id;
 }
-const View* ViewStore::getView(uint64_t id) const noexcept {
+const View* /*borrow*/ ViewStore::getView(uint64_t id) const noexcept {
     auto it = views_.find(id);
     return it == views_.end() ? nullptr : &it->second;
 }
-View* ViewStore::getViewMut(uint64_t id) noexcept {
+View* /*borrow*/ ViewStore::getViewMut(uint64_t id) noexcept {
     auto it = views_.find(id);
     return it == views_.end() ? nullptr : &it->second;
 }

@@ -35,6 +35,8 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <memory>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/mat4x4.hpp>
@@ -203,13 +205,15 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
     // registered handle: the same CPU quad is one GPU object in the shared
     // registry (SPEC §9 V2.5).
     data::Mesh quad = makeQuadMesh();
-    render::AssetRegistry registry;
-    const auto handle = registry.registerAsset(quad);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
-    render::PhongMaterial nearMaterial(kNearColor);
-    render::PhongMaterial farMaterial(kFarColor);
-    ASSERT_TRUE(nearMaterial.isTransparent());
-    ASSERT_TRUE(farMaterial.isTransparent());
+    auto nearMaterial =
+        std::make_shared<render::PhongMaterial>(kNearColor);
+    auto farMaterial =
+        std::make_shared<render::PhongMaterial>(kFarColor);
+    ASSERT_TRUE(nearMaterial->isTransparent());
+    ASSERT_TRUE(farMaterial->isTransparent());
 
     glm::mat4 nearModel(1.0f); // z = 0
     glm::mat4 farModel =
@@ -217,8 +221,8 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
 
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{*handle, &nearMaterial, nearModel});
-    scene.meshes.push_back(render::MeshInstance{*handle, &farMaterial, farModel});
+        render::MeshInstance{*handle, nearMaterial, nearModel});
+    scene.meshes.push_back(render::MeshInstance{*handle, farMaterial, farModel});
 
     render::Camera camera = makeCamera();
     render::RenderTarget rt;
@@ -227,8 +231,8 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
     rt.height = kTargetHeight;
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-    render::LinkedListOIT pipeline;
-    render::MeshRenderer renderer(&registry, &pipeline);
+    auto pipeline = std::make_shared<render::LinkedListOIT>();
+    render::MeshRenderer renderer(registry, pipeline);
     auto result = renderer.render(scene, camera, rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
@@ -256,10 +260,10 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
     // pixel were captured and depth-sorted by the pipeline. The node-allocator
     // counter is read back through the test-consumed readback (guardrail
     // no_production_readback).
-    const auto captured = pipeline.readCapturedFragmentCount();
+    const auto captured = pipeline->readCapturedFragmentCount();
     ASSERT_TRUE(captured.ok()) << captured.error().message;
     EXPECT_EQ(*captured, kExpectedCapturedFragments);
-    EXPECT_FALSE(pipeline.isEngaged());
+    EXPECT_FALSE(pipeline->isEngaged());
 }
 
 // ---------------------------------------------------------------------------
@@ -269,19 +273,20 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
 
 TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
     data::Mesh quad = makeQuadMesh();
-    render::AssetRegistry registry;
-    const auto handle = registry.registerAsset(quad);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
 
     // Opaque-only scene: center-pixel alpha must be exactly 1.0 (no
     // transparency engaged) and the pipeline must stay OFF.
     {
-        render::PhongMaterial opaque(glm::vec4(0.2f, 0.4f, 0.8f, 1.0f));
-        ASSERT_FALSE(opaque.isTransparent());
+        auto opaque =
+            std::make_shared<render::PhongMaterial>(glm::vec4(0.2f, 0.4f, 0.8f, 1.0f));
+        ASSERT_FALSE(opaque->isTransparent());
 
         render::MeshScene opaqueScene;
         opaqueScene.meshes.push_back(
-            render::MeshInstance{*handle, &opaque, glm::mat4(1.0f)});
+            render::MeshInstance{*handle, opaque, glm::mat4(1.0f)});
 
         RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
         render::RenderTarget rt;
@@ -290,8 +295,8 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
         rt.height = kTargetHeight;
         rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-        RecordingPipeline spy;
-        render::MeshRenderer renderer(&registry, &spy);
+        auto spy = std::make_shared<RecordingPipeline>();
+        render::MeshRenderer renderer(registry, spy);
         auto result = renderer.render(opaqueScene, makeCamera(), rt);
         ASSERT_TRUE(result.ok()) << result.error().message;
 
@@ -307,24 +312,26 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
                 << kSampleY[i] << ")";
         }
         // The opaque-only scene must never engage the pipeline.
-        EXPECT_EQ(spy.beginCount(), 0);
-        EXPECT_EQ(spy.drawTransparentCount(), 0);
-        EXPECT_FALSE(spy.isEngaged());
+        EXPECT_EQ(spy->beginCount(), 0);
+        EXPECT_EQ(spy->drawTransparentCount(), 0);
+        EXPECT_FALSE(spy->isEngaged());
         EXPECT_FALSE(core::hasPendingGlError());
     }
 
     // Add one transparent quad to the same scene: the pipeline flips on
     // (begin/drawTransparent/end observed via the spy).
     {
-        render::PhongMaterial opaque(glm::vec4(0.2f, 0.4f, 0.8f, 1.0f));
-        render::PhongMaterial transparent(glm::vec4(0.4f, 0.2f, 0.1f, 0.5f));
-        ASSERT_TRUE(transparent.isTransparent());
+        auto opaque =
+            std::make_shared<render::PhongMaterial>(glm::vec4(0.2f, 0.4f, 0.8f, 1.0f));
+        auto transparent =
+            std::make_shared<render::PhongMaterial>(glm::vec4(0.4f, 0.2f, 0.1f, 0.5f));
+        ASSERT_TRUE(transparent->isTransparent());
 
         render::MeshScene mixedScene;
         mixedScene.meshes.push_back(
-            render::MeshInstance{*handle, &opaque, glm::mat4(1.0f)});
+            render::MeshInstance{*handle, opaque, glm::mat4(1.0f)});
         mixedScene.meshes.push_back(
-            render::MeshInstance{*handle, &transparent, glm::mat4(1.0f)});
+            render::MeshInstance{*handle, transparent, glm::mat4(1.0f)});
 
         RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
         render::RenderTarget rt;
@@ -333,17 +340,17 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
         rt.height = kTargetHeight;
         rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-        RecordingPipeline spy;
-        render::MeshRenderer renderer(&registry, &spy);
+        auto spy = std::make_shared<RecordingPipeline>();
+        render::MeshRenderer renderer(registry, spy);
         auto result = renderer.render(mixedScene, makeCamera(), rt);
         ASSERT_TRUE(result.ok()) << result.error().message;
 
-        EXPECT_EQ(spy.beginCount(), 1)
+        EXPECT_EQ(spy->beginCount(), 1)
             << "pipeline engaged for a transparent scene";
-        EXPECT_EQ(spy.drawTransparentCount(), 1)
+        EXPECT_EQ(spy->drawTransparentCount(), 1)
             << "one transparent mesh captured";
-        EXPECT_EQ(spy.endCount(), 1);
-        EXPECT_FALSE(spy.isEngaged()) << "frame finished";
+        EXPECT_EQ(spy->endCount(), 1);
+        EXPECT_FALSE(spy->isEngaged()) << "frame finished";
         EXPECT_FALSE(core::hasPendingGlError());
     }
 }
@@ -355,15 +362,16 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
 
 TEST(T10Oit, PipelineInterfaceIsSwappable) {
     data::Mesh quad = makeQuadMesh();
-    render::AssetRegistry registry;
-    const auto handle = registry.registerAsset(quad);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
-    render::PhongMaterial transparent(glm::vec4(0.4f, 0.2f, 0.1f, 0.5f));
-    ASSERT_TRUE(transparent.isTransparent());
+    auto transparent =
+        std::make_shared<render::PhongMaterial>(glm::vec4(0.4f, 0.2f, 0.1f, 0.5f));
+    ASSERT_TRUE(transparent->isTransparent());
 
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{*handle, &transparent, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, transparent, glm::mat4(1.0f)});
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
     render::RenderTarget rt;
@@ -376,15 +384,15 @@ TEST(T10Oit, PipelineInterfaceIsSwappable) {
     // exactly one frame (begin -> drawTransparent -> end) for the transparent
     // mesh, leaving the pipeline disengaged. This proves the renderer depends
     // only on the ITransparencyPipeline abstraction (open/closed, DI).
-    RecordingPipeline stub;
-    render::MeshRenderer renderer(&registry, &stub);
+    auto stub = std::make_shared<RecordingPipeline>();
+    render::MeshRenderer renderer(registry, stub);
     auto result = renderer.render(scene, makeCamera(), rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
 
-    EXPECT_EQ(stub.beginCount(), 1);
-    EXPECT_EQ(stub.drawTransparentCount(), 1);
-    EXPECT_EQ(stub.endCount(), 1);
-    EXPECT_FALSE(stub.isEngaged());
+    EXPECT_EQ(stub->beginCount(), 1);
+    EXPECT_EQ(stub->drawTransparentCount(), 1);
+    EXPECT_EQ(stub->endCount(), 1);
+    EXPECT_FALSE(stub->isEngaged());
     EXPECT_FALSE(core::hasPendingGlError());
 }
 

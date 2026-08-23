@@ -13,6 +13,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/vec3.hpp>
@@ -143,24 +144,33 @@ void expectViewBColor(const std::vector<std::uint8_t>& pixel, const char* where)
 }
 
 struct TwoViewFixture {
-    render::AssetRegistry registry;
-    render::PhongMaterial materialA{kViewABaseColor};
+    // T13 ownership: shared handles (registry/material/geometry/image) so the
+    // renderer and scene instances co-own what they reference.
+    std::shared_ptr<render::AssetRegistry> registry{
+        std::make_shared<render::AssetRegistry>()};
+    std::shared_ptr<render::PhongMaterial> materialA{
+        std::make_shared<render::PhongMaterial>(kViewABaseColor)};
     data::Mesh quadA{makeQuadMesh()};
     render::MeshScene sceneA;
-    data::Image imageB{makeSolidImage()};
-    render::PlaneGeometry quadB{render::PlaneGeometry::unitQuadXY()};
+    std::shared_ptr<data::Image> imageB{
+        std::make_shared<data::Image>(makeSolidImage())};
+    std::shared_ptr<const render::PlaneGeometry> quadB{
+        std::make_shared<const render::PlaneGeometry>(
+            render::PlaneGeometry::unitQuadXY())};
     render::PlaneScene sceneB;
-    render::MeshRenderer meshRenderer{&registry};
-    render::PlaneRenderer planeRenderer;
+    std::shared_ptr<render::MeshRenderer> meshRenderer{
+        std::make_shared<render::MeshRenderer>(registry)};
+    std::shared_ptr<render::PlaneRenderer> planeRenderer{
+        std::make_shared<render::PlaneRenderer>()};
     render::Camera camera{makeCamera()};
 
     TwoViewFixture() {
-        const auto handle = registry.registerAsset(quadA);
+        const auto handle = registry->registerAsset(quadA);
         EXPECT_TRUE(handle.ok()) << handle.error().message;
         if (handle.ok()) {
-            sceneA.meshes.push_back(render::MeshInstance{*handle, &materialA, glm::mat4(1.0f)});
+            sceneA.meshes.push_back(render::MeshInstance{*handle, materialA, glm::mat4(1.0f)});
         }
-        sceneB.planes.push_back(render::PlaneInstance{&quadB, &imageB, glm::mat4(1.0f)});
+        sceneB.planes.push_back(render::PlaneInstance{quadB, imageB, glm::mat4(1.0f)});
     }
 };
 
@@ -186,8 +196,8 @@ TEST(T2V2MultiView, TwoViewsRenderIntoTheirOwnFbos) {
     render::View viewB(kViewBRect, glm::vec4(0, 0, 0, 0));
     viewA.setCamera(f.camera);
     viewB.setCamera(f.camera);
-    viewA.addItem(f.sceneA, &f.meshRenderer);
-    viewB.addItem(f.sceneB, &f.planeRenderer);
+    viewA.addItem(f.sceneA, f.meshRenderer);
+    viewB.addItem(f.sceneB, f.planeRenderer);
 
     core::DrawContext ctxA, ctxB;
     ASSERT_TRUE(viewA.ensureTarget().ok());
@@ -211,8 +221,8 @@ TEST(T2V2MultiView, BlitPlacesViewsInPinnedWindowRects) {
     render::View viewB(kViewBRect, glm::vec4(0, 0, 0, 0));
     viewA.setCamera(f.camera);
     viewB.setCamera(f.camera);
-    viewA.addItem(f.sceneA, &f.meshRenderer);
-    viewB.addItem(f.sceneB, &f.planeRenderer);
+    viewA.addItem(f.sceneA, f.meshRenderer);
+    viewB.addItem(f.sceneB, f.planeRenderer);
 
     core::DrawContext ctxA, ctxB;
     ASSERT_TRUE(viewA.renderWithEnsure(ctxA).ok());

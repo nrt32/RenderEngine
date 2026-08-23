@@ -44,7 +44,10 @@ std::vector<scene::FieldId> ViewSynchronizer::dirtyFieldsSince(uint64_t lastGen)
         // Trivial executor exercise: count distinct via executor (bounded, not full store scan)
         // For correctness we still collect synchronously; executor parallelFor is exercised for coverage.
         size_t n = pushDirties_.size();
-        struct Ctx { ViewSynchronizer* self; std::unordered_set<int>* seen; std::vector<scene::FieldId>* out; };
+        // Borrow of *this (owner: this synchronizer) plus the two locals
+        // below — all outlive the parallelFor call, which is synchronous for
+        // the InlineJobExecutor fallback.
+        struct Ctx { ViewSynchronizer* /*borrow*/ self; std::unordered_set<int>* /*borrow*/ seen; std::vector<scene::FieldId>* /*borrow*/ out; };
         Ctx ctx{const_cast<ViewSynchronizer*>(this), &seen, &out};
         executor_->parallelFor(n, [](std::size_t, void* c) {
             (void)c; // exercise parallelFor deterministically; real collection below
@@ -102,7 +105,10 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
     auto selfDirty = dirtyFieldsSince(lastStoreGen_);
     (void)selfDirty;
 
-    if (!compositor_) {
+    // Lock the weak compositor back-pointer (T13): expired == not wired.
+    std::shared_ptr<ViewCompositor> compositor = compositor_.lock();
+
+    if (!compositor) {
         // T3 skeleton: just update lastStoreGen and return (no ReView yet)
         lastStoreGen_ = curGen;
         pushDirties_.clear();
@@ -115,7 +121,9 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
     activeIds.reserve(views.size());
     for (const auto& av : views) {
         activeIds.push_back(av.id);
-        render::View* rv = compositor_->ensureView(layoutId, av);
+        // Borrow owned by the compositor's views_ map (see ensureView's
+        // lifetime note); consumed synchronously within this sync call.
+        render::View* /*borrow*/ rv = compositor->ensureView(layoutId, av);
         if (!rv) {
             return data::makeError<void>(10, "ViewSynchronizer: ensureView failed");
         }
@@ -156,8 +164,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
                         hasPushDirty(av.id, scene::FieldId::CameraProj);
         if (camDirty) {
             scene::TranslateContext ctx;
-            if (av.plane.has_value()) ctx.view.viewPlane = &*av.plane;
-            else ctx.view.viewPlane = nullptr;
+            ctx.view.viewPlane = av.plane; // by-value snapshot (T13: no borrow)
             ctx.view.viewMatrix = av.camera.viewMatrix();
             ctx.view.projMatrix = av.camera.projMatrix();
             auto* camMapper = broker_ ? broker_->get<broker::CameraMapper>() : nullptr;
@@ -187,7 +194,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
                     auto* meshMapper = broker_ ? broker_->get<broker::MeshObjectMapper>() : nullptr;
                     if (meshMapper) {
                         scene::TranslateContext ctx2;
-                        if (av.plane.has_value()) ctx2.view.viewPlane = &*av.plane;
+                        ctx2.view.viewPlane = av.plane; // by-value snapshot (T13)
                         ctx2.view.viewMatrix = av.camera.viewMatrix();
                         ctx2.view.projMatrix = av.camera.projMatrix();
                         auto r = meshMapper->mapCached(*mo, ctx2);
@@ -222,7 +229,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
     }
 
     // Layout count/set change -> insert/erase ReViews (prune those not in active set)
-    compositor_->pruneLayout(layoutId, activeIds);
+    compositor->pruneLayout(layoutId, activeIds);
 
     lastStoreGen_ = curGen;
     pushDirties_.clear();

@@ -82,19 +82,21 @@ re::data::Image makeGradientImage() {
 /// layer and renders one frame through one full-window ReView.
 class PlaneSample final : public re::app::ISample {
    public:
-    PlaneSample() : image_(makeGradientImage()) {
+    PlaneSample()
+        : image_(std::make_shared<re::data::Image>(makeGradientImage())) {
         // Scene side: only {asset ref, transform, presentation} (SPEC §3.1
-        // SceneObject family). No geometry, no UVs, no vertex data.
+        // SceneObject family). No geometry, no UVs, no vertex data. The asset
+        // ref is the sample's shared_ptr — the scene object co-owns it (T13).
         re::scene::PlaneObject plane;
-        plane.image = &image_;
+        plane.image = image_;
         plane.transform = glm::mat4(1.0f);
 
         // Composition root: register the plane mapper ONCE (one mapper per
         // AppT, OCP via type_index — SPEC §11), then translate only through
         // the type-erased IMapper interface fetched from the Broker — app
-        // never holds a concrete mapper handle. The mapped instance borrows
-        // image_ and PlaneMapper's shared unit quad, both outliving every
-        // draw below.
+        // never holds a concrete mapper handle. The mapped instance SHARES
+        // image_ and PlaneMapper's shared unit quad (shared_ptr co-ownership,
+        // T13) — nothing to outlive, nothing to dangle.
         broker_.registerMapper(
             std::make_unique<re::broker::PlaneMapper>());
         auto* planeMapper = broker_.get<re::scene::PlaneObject,
@@ -129,7 +131,7 @@ class PlaneSample final : public re::app::ISample {
         re::render::View view(rect, glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         view.setCamera(camera_);
         if (!scene_.planes.empty()) {
-            view.addItem(scene_, &renderer_);
+            view.addItem(scene_, renderer_);
         }
         re::core::DrawContext ctx;
         auto rendered = view.renderWithEnsure(ctx);
@@ -153,11 +155,14 @@ class PlaneSample final : public re::app::ISample {
     }
 
    private:
-    re::data::Image image_;
+    std::shared_ptr<re::data::Image> image_;
     re::render::PlaneScene scene_;
     re::render::Camera camera_;
     re::broker::Broker broker_;
-    re::render::PlaneRenderer renderer_;
+    // Shared renderer (T13): the View's renderable items co-own it, so view
+    // and renderer lifetimes can never race at teardown.
+    std::shared_ptr<re::render::PlaneRenderer> renderer_{
+        std::make_shared<re::render::PlaneRenderer>()};
 };
 
 } // namespace

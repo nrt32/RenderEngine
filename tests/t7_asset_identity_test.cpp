@@ -69,10 +69,10 @@ static data::Mesh makeBoxMesh() {
 
 TEST(T7AssetIdentity, SameMeshPointerDedupsViaSceneStore) {
     scene::SceneStore store;
-    data::Mesh mesh = makeTriangleMesh();
+    auto mesh = std::make_shared<const data::Mesh>(makeTriangleMesh());
     // Hand-counted constants per makeTriangleMesh
-    EXPECT_EQ(mesh.vertexCount(), 3u) << "triangle mesh has 3 vertices (explainable)";
-    EXPECT_EQ(mesh.triangleCount(), 1u) << "1 triangle (explainable)";
+    EXPECT_EQ(mesh->vertexCount(), 3u) << "triangle mesh has 3 vertices (explainable)";
+    EXPECT_EQ(mesh->triangleCount(), 1u) << "1 triangle (explainable)";
 
     auto r1 = store.registerMeshAsset(mesh);
     ASSERT_TRUE(r1.ok()) << r1.error().message;
@@ -89,14 +89,14 @@ TEST(T7AssetIdentity, SameMeshPointerDedupsViaSceneStore) {
     // Resolve via SceneStore
     auto resolved = store.resolveMeshAsset(*r1);
     ASSERT_TRUE(resolved.ok()) << resolved.error().message;
-    EXPECT_EQ(*resolved, &mesh) << "resolve must return original pointer for live handle";
+    EXPECT_EQ(*resolved, mesh) << "resolve must return the same shared asset for a live handle";
 
     // Render registry dedup via content hash as well
     render::AssetRegistry reg;
     // Offscreen context needed for MeshGeometry upload; but slotCount check without GL still fails upload.
     // Instead test hash dedup at scene level only for handle count; render handle dedup is covered in next test
     // where we use scene's hash directly to prove equality. For now assert scene-level hash equality.
-    EXPECT_EQ(scene::computeContentHash(mesh), r1->contentHash)
+    EXPECT_EQ(scene::computeContentHash(*mesh), r1->contentHash)
         << "SceneStore contentHash must equal computeContentHash (explainable)";
 }
 
@@ -121,9 +121,11 @@ TEST(T7AssetIdentity, DistinctPointerIdenticalBytesDedupsViaContentHash) {
     uint64_t hB = scene::computeContentHash(meshB);
     EXPECT_EQ(hA, hB) << "identical byte contents must produce identical contentHash (explainable)";
 
-    auto idA = store.registerMeshAsset(meshA);
+    auto idA = store.registerMeshAsset(
+        std::make_shared<const data::Mesh>(std::move(meshA)));
     ASSERT_TRUE(idA.ok());
-    auto idB = store.registerMeshAsset(meshB);
+    auto idB = store.registerMeshAsset(
+        std::make_shared<const data::Mesh>(std::move(meshB)));
     ASSERT_TRUE(idB.ok());
 
     EXPECT_EQ(idA->contentHash, hA) << "AssetId hash must equal computeContentHash (explainable)";
@@ -135,11 +137,16 @@ TEST(T7AssetIdentity, DistinctPointerIdenticalBytesDedupsViaContentHash) {
     // Pointer-identity would have produced 2 slots — prove hash dedup, not pointer dedup
     EXPECT_EQ(idA->contentHash, idB->contentHash);
 
-    // Broker asset store also dedups distinct pointer same bytes
+    // Broker asset store also dedups distinct pointer same bytes. Fresh
+    // distinct allocations again (the earlier ones were moved into the scene
+    // store above): identical bytes must still alias to ONE slot.
     broker::AssetStore bstore;
-    auto bhA = bstore.registerAsset(meshA);
+    auto meshA2 = std::make_shared<const data::Mesh>(makeBoxMesh());
+    auto meshB2 = std::make_shared<const data::Mesh>(makeBoxMesh());
+    EXPECT_NE(meshA2.get(), meshB2.get()) << "distinct allocations (explainable)";
+    auto bhA = bstore.registerAsset(meshA2);
     ASSERT_TRUE(bhA.ok());
-    auto bhB = bstore.registerAsset(meshB);
+    auto bhB = bstore.registerAsset(meshB2);
     ASSERT_TRUE(bhB.ok());
     EXPECT_EQ(bhA->index, bhB->index) << "broker AssetStore must dedup distinct pointer same bytes (hash path)";
     EXPECT_EQ(bstore.slotCount(), 1u) << "broker slotCount 1 for identical content (explainable)";
@@ -151,7 +158,7 @@ TEST(T7AssetIdentity, DistinctPointerIdenticalBytesDedupsViaContentHash) {
 
 TEST(T7AssetIdentity, StaleGenerationPlusOneIsTypedError) {
     scene::SceneStore store;
-    data::Mesh mesh = makeTriangleMesh();
+    auto mesh = std::make_shared<const data::Mesh>(makeTriangleMesh());
     auto idRes = store.registerMeshAsset(mesh);
     ASSERT_TRUE(idRes.ok());
     scene::AssetId live = *idRes;
@@ -159,7 +166,7 @@ TEST(T7AssetIdentity, StaleGenerationPlusOneIsTypedError) {
     // Live resolve
     auto ok = store.resolveMeshAsset(live);
     ASSERT_TRUE(ok.ok()) << "live AssetId must resolve";
-    EXPECT_EQ(*ok, &mesh);
+    EXPECT_EQ(*ok, mesh);
 
     // Stale by generation+1
     scene::AssetId stale{live.index, static_cast<uint32_t>(live.generation + 1), live.contentHash};
@@ -193,25 +200,25 @@ TEST(T7AssetIdentity, StaleGenerationPlusOneIsTypedError) {
 TEST(T7AssetIdentity, TypedStoreExtensibleViaTemplate) {
     // Mesh registry
     scene::AssetRegistry<data::Mesh> meshReg;
-    data::Mesh mesh = makeTriangleMesh();
+    auto mesh = std::make_shared<const data::Mesh>(makeTriangleMesh());
     auto mId = meshReg.registerAsset(mesh);
     ASSERT_TRUE(mId.ok());
     EXPECT_EQ(meshReg.liveCount(), 1u) << "Mesh registry liveCount 1 (explainable)";
 
     // Volume registry — same template, different T, no duplicate code
     scene::AssetRegistry<data::VolumeDataset> volReg;
-    data::VolumeDataset volA(2, 2, 2, std::vector<float>{0, 1, 2, 3, 4, 5, 6, 7});
+    auto volA = std::make_shared<const data::VolumeDataset>(2, 2, 2, std::vector<float>{0, 1, 2, 3, 4, 5, 6, 7});
     auto vIdA = volReg.registerAsset(volA);
     ASSERT_TRUE(vIdA.ok());
     EXPECT_EQ(volReg.liveCount(), 1u) << "Volume registry liveCount 1 (explainable)";
     // Distinct bytes → new slot; identical bytes distinct object → dedup
-    data::VolumeDataset volB(2, 2, 2, std::vector<float>{0, 1, 2, 3, 4, 5, 6, 7});
+    auto volB = std::make_shared<const data::VolumeDataset>(2, 2, 2, std::vector<float>{0, 1, 2, 3, 4, 5, 6, 7});
     auto vIdB = volReg.registerAsset(volB);
     ASSERT_TRUE(vIdB.ok());
     EXPECT_EQ(vIdA->index, vIdB->index) << "identical volume bytes must dedup (hash path)";
     EXPECT_EQ(volReg.liveCount(), 1u) << "still 1 after identical volume dedup";
 
-    data::VolumeDataset volC(2, 2, 2, std::vector<float>{9, 9, 9, 9, 9, 9, 9, 9});
+    auto volC = std::make_shared<const data::VolumeDataset>(2, 2, 2, std::vector<float>{9, 9, 9, 9, 9, 9, 9, 9});
     auto vIdC = volReg.registerAsset(volC);
     ASSERT_TRUE(vIdC.ok());
     EXPECT_NE(vIdC->contentHash, vIdA->contentHash) << "different volume bytes → different hash (explainable)";
@@ -219,12 +226,12 @@ TEST(T7AssetIdentity, TypedStoreExtensibleViaTemplate) {
 
     // Image registry — third kind, same template
     scene::AssetRegistry<data::Image> imgReg;
-    data::Image imgA(2, 2, 3, std::vector<uint8_t>{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11});
+    auto imgA = std::make_shared<const data::Image>(2, 2, 3, std::vector<uint8_t>{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11});
     auto iIdA = imgReg.registerAsset(imgA);
     ASSERT_TRUE(iIdA.ok());
     EXPECT_EQ(imgReg.liveCount(), 1u);
 
-    data::Image imgB(2, 2, 3, std::vector<uint8_t>{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11});
+    auto imgB = std::make_shared<const data::Image>(2, 2, 3, std::vector<uint8_t>{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11});
     auto iIdB = imgReg.registerAsset(imgB);
     ASSERT_TRUE(iIdB.ok());
     EXPECT_EQ(iIdA->index, iIdB->index) << "identical image bytes dedup (hash path)";

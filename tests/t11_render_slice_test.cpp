@@ -30,6 +30,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/vec3.hpp>
@@ -163,19 +165,20 @@ RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
 
 TEST(T11RenderSlice, CrossSectionVerticesLieOnClipPlane) {
     data::Mesh cube = makeCubeMesh();
-    render::AssetRegistry registry;
-    const auto handle = registry.registerAsset(cube);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    const auto handle = registry->registerAsset(cube);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
-    render::PhongMaterial material(kBaseColor);
+    auto material =
+        std::make_shared<render::PhongMaterial>(kBaseColor);
     render::SliceScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, material, glm::mat4(1.0f)});
 
     render::ClipPlane plane;
     plane.normal = kPlaneNormal;
     plane.point = kPlanePoint;
 
-    render::SliceRenderer renderer(&registry);
+    render::SliceRenderer renderer(registry);
 
     // The capture pass draws (its fragment shader discards) into the currently
     // bound framebuffer, so bind an offscreen target to keep the draw valid on
@@ -211,19 +214,20 @@ TEST(T11RenderSlice, CrossSectionVerticesLieOnClipPlane) {
 
 TEST(T11RenderSlice, ClippedMeshRendersCorrectly) {
     data::Mesh cube = makeCubeMesh();
-    render::AssetRegistry registry;
-    const auto handle = registry.registerAsset(cube);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    const auto handle = registry->registerAsset(cube);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
-    render::PhongMaterial material(kBaseColor);
+    auto material =
+        std::make_shared<render::PhongMaterial>(kBaseColor);
     render::SliceScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, material, glm::mat4(1.0f)});
 
     render::ClipPlane plane;
     plane.normal = kPlaneNormal;
     plane.point = kPlanePoint;
 
-    render::SliceRenderer renderer(&registry);
+    render::SliceRenderer renderer(registry);
     render::Camera camera = makeCamera();
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);

@@ -362,13 +362,15 @@ bool readFile(const std::string& path, std::string& out) {
 // ---------------------------------------------------------------------------
 
 TEST(T15Mpr, GpuContourMatchesAnalyticCurveForEachSliceView) {
-    const data::Mesh box = app::makeBoxMesh(kBoxMin, kBoxMax);
+    auto box = std::make_shared<const data::Mesh>(app::makeBoxMesh(kBoxMin, kBoxMax));
 
     // One shared registry: the mapper registers the box once; the renderer
     // resolves the handle (dedup invariant asserted separately below).
-    render::AssetRegistry registry;
-    broker::ContourMapper mapper(&registry);
-    render::ContourRenderer renderer(&registry);
+    // Shared handles throughout (T13): registry co-owned by mapper+renderer,
+    // box co-owned by the scene object.
+    auto registry = std::make_shared<render::AssetRegistry>();
+    broker::ContourMapper mapper(registry);
+    render::ContourRenderer renderer(registry);
 
     const std::array<app::MprAxis, 3> axes = {app::MprAxis::Transverse,
                                               app::MprAxis::Coronal,
@@ -395,7 +397,7 @@ TEST(T15Mpr, GpuContourMatchesAnalyticCurveForEachSliceView) {
         // model + the clip plane already expressed in that display frame
         // (constant Z at the sliced layer's coordinate).
         scene::ContourObject appContour;
-        appContour.mesh = &box;
+        appContour.mesh = box; // shared asset reference (T13)
         appContour.transform = displayModels[view];
         appContour.plane.setNormal(glm::vec3(0.0f, 0.0f, 1.0f));
         appContour.plane.setPoint(glm::vec3(0.0f, 0.0f, plane.coordinate));
@@ -491,7 +493,7 @@ TEST(T15Mpr, GpuContourMatchesAnalyticCurveForEachSliceView) {
 
     // Registry dedup across all three views' translations: the same CPU box
     // registered three times leaves exactly ONE live GPU object (SPEC §9 V2.5).
-    EXPECT_EQ(registry.slotCount(), 1u)
+    EXPECT_EQ(registry->slotCount(), 1u)
         << "one GPU object per individual CPU mesh, shared across views";
 }
 
@@ -525,11 +527,12 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
         solid[i + 2u] = kSliceByte;
         solid[i + 3u] = 255u;
     }
-    const data::Image sliceImage(64, 64, 4, std::move(solid));
+    auto sliceImage =
+        std::make_shared<const data::Image>(64, 64, 4, std::move(solid));
 
     // The golden box + slice state + plane, exactly as the first test's
     // analytic frame ([16,48]^2 rectangle in pixel space of a 64x64 view).
-    const data::Mesh box = app::makeBoxMesh(kBoxMin, kBoxMax);
+    auto box = std::make_shared<const data::Mesh>(app::makeBoxMesh(kBoxMin, kBoxMax));
     app::MprSliceState state;
     state.transverseZ = kSliceIndex;
     state.coronalY = kSliceIndex;
@@ -541,7 +544,7 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
     // volume must enclose BOTH the slice quad (display z = 0) AND the contour
     // crossings' display z (= the held coordinate + 0.5 = 32.5). Asserted
     // analytically on the projected NDC z of both points.
-    const render::Camera camera = app::makeSliceCamera(sliceImage);
+    const render::Camera camera = app::makeSliceCamera(*sliceImage);
     for (const float enclosedZ : {0.0f, planeCoordinate}) {
         const glm::vec4 clip =
             camera.proj * camera.view * glm::vec4(32.5f, 32.5f, enclosedZ, 1.0f);
@@ -559,9 +562,9 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
     // BOTH slice-view layers are translated scene→render through mappers
     // fetched from the Broker as type-erased IMapper interfaces (V3.4b T12
     // adds the textured slice layer; V3.8b T11 added the contour).
-    render::AssetRegistry registry;
+    auto registry = std::make_shared<render::AssetRegistry>();
     broker::Broker broker_;
-    broker_.registerMapper(std::make_unique<broker::ContourMapper>(&registry));
+    broker_.registerMapper(std::make_unique<broker::ContourMapper>(registry));
     broker_.registerMapper(std::make_unique<broker::PlaneMapper>());
     auto* contourMapper =
         broker_.get<scene::ContourObject, render::ContourObject>();
@@ -569,10 +572,10 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
         broker_.get<scene::PlaneObject, render::PlaneInstance>();
     ASSERT_NE(contourMapper, nullptr);
     ASSERT_NE(planeMapper, nullptr);
-    render::ContourRenderer renderer(&registry);
+    render::ContourRenderer renderer(registry);
 
     scene::ContourObject appContour;
-    appContour.mesh = &box;
+    appContour.mesh = box; // shared asset reference (T13)
     appContour.transform = axisDisplayModels()[0]; // Transverse: identity
     appContour.plane.setNormal(glm::vec3(0.0f, 0.0f, 1.0f));
     appContour.plane.setPoint(glm::vec3(0.0f, 0.0f, planeCoordinate));
@@ -588,8 +591,8 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
     // PlaneMapper binds the shared unit quad — no hand-assembled
     // render::PlaneInstance anywhere.
     scene::PlaneObject appSlicePlane;
-    appSlicePlane.image = &sliceImage;
-    appSlicePlane.transform = app::makeSliceModel(sliceImage);
+    appSlicePlane.image = sliceImage; // shared asset reference (T13)
+    appSlicePlane.transform = app::makeSliceModel(*sliceImage);
     auto mappedPlane = planeMapper->map(appSlicePlane,
                                         scene::TranslateContext{});
     ASSERT_TRUE(mappedPlane.ok()) << mappedPlane.error().message;
@@ -605,9 +608,11 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
                                        static_cast<int>(kTargetHeight)},
                       glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
     view.setCamera(camera);
-    render::PlaneRenderer planeRenderer;
-    view.addItem(sliceScene, &planeRenderer);
-    view.addItem(contourScene, &renderer);
+    auto planeRenderer = std::make_shared<render::PlaneRenderer>();
+    auto contourRendererPtr =
+        std::make_shared<render::ContourRenderer>(registry);
+    view.addItem(sliceScene, planeRenderer);
+    view.addItem(contourScene, contourRendererPtr);
 
     core::DrawContext ctx;
     auto rendered = view.renderWithEnsure(ctx);
@@ -711,13 +716,13 @@ TEST(T15Mpr, AxisDisplayModelsPinPermutationNotTranspose) {
 // ---------------------------------------------------------------------------
 
 TEST(T15Mpr, ContourMapperTranslatesSceneToRender) {
-    const data::Mesh box = app::makeBoxMesh(kBoxMin, kBoxMax);
-    render::AssetRegistry registry;
-    broker::ContourMapper mapper(&registry);
-    ASSERT_EQ(registry.slotCount(), 0u);
+    auto box = std::make_shared<const data::Mesh>(app::makeBoxMesh(kBoxMin, kBoxMax));
+    auto registry = std::make_shared<render::AssetRegistry>();
+    broker::ContourMapper mapper(registry);
+    ASSERT_EQ(registry->slotCount(), 0u);
 
     scene::ContourObject appContour;
-    appContour.mesh = &box;
+    appContour.mesh = box; // shared asset reference (T13)
     appContour.transform = glm::translate(glm::mat4(1.0f),
                                           glm::vec3(1.0f, 2.0f, 3.0f));
     appContour.plane.setNormal(glm::vec3(0.0f, 1.0f, 0.0f));
@@ -741,12 +746,12 @@ TEST(T15Mpr, ContourMapperTranslatesSceneToRender) {
     // (registry identity dedup, SPEC §9 V2.5).
     auto second = mapper.map(appContour, scene::TranslateContext{});
     ASSERT_TRUE(second.ok()) << second.error().message;
-    EXPECT_EQ(registry.slotCount(), 1u)
+    EXPECT_EQ(registry->slotCount(), 1u)
         << "one GPU object per individual CPU mesh";
     EXPECT_EQ(first->mesh.index, second->mesh.index);
     EXPECT_EQ(first->mesh.generation, second->mesh.generation);
 
-    // Typed error (code 1): null mesh pointer — never a crash (SPEC §5).
+    // Typed error (code 1): null mesh reference — never a crash (SPEC §5).
     scene::ContourObject nullMesh;
     auto errNullMesh = mapper.map(nullMesh, scene::TranslateContext{});
     ASSERT_TRUE(errNullMesh.failed());
@@ -819,14 +824,15 @@ TEST(T15Mpr, CameraTracksSliceStateCrosshair) {
 TEST(T15Mpr, ThreeDViewDrawsMesh) {
     // The golden box + slice state + material (see the file header for the
     // analytic argument: the center ray enters the +Z face at (89, 89, 60)).
-    const data::Mesh box = app::makeBoxMesh(k3dBoxMin, k3dBoxMax);
-    render::PhongMaterial material(k3dBaseColor);
-    ASSERT_FALSE(material.isTransparent());
+    const data::Mesh boxValue = app::makeBoxMesh(k3dBoxMin, k3dBoxMax);
+    auto material =
+        std::make_shared<render::PhongMaterial>(k3dBaseColor);
+    ASSERT_FALSE(material->isTransparent());
 
     // The scene carries the box's AssetHandle (SPEC §9 V2.5), resolved by the
     // renderer through the shared registry.
-    render::AssetRegistry registry;
-    const auto handle = registry.registerAsset(box);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    const auto handle = registry->registerAsset(boxValue);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
 
     app::MprSliceState state;
@@ -834,11 +840,11 @@ TEST(T15Mpr, ThreeDViewDrawsMesh) {
     state.coronalY = kCoronalY;
     state.sagittalX = kSagittalX;
     const render::Camera camera =
-        app::make3dCamera(state, box.bounds(), kAspect);
+        app::make3dCamera(state, boxValue.bounds(), kAspect);
 
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, material, glm::mat4(1.0f)});
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
     render::RenderTarget rt;
@@ -847,7 +853,7 @@ TEST(T15Mpr, ThreeDViewDrawsMesh) {
     rt.height = kTargetHeight;
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-    render::MeshRenderer renderer(&registry, nullptr);
+    render::MeshRenderer renderer(registry, nullptr);
     auto result = renderer.render(scene, camera, rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());

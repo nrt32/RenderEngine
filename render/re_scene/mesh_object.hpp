@@ -11,6 +11,8 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 
+#include <memory>
+
 #include "render/asset_registry.hpp"
 #include "render/imaterial.hpp"
 
@@ -33,7 +35,9 @@ struct ReMeshObject {
     AssetHandle mesh{};              ///< GPU handle (AssetRegistry) — handle
     glm::mat4 model{1.0f};           ///< world model matrix — uniform-ready
     Aabb bounds{};                   ///< world-space AABB (derived)
-    const IMaterial* material{nullptr}; ///< deduped RE material handle — handle
+    /// Deduped RE material, SHARED with its owner (T13 ownership discipline:
+    /// no raw borrow; null is the documented "no material" value).
+    std::shared_ptr<IMaterial> material{nullptr};
 };
 
 } // namespace re::render::re_scene

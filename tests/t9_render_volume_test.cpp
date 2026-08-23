@@ -36,6 +36,8 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <memory>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/vec3.hpp>
@@ -222,9 +224,9 @@ std::vector<std::uint8_t> renderAndReadPixel(const render::VolumeScene& scene,
 // ---------------------------------------------------------------------------
 
 TEST(T9RenderVolume, CenterPixelMatchesAnalyticRayCast) {
-    data::VolumeDataset dataset = makeUniformDataset();
+    auto dataset = std::make_shared<const data::VolumeDataset>(makeUniformDataset());
     volume::TransferFunction tf = makeGreenTransferFunction();
-    render::VolumeInstance instance{&dataset, &tf, glm::mat4(1.0f)};
+    render::VolumeInstance instance{dataset, tf, glm::mat4(1.0f)}; // dataset shared, TF by value (T13)
     render::VolumeScene scene;
     scene.volumes.push_back(instance);
 
@@ -239,7 +241,7 @@ TEST(T9RenderVolume, CenterPixelMatchesAnalyticRayCast) {
         worldRayForPixel(kTargetWidth / 2u, kTargetHeight / 2u, kTargetWidth,
                          kTargetHeight, camera);
     const volume::RgbaColor expected =
-        analyticRayCast(origin, direction, dataset, tf);
+        analyticRayCast(origin, direction, *dataset, tf);
 
     EXPECT_NEAR(pixel[0], static_cast<int>(expected.r * 255.0f + 0.5f),
                 kColorTolerance)
@@ -266,7 +268,7 @@ TEST(T9RenderVolume, AnalyticRayCastMatchesClosedForm) {
     //   out.rgb = sum over i of (1-0.5)^i * 0.5 * {0,1,0}
     //           = 0.5*(1 + 0.5 + 0.25 + 0.125) * {0,1,0} = 0.9375 * {0,1,0}
     // so the premultiplied result is {0, 0.9375, 0, 0.9375}.
-    data::VolumeDataset dataset = makeUniformDataset();
+    auto dataset = std::make_shared<const data::VolumeDataset>(makeUniformDataset());
     volume::TransferFunction tf = makeGreenTransferFunction();
 
     const render::Camera camera = makeCamera();
@@ -274,7 +276,7 @@ TEST(T9RenderVolume, AnalyticRayCastMatchesClosedForm) {
         worldRayForPixel(kTargetWidth / 2u, kTargetHeight / 2u, kTargetWidth,
                          kTargetHeight, camera);
     const volume::RgbaColor result =
-        analyticRayCast(origin, direction, dataset, tf);
+        analyticRayCast(origin, direction, *dataset, tf);
 
     EXPECT_NEAR(result.r, 0.0f, 1e-6f);
     EXPECT_NEAR(result.g, 0.9375f, 1e-6f);
@@ -291,12 +293,12 @@ TEST(T9RenderVolume, AnalyticRayCastMatchesClosedForm) {
 // ---------------------------------------------------------------------------
 
 TEST(T9RenderVolume, WorldAabbIsAnalytic) {
-    data::VolumeDataset dataset = makeUniformDataset();
+    auto dataset = std::make_shared<const data::VolumeDataset>(makeUniformDataset());
     volume::TransferFunction tf = makeGreenTransferFunction();
 
     // Identity model: the world AABB is exactly [0,1]^3.
     {
-        render::VolumeInstance identity{&dataset, &tf, glm::mat4(1.0f)};
+        render::VolumeInstance identity{dataset, tf, glm::mat4(1.0f)};
         const auto [minv, maxv] = render::VolumeRenderer::worldAabb(identity);
         EXPECT_EQ(minv, glm::vec3(0.0f, 0.0f, 0.0f));
         EXPECT_EQ(maxv, glm::vec3(1.0f, 1.0f, 1.0f));
@@ -309,7 +311,7 @@ TEST(T9RenderVolume, WorldAabbIsAnalytic) {
         glm::mat4 model(1.0f);
         model = glm::translate(model, glm::vec3(1.0f, 2.0f, 3.0f));
         model = glm::scale(model, glm::vec3(0.5f));
-        render::VolumeInstance scaled{&dataset, &tf, model};
+        render::VolumeInstance scaled{dataset, tf, model};
         const auto [minv, maxv] = render::VolumeRenderer::worldAabb(scaled);
         EXPECT_NEAR(minv.x, 1.0f, 1e-6f);
         EXPECT_NEAR(minv.y, 2.0f, 1e-6f);
@@ -333,9 +335,9 @@ TEST(T9RenderVolume, RejectsTooManyTransferFunctionPoints) {
             {v, volume::RgbaColor{0.0f, kTfGreen, 0.0f, kTfAlpha}});
     }
     volume::TransferFunction tooMany(std::move(points));
-    data::VolumeDataset dataset = makeUniformDataset();
+    auto dataset = std::make_shared<const data::VolumeDataset>(makeUniformDataset());
 
-    render::VolumeInstance instance{&dataset, &tooMany, glm::mat4(1.0f)};
+    render::VolumeInstance instance{dataset, tooMany, glm::mat4(1.0f)};
     render::VolumeScene scene;
     scene.volumes.push_back(instance);
 

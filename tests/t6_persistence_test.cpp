@@ -50,15 +50,15 @@ static constexpr float kTol = 1e-6f;
 // (1) Camera::rotate(1°) keeps &ReView identity, viewMatrix delta analytic
 // ---------------------------------------------------------------------------
 TEST(T6Persistence, CameraRotateKeepsReViewIdentity) {
-    render::AssetRegistry registry;
-    broker::Broker broker;
-    broker.registerMapper(std::make_unique<broker::CameraMapper>());
-    broker.registerMapper(std::make_unique<broker::MeshObjectMapper>(&registry));
+    auto registry = std::make_shared<render::AssetRegistry>();
+    auto broker = std::make_shared<broker::Broker>();
+    broker->registerMapper(std::make_unique<broker::CameraMapper>());
+    broker->registerMapper(std::make_unique<broker::MeshObjectMapper>(registry));
 
     scene::SceneStore sceneStore;
-    data::Mesh quad = makeQuad();
+    auto quad = std::make_shared<data::Mesh>(makeQuad());
     scene::MeshObject mo;
-    mo.mesh = &quad;
+    mo.mesh = quad; // shared asset reference (T13)
     mo.transform = glm::mat4(1.0f);
     uint64_t meshId = sceneStore.addMeshObject(mo);
 
@@ -71,16 +71,16 @@ TEST(T6Persistence, CameraRotateKeepsReViewIdentity) {
     // plane nullopt = 3D
     view.plane = std::nullopt;
 
-    broker::ViewCompositor compositor(&broker);
-    broker::ViewSynchronizer sync(&broker, &compositor);
-    broker::ViewBridge bridge(std::make_unique<broker::ViewSynchronizer>(&broker, &compositor),
-                              std::make_unique<broker::ViewCompositor>(&broker));
+    auto compositor = std::make_shared<broker::ViewCompositor>(broker);
+    broker::ViewSynchronizer sync(broker, compositor);
+    broker::ViewBridge bridge(std::make_shared<broker::ViewSynchronizer>(broker, compositor),
+                              std::make_shared<broker::ViewCompositor>(broker));
     // Use our sync/compositor for identity test to keep pointer stable
     // Do initial sync
     std::vector<scene::View> views = {view};
     auto r0 = sync.sync(views, sceneStore, 1);
     ASSERT_TRUE(r0.ok()) << r0.error().message;
-    render::View* rvBefore = compositor.getView(1, 1);
+    render::View* rvBefore = compositor->getView(1, 1);
     ASSERT_NE(rvBefore, nullptr) << "ReView must exist after first sync";
     const render::View* ptrBefore = rvBefore;
     glm::mat4 vmBefore = rvBefore->camera().view;
@@ -97,7 +97,7 @@ TEST(T6Persistence, CameraRotateKeepsReViewIdentity) {
     views[0] = view;
     auto r1 = sync.sync(views, sceneStore, 1);
     ASSERT_TRUE(r1.ok()) << r1.error().message;
-    render::View* rvAfter = compositor.getView(1, 1);
+    render::View* rvAfter = compositor->getView(1, 1);
     ASSERT_NE(rvAfter, nullptr);
     EXPECT_EQ(rvAfter, ptrBefore) << "Camera::rotate must keep &ReView identity (no map churn, explainable)";
 
@@ -122,18 +122,18 @@ TEST(T6Persistence, CameraRotateKeepsReViewIdentity) {
 // (2) 2D→3D toggle keeps &ReView identity, no map churn (AssetRegistry not touched)
 // ---------------------------------------------------------------------------
 TEST(T6Persistence, Toggle2D3DKeepsIdentityNoChurn) {
-    render::AssetRegistry registry;
-    broker::Broker broker;
-    broker.registerMapper(std::make_unique<broker::CameraMapper>());
-    broker.registerMapper(std::make_unique<broker::MeshObjectMapper>(&registry));
+    auto registry = std::make_shared<render::AssetRegistry>();
+    auto broker = std::make_shared<broker::Broker>();
+    broker->registerMapper(std::make_unique<broker::CameraMapper>());
+    broker->registerMapper(std::make_unique<broker::MeshObjectMapper>(registry));
 
     scene::SceneStore sceneStore;
-    data::Mesh quad = makeQuad();
+    auto quad = std::make_shared<data::Mesh>(makeQuad());
     scene::MeshObject mo1;
-    mo1.mesh = &quad;
+    mo1.mesh = quad; // shared asset reference (T13)
     uint64_t id1 = sceneStore.addMeshObject(mo1);
     scene::MeshObject mo2;
-    mo2.mesh = &quad; // same pointer dedup -> same AssetHandle
+    mo2.mesh = quad; // same content dedup -> same AssetHandle
     uint64_t id2 = sceneStore.addMeshObject(mo2);
 
     scene::View view;
@@ -144,14 +144,14 @@ TEST(T6Persistence, Toggle2D3DKeepsIdentityNoChurn) {
     view.itemIds = {id1};
     EXPECT_TRUE(view.plane.has_value());
 
-    broker::ViewCompositor compositor(&broker);
-    broker::ViewSynchronizer sync(&broker, &compositor);
+    auto compositor = std::make_shared<broker::ViewCompositor>(broker);
+    broker::ViewSynchronizer sync(broker, compositor);
     std::vector<scene::View> views = {view};
     ASSERT_TRUE(sync.sync(views, sceneStore, 7).ok());
-    render::View* rvBefore = compositor.getView(7, 42);
+    render::View* rvBefore = compositor->getView(7, 42);
     ASSERT_NE(rvBefore, nullptr);
     const void* ptrBefore = rvBefore;
-    size_t slotsBefore = registry.slotCount();
+    size_t slotsBefore = registry->slotCount();
     // After first sync, one slot for quad (dedup)
     EXPECT_EQ(slotsBefore, 1u) << "same quad pointer dedup to 1 slot (explainable)";
 
@@ -165,12 +165,12 @@ TEST(T6Persistence, Toggle2D3DKeepsIdentityNoChurn) {
     EXPECT_FALSE(view.plane.has_value());
     views[0] = view;
     ASSERT_TRUE(sync.sync(views, sceneStore, 7).ok());
-    render::View* rvAfter = compositor.getView(7, 42);
+    render::View* rvAfter = compositor->getView(7, 42);
     ASSERT_NE(rvAfter, nullptr);
     EXPECT_EQ(rvAfter, ptrBefore) << "2D→3D toggle must keep &ReView identity (same LayoutId+ViewId)";
     EXPECT_FALSE(rvAfter->clipPlane().has_value()) << "clipPlane cleared on 3D (nullopt)";
 
-    size_t slotsAfter = registry.slotCount();
+    size_t slotsAfter = registry->slotCount();
     EXPECT_EQ(slotsAfter, 1u) << "AssetRegistry not touched on toggle (mapCached hit, explainable)";
 
     // Ensure planeGen and itemsGen bumped, rectGen not
@@ -183,8 +183,8 @@ TEST(T6Persistence, Toggle2D3DKeepsIdentityNoChurn) {
 // ---------------------------------------------------------------------------
 TEST(T6Persistence, ResizeKeepsReViewIdentityOnlyFBOChanged) {
     render::AssetRegistry registry;
-    broker::Broker broker;
-    broker.registerMapper(std::make_unique<broker::CameraMapper>());
+    auto broker = std::make_shared<broker::Broker>();
+    broker->registerMapper(std::make_unique<broker::CameraMapper>());
 
     scene::SceneStore sceneStore;
     scene::View view;
@@ -193,11 +193,11 @@ TEST(T6Persistence, ResizeKeepsReViewIdentityOnlyFBOChanged) {
     view.camera = scene::Camera();
     view.plane = std::nullopt;
 
-    broker::ViewCompositor compositor(&broker);
-    broker::ViewSynchronizer sync(&broker, &compositor);
+    auto compositor = std::make_shared<broker::ViewCompositor>(broker);
+    broker::ViewSynchronizer sync(broker, compositor);
     std::vector<scene::View> views = {view};
     ASSERT_TRUE(sync.sync(views, sceneStore, 1).ok());
-    render::View* rvBefore = compositor.getView(1, 5);
+    render::View* rvBefore = compositor->getView(1, 5);
     ASSERT_NE(rvBefore, nullptr);
     ASSERT_NE(rvBefore->target(), nullptr);
     uint32_t fboIdBefore = rvBefore->target()->framebuffer().id();
@@ -219,7 +219,7 @@ TEST(T6Persistence, ResizeKeepsReViewIdentityOnlyFBOChanged) {
     view.setRect(rects[0]);
     views[0] = view;
     ASSERT_TRUE(sync.sync(views, sceneStore, 1).ok());
-    render::View* rvAfter = compositor.getView(1, 5);
+    render::View* rvAfter = compositor->getView(1, 5);
     ASSERT_NE(rvAfter, nullptr);
     EXPECT_EQ(rvAfter, rvBefore) << "Resize must keep &ReView identity";
     ASSERT_NE(rvAfter->target(), nullptr);
@@ -293,58 +293,58 @@ TEST(T6Persistence, LayoutResolveWithin1px) {
 // (5) Hybrid storeGen poll + dirtyFieldsSince bounded scan + markDirty push
 // ---------------------------------------------------------------------------
 TEST(T6Persistence, HybridDirtyTracking) {
-    scene::SceneStore sceneStore;
-    scene::ViewStore viewStore;
+    auto sceneStore = std::make_shared<scene::SceneStore>();
+    auto viewStore = std::make_shared<scene::ViewStore>();
 
     // Add a view to bump generations
     scene::View v;
     v.rect = scene::Rect{0, 0, 640, 480};
-    uint64_t vid = viewStore.addView(v);
-    uint64_t genAfterAdd = viewStore.storeGeneration();
+    uint64_t vid = viewStore->addView(v);
+    uint64_t genAfterAdd = viewStore->storeGeneration();
     EXPECT_NE(genAfterAdd, 0u) << "storeGeneration must bump after add (explainable)";
 
     // Poll early-out: same gen -> dirtyFieldsSince empty
-    auto emptyDirty = viewStore.dirtyFieldsSince(genAfterAdd);
+    auto emptyDirty = viewStore->dirtyFieldsSince(genAfterAdd);
     EXPECT_TRUE(emptyDirty.empty()) << "dirtyFieldsSince(same gen) must be empty (bounded early-out)";
 
     // Bounded scan: after bump, dirty includes at least one known FieldId
     // Simulate a rect change via bump
-    auto* vm = viewStore.getViewMut(vid);
+    auto* vm = viewStore->getViewMut(vid);
     ASSERT_NE(vm, nullptr);
     vm->setRect(scene::Rect{0, 0, 800, 600});
-    viewStore.bump(scene::FieldId::Rect);
-    uint64_t genAfterBump = viewStore.storeGeneration();
+    viewStore->bump(scene::FieldId::Rect);
+    uint64_t genAfterBump = viewStore->storeGeneration();
     EXPECT_GT(genAfterBump, genAfterAdd);
-    auto dirty = viewStore.dirtyFieldsSince(genAfterAdd);
+    auto dirty = viewStore->dirtyFieldsSince(genAfterAdd);
     EXPECT_FALSE(dirty.empty()) << "dirtyFieldsSince must return bounded set when gen changed";
     bool hasRect = false;
     for (auto f : dirty) if (f == scene::FieldId::Rect) hasRect = true;
     EXPECT_TRUE(hasRect) << "bounded dirty set must contain Rect after rect bump (explainable)";
 
     // markDirty push opt-in: even if we query with lastGen == current, push makes next poll see change
-    uint64_t beforePushGen = viewStore.storeGeneration();
-    viewStore.markDirty(vid, scene::FieldId::Plane);
-    uint64_t afterPushGen = viewStore.storeGeneration();
+    uint64_t beforePushGen = viewStore->storeGeneration();
+    viewStore->markDirty(vid, scene::FieldId::Plane);
+    uint64_t afterPushGen = viewStore->storeGeneration();
     EXPECT_GT(afterPushGen, beforePushGen) << "markDirty must bump storeGeneration (push opt-in)";
-    auto pushDirty = viewStore.dirtyFieldsSince(beforePushGen);
+    auto pushDirty = viewStore->dirtyFieldsSince(beforePushGen);
     bool hasPlane = false;
     for (auto f : pushDirty) if (f == scene::FieldId::Plane) hasPlane = true;
     EXPECT_TRUE(hasPlane) << "markDirty Plane must appear in dirtyFieldsSince bounded scan";
 
     // Broker synchronizer hybrid: early-out when no change
-    broker::Broker broker;
-    broker.registerMapper(std::make_unique<broker::CameraMapper>());
-    broker::ViewCompositor comp(&broker);
-    broker::ViewSynchronizer sync(&broker, &comp);
+    auto broker = std::make_shared<broker::Broker>();
+    broker->registerMapper(std::make_unique<broker::CameraMapper>());
+    auto comp = std::make_shared<broker::ViewCompositor>(broker);
+    broker::ViewSynchronizer sync(broker, comp);
     // First sync
     std::vector<scene::View> views;
-    if (auto* vv = viewStore.getView(vid)) views.push_back(*vv);
-    ASSERT_TRUE(sync.sync(views, sceneStore, 1).ok());
+    if (auto* vv = viewStore->getView(vid)) views.push_back(*vv);
+    ASSERT_TRUE(sync.sync(views, *sceneStore, 1).ok());
     uint64_t lastGen = sync.lastStoreGen();
     EXPECT_NE(lastGen, 0u);
 
     // Second sync with same views and scene (no change) -> early-out, lastStoreGen unchanged
-    auto r = sync.sync(views, sceneStore, 1);
+    auto r = sync.sync(views, *sceneStore, 1);
     ASSERT_TRUE(r.ok());
     EXPECT_EQ(sync.lastStoreGen(), lastGen) << "poll early-out must keep lastStoreGen when no change";
 
@@ -355,7 +355,7 @@ TEST(T6Persistence, HybridDirtyTracking) {
 
     // Exercise that push forces sync to process even though curGen would otherwise match poll
     // Do sync again with same views (itemsGen unchanged but push says Items dirty) -> should process
-    auto r2 = sync.sync(views, sceneStore, 1);
+    auto r2 = sync.sync(views, *sceneStore, 1);
     ASSERT_TRUE(r2.ok());
     EXPECT_NE(sync.lastStoreGen(), lastGen); // will update because pushDirties cleared and curGen same but we treat push as change -> we update lastStoreGen to curGen which equals lastGen -> but we still process; after processing push cleared, lastStoreGen remains curGen (same). So we check that dirty set was consumed.
     // After push consumed, dirtyFieldsSince(lastGen) should still have the push? Actually lastGen is old, so still returns. Check that after sync, push is cleared.
@@ -369,14 +369,15 @@ TEST(T6Persistence, HybridDirtyTracking) {
     scene::CompositeKey k3{1, 10, 42, 7, 0xDEADBEEFULL, 0x1234ULL};
     EXPECT_NE(k1, k3) << "different typeHash must not equal (explainable scope)";
 
-    // SceneStore dirtyFieldsSince bounded
-    scene::SceneStore s2;
-    uint64_t sGen0 = s2.storeGeneration();
+    // SceneStore dirtyFieldsSince bounded (shared-owned: the tracker below
+    // co-owns it, T13)
+    auto s2 = std::make_shared<scene::SceneStore>();
+    uint64_t sGen0 = s2->storeGeneration();
     data::Mesh m = makeQuad();
     scene::MeshObject mo;
-    mo.mesh = &m;
-    s2.addMeshObject(mo);
-    auto sd = s2.dirtyFieldsSince(sGen0);
+    mo.mesh = std::make_shared<data::Mesh>(std::move(m)); // shared ref (T13)
+    s2->addMeshObject(mo);
+    auto sd = s2->dirtyFieldsSince(sGen0);
     EXPECT_FALSE(sd.empty()) << "SceneStore dirtyFieldsSince must be bounded non-empty after add";
 
     // IJobExecutor inline fallback exercised (hybrid OCP threading)
@@ -391,13 +392,13 @@ TEST(T6Persistence, HybridDirtyTracking) {
     EXPECT_EQ(sum, 6) << "InlineJobExecutor parallelFor 0+1+2+3=6 explainable";
 
     // IDirtyTracker adapters: SceneStoreTracker / ViewStoreTracker DIP
-    broker::SceneStoreTracker sTracker(&s2);
-    EXPECT_EQ(sTracker.storeGeneration(), s2.storeGeneration());
+    broker::SceneStoreTracker sTracker(s2);
+    EXPECT_EQ(sTracker.storeGeneration(), s2->storeGeneration());
     auto sDirty = sTracker.dirtyFieldsSince(sGen0);
     EXPECT_FALSE(sDirty.empty()) << "SceneStoreTracker dirtyFieldsSince mirrors store (DIP)";
 
-    broker::ViewStoreTracker vTracker(&viewStore);
-    EXPECT_EQ(vTracker.storeGeneration(), viewStore.storeGeneration());
+    broker::ViewStoreTracker vTracker(viewStore);
+    EXPECT_EQ(vTracker.storeGeneration(), viewStore->storeGeneration());
     uint64_t vGen0 = vTracker.storeGeneration();
     vTracker.markDirty(vid, scene::FieldId::Items);
     EXPECT_GT(vTracker.storeGeneration(), vGen0) << "ViewStoreTracker markDirty must bump generation via tracker";
@@ -406,8 +407,8 @@ TEST(T6Persistence, HybridDirtyTracking) {
 // Layout count/set change inserts/erases ReViews
 TEST(T6Persistence, LayoutCountChangeInsertsErases) {
     render::AssetRegistry reg;
-    broker::Broker broker;
-    broker.registerMapper(std::make_unique<broker::CameraMapper>());
+    auto broker = std::make_shared<broker::Broker>();
+    broker->registerMapper(std::make_unique<broker::CameraMapper>());
     scene::SceneStore sceneStore;
 
     scene::View v1;
@@ -417,32 +418,32 @@ TEST(T6Persistence, LayoutCountChangeInsertsErases) {
     v2.id = 2;
     v2.rect = scene::Rect{640, 0, 640, 480};
 
-    broker::ViewCompositor comp(&broker);
-    broker::ViewSynchronizer sync(&broker, &comp);
+    auto comp = std::make_shared<broker::ViewCompositor>(broker);
+    broker::ViewSynchronizer sync(broker, comp);
 
     // Layout 1 with 1 view
     std::vector<scene::View> views1 = {v1};
     ASSERT_TRUE(sync.sync(views1, sceneStore, 100).ok());
-    EXPECT_EQ(comp.viewCount(), 1u) << "1 view layout must have 1 ReView (explainable)";
-    EXPECT_NE(comp.getView(100, 1), nullptr);
-    EXPECT_EQ(comp.getView(100, 2), nullptr);
+    EXPECT_EQ(comp->viewCount(), 1u) << "1 view layout must have 1 ReView (explainable)";
+    EXPECT_NE(comp->getView(100, 1), nullptr);
+    EXPECT_EQ(comp->getView(100, 2), nullptr);
 
     // Layout 1 with 2 views -> insert
     std::vector<scene::View> views2 = {v1, v2};
     ASSERT_TRUE(sync.sync(views2, sceneStore, 100).ok());
-    EXPECT_EQ(comp.viewCount(), 2u) << "2 views must insert second ReView (explainable)";
-    EXPECT_NE(comp.getView(100, 2), nullptr);
+    EXPECT_EQ(comp->viewCount(), 2u) << "2 views must insert second ReView (explainable)";
+    EXPECT_NE(comp->getView(100, 2), nullptr);
 
     // Back to 1 view -> erase
     ASSERT_TRUE(sync.sync(views1, sceneStore, 100).ok());
-    EXPECT_EQ(comp.viewCount(), 1u) << "erasing view must keep 1 ReView (explainable)";
-    EXPECT_EQ(comp.getView(100, 2), nullptr) << "erased view must be gone";
+    EXPECT_EQ(comp->viewCount(), 1u) << "erasing view must keep 1 ReView (explainable)";
+    EXPECT_EQ(comp->getView(100, 2), nullptr) << "erased view must be gone";
 
     // Different layoutId with same ViewId must not alias (scope isolation)
     std::vector<scene::View> viewsLayout200 = {v1};
     ASSERT_TRUE(sync.sync(viewsLayout200, sceneStore, 200).ok());
-    EXPECT_EQ(comp.viewCount(), 2u) << "different LayoutId with same ViewId must be distinct ReView (2 total: 100:1 and 200:1)";
-    EXPECT_NE(comp.getView(100, 1), comp.getView(200, 1)) << "different LayoutId must be distinct objects (explainable)";
+    EXPECT_EQ(comp->viewCount(), 2u) << "different LayoutId with same ViewId must be distinct ReView (2 total: 100:1 and 200:1)";
+    EXPECT_NE(comp->getView(100, 1), comp->getView(200, 1)) << "different LayoutId must be distinct objects (explainable)";
 }
 
 } // namespace re::tests

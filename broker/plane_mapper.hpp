@@ -21,11 +21,11 @@
 // render::PlaneRenderer maps it onto each instance's model matrix at draw
 // time), so no CPU quad vertex generation can bypass PlaneRenderer (T12 D:
 // PlaneGeometry::unitQuadXY stays a render/-internal detail reached through
-// broker). The mapped instance borrows two things, both documented:
+// broker). Ownership (T13): the mapped instance SHARES (shared_ptr<const T>)
+// both referenced objects — no borrows, nothing to outlive:
 //   - geometry: the mapper's program-duration static unit quad (see
 //     plane_mapper.cpp);
-//   - image: the caller's data::Image, which must outlive every draw that uses
-//     the instance (the renderer uploads it lazily via textureFor).
+//   - image: the scene object's shared image asset reference.
 //
 // `presentation` (scene::MeshMaterialDesc) deliberately has no RE counterpart:
 // the textured-plane path is an UNLIT texture display by design (FR-render.5's

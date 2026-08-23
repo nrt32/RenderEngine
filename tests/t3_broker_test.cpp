@@ -89,8 +89,8 @@ TEST(T3Broker, EmptyRegisterGetSameAddress) {
     EXPECT_TRUE(broker.empty()) << "fresh Broker must be empty (size 0)";
     EXPECT_EQ(broker.size(), 0u);
 
-    render::AssetRegistry registry;
-    auto mapper = std::make_unique<broker::MeshObjectMapper>(&registry);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    auto mapper = std::make_unique<broker::MeshObjectMapper>(registry);
     broker::MeshObjectMapper* raw = mapper.get();
     std::type_index expectedTi = std::type_index(typeid(broker::MeshObjectMapper));
     EXPECT_EQ(expectedTi, broker::Broker::typeIndex<broker::MeshObjectMapper>())
@@ -137,13 +137,13 @@ TEST(T3Broker, AppTypedRegisterAndGet) {
 
 TEST(T3Broker, StaleGenerationPlusOneReturnsCode2) {
     broker::AssetStore store;
-    data::Mesh mesh = makeTriangleMesh();
+    auto mesh = std::make_shared<const data::Mesh>(makeTriangleMesh());
     auto hRes = store.registerAsset(mesh);
     ASSERT_TRUE(hRes.ok()) << "registerAsset must succeed";
     broker::BrokerAssetHandle h = *hRes;
     auto live = store.resolve(h);
     ASSERT_TRUE(live.ok());
-    EXPECT_EQ(*live, &mesh) << "live handle must resolve to original mesh pointer (explainable)";
+    EXPECT_EQ(*live, mesh) << "live handle must resolve to the same shared asset (explainable)";
 
     broker::BrokerAssetHandle stale{h.index, static_cast<uint32_t>(h.generation + 1)};
     auto staleRes = store.resolve(stale);
@@ -166,21 +166,21 @@ TEST(T3Broker, StaleGenerationPlusOneReturnsCode2) {
 // ---------------------------------------------------------------------------
 
 TEST(T3Broker, SameMeshPointerDedupsViaBroker) {
-    render::AssetRegistry registry;
+    auto registry = std::make_shared<render::AssetRegistry>();
     broker::Broker broker;
-    broker.registerMapper(std::make_unique<broker::MeshObjectMapper>(&registry));
+    broker.registerMapper(std::make_unique<broker::MeshObjectMapper>(registry));
     auto* mapper = broker.get<broker::MeshObjectMapper>();
     ASSERT_NE(mapper, nullptr);
 
-    data::Mesh mesh = makeTriangleMesh();
+    auto mesh = std::make_shared<data::Mesh>(makeTriangleMesh());
     scene::MeshObject obj1;
     obj1.id = 1;
-    obj1.mesh = &mesh;
+    obj1.mesh = mesh; // shared asset reference (T13)
     obj1.transform = glm::mat4(1.0f);
     obj1.generation = 0;
     scene::MeshObject obj2;
     obj2.id = 2;
-    obj2.mesh = &mesh;
+    obj2.mesh = mesh;
     obj2.transform = glm::mat4(1.0f);
     obj2.generation = 0;
     scene::TranslateContext ctx;
@@ -190,12 +190,12 @@ TEST(T3Broker, SameMeshPointerDedupsViaBroker) {
     auto r2 = mapper->mapCached(obj2, ctx);
     ASSERT_TRUE(r2.ok()) << "second mapCached same pointer must succeed (dedup): " << r2.error().message;
 
-    EXPECT_EQ(registry.slotCount(), 1u) << "same data::Mesh pointer twice must dedup to 1 slot (explainable)";
+    EXPECT_EQ(registry->slotCount(), 1u) << "same data::Mesh pointer twice must dedup to 1 slot (explainable)";
     EXPECT_EQ(r1->mesh.index, r2->mesh.index) << "both handles must share same index (dedup)";
     EXPECT_EQ(r1->mesh.generation, r2->mesh.generation) << "same generation (explainable)";
 
-    auto g1 = registry.resolve(r1->mesh);
-    auto g2 = registry.resolve(r2->mesh);
+    auto g1 = registry->resolve(r1->mesh);
+    auto g2 = registry->resolve(r2->mesh);
     ASSERT_TRUE(g1.ok());
     ASSERT_TRUE(g2.ok());
     EXPECT_EQ((*g1)->vaoId(), (*g2)->vaoId()) << "same GPU object must have same vaoId";
@@ -207,16 +207,16 @@ TEST(T3Broker, SameMeshPointerDedupsViaBroker) {
 // ---------------------------------------------------------------------------
 
 TEST(T3Broker, ForwardingRenderStillGreen) {
-    render::AssetRegistry registry;
+    auto registry = std::make_shared<render::AssetRegistry>();
     broker::Broker broker;
-    broker.registerMapper(std::make_unique<broker::MeshObjectMapper>(&registry));
+    broker.registerMapper(std::make_unique<broker::MeshObjectMapper>(registry));
     auto* mapper = broker.get<broker::MeshObjectMapper>();
     ASSERT_NE(mapper, nullptr);
 
-    data::Mesh quad = makeQuadMesh();
+    auto quad = std::make_shared<data::Mesh>(makeQuadMesh());
     scene::MeshObject appObj;
     appObj.id = 42;
-    appObj.mesh = &quad;
+    appObj.mesh = quad; // shared asset reference (T13)
     appObj.transform = glm::mat4(1.0f);
     scene::TranslateContext ctx;
     auto mapped = mapper->map(appObj, ctx);
@@ -230,12 +230,13 @@ TEST(T3Broker, ForwardingRenderStillGreen) {
     constexpr std::uint8_t kExpG = 102u;
     constexpr std::uint8_t kExpB = 204u;
 
-    render::PhongMaterial material(kBaseColor);
-    ASSERT_FALSE(material.isTransparent());
+    auto material =
+        std::make_shared<render::PhongMaterial>(kBaseColor);
+    ASSERT_FALSE(material->isTransparent());
 
     render::MeshInstance inst;
     inst.mesh = mapped->mesh;
-    inst.material = &material;
+    inst.material = material; // shared reference (T13)
     inst.model = glm::mat4(1.0f);
     render::MeshScene scene;
     scene.meshes.push_back(inst);
@@ -261,7 +262,7 @@ TEST(T3Broker, ForwardingRenderStillGreen) {
     target.height = kH;
     target.clearColor = glm::vec4(0, 0, 0, 0);
 
-    render::MeshRenderer renderer(&registry, nullptr);
+    render::MeshRenderer renderer(registry, nullptr);
     auto rr = renderer.render(scene, cam, target);
     ASSERT_TRUE(rr.ok()) << "MeshRenderer::render via Broker handle must succeed: " << rr.error().message;
 
@@ -281,11 +282,11 @@ TEST(T3Broker, ForwardingRenderStillGreen) {
 // ---------------------------------------------------------------------------
 
 TEST(T3Broker, ViewBridgeIsCoordinatorNotMapper) {
-    broker::Broker broker;
-    broker.registerMapper(std::make_unique<broker::CameraMapper>());
-    auto sync = std::make_unique<broker::ViewSynchronizer>(&broker);
-    auto comp = std::make_unique<broker::ViewCompositor>(&broker);
-    broker::ViewBridge bridge(std::move(sync), std::move(comp));
+    auto broker = std::make_shared<broker::Broker>();
+    broker->registerMapper(std::make_unique<broker::CameraMapper>());
+    auto sync = std::make_shared<broker::ViewSynchronizer>(broker);
+    auto comp = std::make_shared<broker::ViewCompositor>(broker);
+    broker::ViewBridge bridge(sync, comp);
     broker::IViewBridge* iface = &bridge;
     scene::SceneStore store;
     std::vector<scene::View> views;

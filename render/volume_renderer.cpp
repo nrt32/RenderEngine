@@ -126,8 +126,12 @@ data::Result<void> VolumeRenderer::uploadTexture(
 }
 
 data::Result<core::Texture3D*> VolumeRenderer::textureFor(
-    const data::VolumeDataset& dataset) {
-    const auto it = textures_.find(&dataset);
+    const std::shared_ptr<const data::VolumeDataset>& dataset) {
+    // Weak-observer cache key (T13): the key expires together with its asset,
+    // so a destroyed dataset can never be looked up again and expired entries
+    // are pruned here rather than served.
+    const WeakAssetKey<data::VolumeDataset> key = dataset;
+    auto it = textures_.find(key);
     if (it != textures_.end()) {
         return data::makeValue<core::Texture3D*>(&it->second);
     }
@@ -136,12 +140,13 @@ data::Result<core::Texture3D*> VolumeRenderer::textureFor(
         return data::makeError<core::Texture3D*>(texture.error().code,
                                                  texture.error().message);
     }
-    auto upload = uploadTexture(dataset, *texture);
+    auto upload = uploadTexture(*dataset, *texture);
     if (upload.failed()) {
         return data::makeError<core::Texture3D*>(upload.error().code,
                                                  upload.error().message);
     }
-    auto inserted = textures_.emplace(&dataset, std::move(*texture));
+    textures_.erase(key); // prune any expired twin that hashed to this key
+    auto inserted = textures_.emplace(key, std::move(*texture));
     return data::makeValue<core::Texture3D*>(&inserted.first->second);
 }
 
@@ -205,17 +210,16 @@ data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
     program->setUniformInt("uVolume", 0); // sampler reads texture unit 0
 
     for (const VolumeInstance& instance : scene.volumes) {
-        if (instance.dataset == nullptr ||
-            instance.transferFunction == nullptr) {
+        if (!instance.dataset) {
             continue;
         }
-        if (instance.transferFunction->size() > kMaxTfPoints) {
+        if (instance.transferFunction.size() > kMaxTfPoints) {
             return data::makeError<void>(
                 1, "VolumeRenderer: transfer function has more than " +
                        std::to_string(kMaxTfPoints) + " control points");
         }
 
-        auto texture = textureFor(*instance.dataset);
+        auto texture = textureFor(instance.dataset);
         if (texture.failed()) {
             return data::makeError<void>(texture.error().code,
                                          texture.error().message);
@@ -234,7 +238,7 @@ data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
         program->setUniformMat4("uInvModel", invModel);
         program->setUniformVec3("uSize", size);
         program->setUniformFloat("uStepLength", kDefaultStepLength);
-        uploadTransferFunction(*instance.transferFunction);
+        uploadTransferFunction(instance.transferFunction);
 
         auto draw = core::drawElements(*quadVao, screenQuadIndexCount_);
         if (draw.failed()) {
@@ -277,13 +281,13 @@ data::Result<void> VolumeRenderer::drawLayer(const VolumeScene& scene, const Cam
     program->setUniformMat4("uViewProj", camera.proj * camera.view);
     program->setUniformInt("uVolume", 0);
     for (const VolumeInstance& instance : scene.volumes) {
-        if (instance.dataset == nullptr || instance.transferFunction == nullptr) {
+        if (!instance.dataset) {
             continue;
         }
-        if (instance.transferFunction->size() > kMaxTfPoints) {
+        if (instance.transferFunction.size() > kMaxTfPoints) {
             return data::makeError<void>(1, "VolumeRenderer: transfer function has more than " + std::to_string(kMaxTfPoints) + " control points");
         }
-        auto texture = textureFor(*instance.dataset);
+        auto texture = textureFor(instance.dataset);
         if (texture.failed()) {
             return data::makeError<void>(texture.error().code, texture.error().message);
         }
@@ -297,7 +301,7 @@ data::Result<void> VolumeRenderer::drawLayer(const VolumeScene& scene, const Cam
         program->setUniformMat4("uInvModel", invModel);
         program->setUniformVec3("uSize", size);
         program->setUniformFloat("uStepLength", kDefaultStepLength);
-        uploadTransferFunction(*instance.transferFunction);
+        uploadTransferFunction(instance.transferFunction);
         auto draw = core::drawElements(*quadVao, screenQuadIndexCount_);
         if (draw.failed()) {
             return draw;

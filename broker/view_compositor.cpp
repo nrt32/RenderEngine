@@ -7,19 +7,19 @@
 
 namespace re::broker {
 
-render::View* ViewCompositor::getView(uint64_t layoutId, uint64_t viewId) noexcept {
+render::View* /*borrow*/ ViewCompositor::getView(uint64_t layoutId, uint64_t viewId) noexcept {
     StableKey k{1, layoutId, viewId};
     auto it = views_.find(k);
     return it == views_.end() ? nullptr : it->second.get();
 }
 
-const render::View* ViewCompositor::getView(uint64_t layoutId, uint64_t viewId) const noexcept {
+const render::View* /*borrow*/ ViewCompositor::getView(uint64_t layoutId, uint64_t viewId) const noexcept {
     StableKey k{1, layoutId, viewId};
     auto it = views_.find(k);
     return it == views_.end() ? nullptr : it->second.get();
 }
 
-render::View* ViewCompositor::ensureView(uint64_t layoutId, const scene::View& appView) {
+render::View* /*borrow*/ ViewCompositor::ensureView(uint64_t layoutId, const scene::View& appView) {
     StableKey k{1, layoutId, appView.id};
     auto it = views_.find(k);
     if (it != views_.end()) {
@@ -29,7 +29,7 @@ render::View* ViewCompositor::ensureView(uint64_t layoutId, const scene::View& a
     render::ViewRect r{appView.rect.x, appView.rect.y, appView.rect.w, appView.rect.h};
     auto rv = std::make_unique<render::View>(r);
     // Initialize camera and clipPlane via synchronizer later; just ensure target.
-    auto* raw = rv.get();
+    render::View* /*borrow*/ raw = rv.get(); // returned as a non-owning view over views_
     views_.emplace(k, std::move(rv));
     return raw;
 }
@@ -60,7 +60,7 @@ data::Result<void> ViewCompositor::renderAll() {
     return data::Result<void>(data::value);
 }
 
-data::Result<void> ViewCompositor::presentAll(core::Framebuffer* destination) {
+data::Result<void> ViewCompositor::presentAll(core::Framebuffer* /*borrow*/ destination) {
     for (auto& kv : views_) {
         auto* rv = kv.second.get();
         if (!rv) continue;

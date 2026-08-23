@@ -6,7 +6,8 @@
 // Stateless rendering: VolumeRenderer::render(scene, camera, target) receives
 // all of its data per call; the renderer owns only GL resources (its cached
 // ray-cast shader program, one shared full-screen quad VAO/VBO, and the GPU 3D
-// textures it has uploaded, keyed by data::VolumeDataset pointer). A dataset is
+// textures it has uploaded, keyed by a weak observer of the shared CPU
+// dataset — see texture_cache_key.hpp). A dataset is
 // uploaded to the GPU once and reused across instances and views.
 //
 // The renderer consumes the pure volume/ math (SPEC §3: "VolumeRenderer
@@ -27,6 +28,7 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 #include <utility>
@@ -41,6 +43,7 @@
 #include "core/vertex_buffer.hpp"
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
+#include "render/texture_cache_key.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
 #include "volume/transfer_function.hpp"
 
@@ -57,8 +60,15 @@ namespace re::render {
 /// box of the 8 transformed corners of [0,1]^3 (exact for axis-aligned
 /// scaling/translation, which is the v1 case).
 struct VolumeInstance {
-    const data::VolumeDataset* dataset = nullptr;
-    const volume::TransferFunction* transferFunction = nullptr;
+    /// Shared reference to the immutable volume dataset (T13: co-owned with
+    /// the scene object / store — no raw borrow to track).
+    std::shared_ptr<const data::VolumeDataset> dataset = nullptr;
+    /// Transfer function carried BY VALUE (T13: a TF is a small immutable
+    /// control-point ramp — copying it into the per-frame instance removes
+    /// the last borrow from this path; null-pointer hazards are impossible).
+    /// Default ramp = grayscale black→white (the identity display ramp).
+    volume::TransferFunction transferFunction{
+        {{0.0f, {0, 0, 0, 0}}, {1.0f, {1, 1, 1, 1}}}};
     glm::mat4 model{1.0f};
 };
 
@@ -77,9 +87,9 @@ inline constexpr float kDefaultStepLength = 0.25f;
 ///
 /// Owns only GL resources: the cached ray-cast shader program, one shared
 /// full-screen quad (every volume is ray-cast over the whole viewport), and a
-/// 3D-texture cache keyed by dataset pointer so each data::VolumeDataset is
-/// uploaded to the GPU once. The transfer function is uploaded per instance
-/// from its control points.
+/// 3D-texture cache keyed by a weak observer of the shared CPU dataset (T13)
+/// so each data::VolumeDataset is uploaded to the GPU once. The transfer
+/// function is uploaded per instance from its control points.
 class VolumeRenderer : public IRenderer {
    public:
     /// Render `scene` into `target` from `camera`. On success the target
@@ -114,12 +124,17 @@ class VolumeRenderer : public IRenderer {
 
     /// Ensure the shared full-screen quad geometry is uploaded, returning a
     /// pointer to the cached vertex array (non-null on success).
+    /// @note lifetime: non-owning view of renderer-owned storage (the
+    /// screenQuadVao_ `optional<>` member) — valid while this renderer is.
     data::Result<core::VertexArray*> screenQuad();
 
-    /// Ensure `dataset` is uploaded as a GPU 3D texture (cached by pointer),
-    /// returning a pointer to the cached texture (non-null on success).
+    /// Ensure `dataset` is uploaded as a GPU 3D texture (cached by weak
+    /// OBSERVER of the shared asset — see texture_cache_key.hpp), returning a
+    /// pointer to the cached texture (non-null on success).
+    /// @note lifetime: non-owning view of renderer-owned storage (the
+    /// textures_ map entry) — valid until this renderer evicts it or dies.
     data::Result<core::Texture3D*> textureFor(
-        const data::VolumeDataset& dataset);
+        const std::shared_ptr<const data::VolumeDataset>& dataset);
 
     /// Upload `dataset` to a fresh texture bound to `*out` (used by
     /// textureFor).
@@ -136,7 +151,14 @@ class VolumeRenderer : public IRenderer {
     std::optional<core::ElementBuffer>
         screenQuadEbo_; // index buffer referenced by screenQuadVao_
     std::size_t screenQuadIndexCount_{6u}; // two triangles
-    std::unordered_map<const data::VolumeDataset*, core::Texture3D> textures_;
+    /// GPU 3D-texture cache keyed by a weak OBSERVER of the shared CPU
+    /// dataset (T13): an expired dataset's key expires with it — the cache
+    /// can never serve stale GPU data for a destroyed asset, and it never
+    /// keeps a CPU asset alive by itself.
+    std::unordered_map<WeakAssetKey<data::VolumeDataset>, core::Texture3D,
+                       WeakAssetOwnerHash<data::VolumeDataset>,
+                       WeakAssetOwnerEq<data::VolumeDataset>>
+        textures_;
 };
 
 } // namespace re::render

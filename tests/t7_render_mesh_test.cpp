@@ -21,6 +21,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/vec3.hpp>
@@ -150,18 +152,19 @@ TEST(T7RenderMesh, OpaqueQuadCenterPixelMatchesBaseColor) {
     ASSERT_TRUE(targetFramebuffer->isComplete());
     targetFramebuffer->unbind();
 
-    render::PhongMaterial material(kBaseColor);
-    ASSERT_FALSE(material.isTransparent());
+    auto material =
+        std::make_shared<render::PhongMaterial>(kBaseColor);
+    ASSERT_FALSE(material->isTransparent());
 
     data::Mesh quad = makeQuadMesh();
     // The scene carries the mesh's AssetHandle (SPEC §9 V2.5), resolved by the
-    // renderer through the shared asset registry.
-    render::AssetRegistry registry;
-    const auto handle = registry.registerAsset(quad);
+    // renderer through the shared asset registry (shared handle, T13).
+    auto registry = std::make_shared<render::AssetRegistry>();
+    const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, material, glm::mat4(1.0f)});
 
     render::Camera camera = makeCamera();
     render::RenderTarget rt;
@@ -172,7 +175,7 @@ TEST(T7RenderMesh, OpaqueQuadCenterPixelMatchesBaseColor) {
 
     // No transparency pipeline injected: an opaque-only scene must render via
     // the plain forward pass.
-    render::MeshRenderer renderer(&registry, nullptr);
+    render::MeshRenderer renderer(registry, nullptr);
     auto result = renderer.render(scene, camera, rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
@@ -196,7 +199,7 @@ TEST(T7RenderMesh, OpaqueQuadCenterPixelMatchesBaseColor) {
 // ---------------------------------------------------------------------------
 
 TEST(T7RenderMesh, OpaqueSceneAlphaIsOneAndPipelineStaysOff) {
-    SpyTransparencyPipeline spy;
+    auto spy = std::make_shared<SpyTransparencyPipeline>();
 
     auto targetColor = core::Texture2D::create();
     auto targetFramebuffer = core::Framebuffer::create();
@@ -211,16 +214,17 @@ TEST(T7RenderMesh, OpaqueSceneAlphaIsOneAndPipelineStaysOff) {
     ASSERT_TRUE(targetFramebuffer->isComplete());
     targetFramebuffer->unbind();
 
-    render::PhongMaterial material(kBaseColor);
-    ASSERT_FALSE(material.isTransparent());
+    auto material =
+        std::make_shared<render::PhongMaterial>(kBaseColor);
+    ASSERT_FALSE(material->isTransparent());
 
     data::Mesh quad = makeQuadMesh();
-    render::AssetRegistry registry;
-    const auto handle = registry.registerAsset(quad);
+    auto registry = std::make_shared<render::AssetRegistry>();
+    const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, material, glm::mat4(1.0f)});
 
     render::Camera camera = makeCamera();
     render::RenderTarget rt;
@@ -230,7 +234,7 @@ TEST(T7RenderMesh, OpaqueSceneAlphaIsOneAndPipelineStaysOff) {
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     // Inject the spy. The opaque-only scene must NOT engage it (FR-render.3).
-    render::MeshRenderer renderer(&registry, &spy);
+    render::MeshRenderer renderer(registry, spy);
     auto result = renderer.render(scene, camera, rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
 
@@ -243,8 +247,8 @@ TEST(T7RenderMesh, OpaqueSceneAlphaIsOneAndPipelineStaysOff) {
     EXPECT_EQ(pixels[3], kExpectedA) << "alpha channel (== 255 / 1.0)";
 
     // The spy must confirm the pipeline was never engaged.
-    EXPECT_EQ(spy.beginCount(), 0) << "OIT pipeline must stay OFF for opaque";
-    EXPECT_FALSE(spy.isEngaged());
+    EXPECT_EQ(spy->beginCount(), 0) << "OIT pipeline must stay OFF for opaque";
+    EXPECT_FALSE(spy->isEngaged());
     EXPECT_FALSE(core::hasPendingGlError());
 }
 

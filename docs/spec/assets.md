@@ -74,10 +74,13 @@ approaches and converges on the last:
 > **Implementation gap (Sr. review 2026-08-23 — Task T14):** the GPU-side store
 > is currently **mesh-only**. `render::AssetRegistry` dedups `MeshGeometry`
 > (content-hash + dual-key shim), but volume/image GPU textures live in
-> per-renderer pointer-keyed caches (`VolumeRenderer`/`PlaneRenderer`
-> `textures_` maps) with **no invalidation and no cross-instance dedup** — two
-> renderer instances double-upload the same dataset, and freeing/mutating the
-> CPU object dangles the cache key. `broker::AssetStore` mirrors the mesh-only
+> per-renderer caches (`VolumeRenderer`/`PlaneRenderer` `textures_` maps) with
+> **no cross-instance dedup** — two
+> renderer instances double-upload the same dataset. (`T13 update:` those cache
+> keys are now weak observers of shared CPU assets, so a destroyed asset's key
+> expires with it — the dangling-key hazard is fixed; the store unification,
+> cross-instance dedup, and explicit invalidation remain T14 work.)
+> `broker::AssetStore` mirrors the mesh-only
 > shape even though `scene::computeContentHash` already has unused
 > `VolumeDataset`/`Image` overloads. T14 closes this: one typed multi-kind
 > store (`AssetStore<Mesh|VolumeDataset|Image>` → `MeshGeometry|Texture3D|

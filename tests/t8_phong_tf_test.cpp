@@ -85,35 +85,44 @@ TEST(T8PhongDeferred, BaseColorAlphaDrivesTransparencyInvariant) {
 }
 
 // ---------------------------------------------------------------------------
-// (2) VolumeRenderer still takes TransferFunction* separately (no regression)
+// (2) VolumeRenderer still carries the TransferFunction as its OWN field,
+//     strictly separate from the dataset/material boundary (§12.5). T13 note:
+//     the field TYPE evolved from `const TransferFunction*` to an owned
+//     by-value `TransferFunction` (and the dataset ref to a shared_ptr), so
+//     the old pointer-identity assertions became value-identity assertions —
+//     the separation being tested is unchanged.
 // ---------------------------------------------------------------------------
 
 TEST(T8PhongDeferred, VolumeRendererTakesTransferFunctionSeparately) {
-    // VolumeInstance must carry dataset and transferFunction as two distinct
-    // pointers (TF beside VolumeMaterial, not owned — §12.5). This is the
-    // structural guarantee that the VolumeRenderer boundary did not regress to
-    // "VolumeMaterial owns TF".
+    // VolumeInstance must carry dataset and transferFunction as two DISTINCT
+    // members (TF beside VolumeMaterial, not owned by it — §12.5). This is
+    // the structural guarantee that the VolumeRenderer boundary did not
+    // regress to "VolumeMaterial owns TF".
     re::render::VolumeInstance inst;
-    // Both pointers exist and are independently settable (compile-time + runtime).
-    inst.dataset = nullptr;
-    inst.transferFunction = nullptr;
+    // Both fields exist and are independently settable (compile-time +
+    // runtime): the dataset starts as the null shared reference; the TF
+    // field's default ramp has exactly 2 control points (black→white).
     EXPECT_EQ(inst.dataset, nullptr);
-    EXPECT_EQ(inst.transferFunction, nullptr);
+    EXPECT_EQ(inst.transferFunction.size(), 2u)
+        << "default TF ramp has exactly 2 control points (explainable)";
 
     // Construct distinct objects and assign separately — proves no bundling.
-    re::data::VolumeDataset dummyDataset(2, 2, 2,
-                                         std::vector<float>(8, 0.5f)); // minimal 2³ dataset
+    auto dummyDataset =
+        std::make_shared<re::data::VolumeDataset>(2, 2, 2,
+                                                  std::vector<float>(8, 0.5f)); // minimal 2³ dataset
     re::volume::TransferFunction tf(std::vector<re::volume::TransferFunction::ControlPoint>{
         {0.0f, re::volume::RgbaColor{0.0f, 0.0f, 0.0f, 0.0f}},
         {1.0f, re::volume::RgbaColor{1.0f, 1.0f, 1.0f, 1.0f}},
+        {0.5f, re::volume::RgbaColor{0.5f, 0.5f, 0.5f, 0.5f}},
     });
-    inst.dataset = &dummyDataset;
-    inst.transferFunction = &tf;
-    EXPECT_EQ(inst.dataset, &dummyDataset) << "dataset pointer set separately";
-    EXPECT_EQ(inst.transferFunction, &tf) << "TF pointer set separately";
-    EXPECT_NE(static_cast<const void*>(inst.dataset),
-              static_cast<const void*>(inst.transferFunction))
-        << "dataset and TF are distinct allocations (separate boundary)";
+    inst.dataset = dummyDataset;
+    inst.transferFunction = tf;
+    EXPECT_EQ(inst.dataset, dummyDataset) << "dataset shared reference set separately";
+    EXPECT_EQ(inst.transferFunction.size(), 3u)
+        << "TF assigned separately (3-point ramp distinguishes it from the 2-point default)";
+    EXPECT_NE(static_cast<const void*>(inst.dataset.get()),
+              static_cast<const void*>(&inst.transferFunction))
+        << "dataset and TF live in distinct storage (separate boundary)";
 
     // VolumeRenderer::render signature still takes VolumeScene (which holds
     // VolumeInstance with separate TF) — the typed API did not change.

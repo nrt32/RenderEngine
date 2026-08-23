@@ -20,9 +20,9 @@ namespace re::render {
 // a fixed head-on directional light from +Z with ambient=0, diffuse=1,
 // specular=0, so a front-facing surface renders at exactly the base color.
 
-MeshRenderer::MeshRenderer(AssetRegistry* registry,
-                           ITransparencyPipeline* transparency)
-    : registry_(registry), transparency_(transparency) {}
+MeshRenderer::MeshRenderer(std::shared_ptr<AssetRegistry> registry,
+                           std::shared_ptr<ITransparencyPipeline> transparency)
+    : registry_(std::move(registry)), transparency_(std::move(transparency)) {}
 
 data::Result<core::ShaderProgram*> MeshRenderer::opaqueProgram() {
     if (opaqueProgram_.has_value()) {
@@ -41,9 +41,12 @@ data::Result<core::ShaderProgram*> MeshRenderer::opaqueProgram() {
 
 data::Result<MeshGeometry*> MeshRenderer::geometryFor(
     const AssetHandle& handle) {
-    if (registry_ == nullptr) {
+    if (!registry_) {
+        // Typed error (code 4), never a null dereference: a renderer built
+        // with a null registry (possible only by explicit request — member
+        // init order can never produce one, T13) fails loudly per draw.
         return data::makeError<MeshGeometry*>(
-            1, "MeshRenderer: no asset registry injected");
+            4, "MeshRenderer: no asset registry injected");
     }
     // The shared AssetRegistry is the single owner of GPU geometry (SPEC §9
     // V2.5): resolving the handle returns the one GPU object registered for
@@ -67,7 +70,7 @@ data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
     program->setUniformMat4("uProj", camera.proj);
 
     for (const MeshInstance& instance : scene.meshes) {
-        if (instance.material == nullptr || instance.mesh.isNull()) {
+        if (!instance.material || instance.mesh.isNull()) {
             // The null AssetHandle {0,0} is the "no mesh" instance (reserved,
             // render/asset_registry.hpp); it is skipped like the pre-V2 null
             // mesh pointer.
@@ -102,7 +105,7 @@ data::Result<void> MeshRenderer::drawTransparent(const MeshScene& scene,
         return data::Result<void>(data::value);
     }
     for (const MeshInstance& instance : scene.meshes) {
-        if (instance.material == nullptr || instance.mesh.isNull()) {
+        if (!instance.material || instance.mesh.isNull()) {
             continue;
         }
         if (!instance.material->isTransparent()) {
@@ -135,8 +138,7 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
     // characteristic of the scene; engaged only when transparency is present).
     bool anyTransparent = false;
     for (const MeshInstance& instance : scene.meshes) {
-        if (instance.material != nullptr &&
-            instance.material->isTransparent()) {
+        if (instance.material && instance.material->isTransparent()) {
             anyTransparent = true;
             break;
         }
@@ -214,7 +216,7 @@ data::Result<void> MeshRenderer::drawLayer(const MeshScene& scene, const Camera&
     program->setUniformMat4("uView", camera.view);
     program->setUniformMat4("uProj", camera.proj);
     for (const MeshInstance& instance : scene.meshes) {
-        if (instance.material == nullptr || instance.mesh.isNull()) {
+        if (!instance.material || instance.mesh.isNull()) {
             continue;
         }
         // For View compositing we draw every instance (transparent handling via

@@ -45,10 +45,12 @@ inline bool operator!=(const BrokerAssetHandle& a,
 ///
 /// T7 content-hash dedup: dedup is by `contentHash` (hash of stable bytes,
 /// not pointer). Two distinct `data::Mesh` allocations with identical bytes
-/// share the same handle — content-hash path (SPEC §7 T7). Pointer identity
-/// `byObject_` kept as dual-key shim for V3.6 diagnostics (not dedup key).
-/// Generational slot table gives the same typed error codes as
-/// render::AssetRegistry:
+/// share the same handle — content-hash path (SPEC §7 T7). Ownership (T13):
+/// each slot holds a SHARED reference (`std::shared_ptr<const data::Mesh>`) —
+/// the store co-owns every asset it indexes, so a live handle always resolves
+/// to live bytes. Pointer identity kept only as a diagnostic shim key (erased
+/// on unregister; not the dedup key). Generational slot table gives the same
+/// typed error codes as render::AssetRegistry:
 ///   code 1 — index out of range
 ///   code 2 — generation mismatch / stale handle (generation+1 probe)
 ///   code 3 — freed slot
@@ -56,17 +58,23 @@ inline bool operator!=(const BrokerAssetHandle& a,
 /// render/ (ACL), so it may include scene/asset_id.hpp for hash.
 class AssetStore {
    public:
+    /// The owned immutable view of a stored asset (resolve() returns a copy:
+    /// callers share ownership, never borrow).
+    using SharedMesh = std::shared_ptr<const data::Mesh>;
+
     AssetStore() = default;
     AssetStore(const AssetStore&) = delete;
     AssetStore& operator=(const AssetStore&) = delete;
     AssetStore(AssetStore&&) noexcept = default;
     AssetStore& operator=(AssetStore&&) noexcept = default;
 
-    /// Register mesh; dedup by content hash (identical bytes alias; not pointer).
-    data::Result<BrokerAssetHandle> registerAsset(const data::Mesh& mesh);
+    /// Register mesh (the store takes a SHARED reference — co-ownership, T13);
+    /// dedup by content hash (identical bytes alias; not pointer).
+    data::Result<BrokerAssetHandle> registerAsset(SharedMesh mesh);
 
-    /// Resolve handle to live mesh pointer; error code 2 for stale generation+1.
-    data::Result<const data::Mesh*> resolve(const BrokerAssetHandle& handle) const;
+    /// Resolve handle to the live asset as a SHARED reference (co-owned —
+    /// no borrow to track); error code 2 for stale generation+1.
+    data::Result<SharedMesh> resolve(const BrokerAssetHandle& handle) const;
 
     /// Free slot; bumps generation so handle becomes stale.
     data::Result<void> unregister(const BrokerAssetHandle& handle);
@@ -76,13 +84,15 @@ class AssetStore {
 
    private:
     struct Slot {
-        const data::Mesh* cpuObject = nullptr;
+        SharedMesh cpuObject; // owned shared reference (reset on unregister)
         uint32_t generation = 0u;
         bool live = false;
         uint64_t contentHash{0u};
     };
     std::vector<Slot> slots_;
     std::vector<size_t> freeIndices_;
+    // Diagnostic shim keyed by the live object's address (erased on
+    // unregister so no entry outlives its key); NOT the dedup key.
     std::unordered_map<const data::Mesh*, BrokerAssetHandle> byObject_;
     std::unordered_map<uint64_t, BrokerAssetHandle> byHash_;
     size_t liveCount_{0u};

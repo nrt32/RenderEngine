@@ -60,8 +60,11 @@ class View {
     // --- ViewTarget ---------------------------------------------------------
 
     /// The owned ViewTarget (nullptr until ensureTarget() or render() creates it).
-    ViewTarget* target() noexcept { return target_ ? &*target_ : nullptr; }
-    const ViewTarget* target() const noexcept { return target_ ? &*target_ : nullptr; }
+    /// @note lifetime: non-owning view of View-owned storage (the target_
+    /// `optional<>` member) — valid while this View is and until the target
+    /// is recreated; never delete through it.
+    ViewTarget* /*borrow*/ target() noexcept { return target_ ? &*target_ : nullptr; }
+    const ViewTarget* /*borrow*/ target() const noexcept { return target_ ? &*target_ : nullptr; }
 
     /// Ensure the ViewTarget exists and is sized rect_.width×rect_.height.
     /// Recreate only when size changed (resize path for DPR/window resize).
@@ -73,18 +76,22 @@ class View {
     void addRenderable(std::unique_ptr<IRenderable> item) { items_.push_back(std::move(item)); }
 
     /// Convenience: type-erased add for a typed scene + renderer that exposes
-    /// drawLayer(SceneT,Camera,DrawContext&). Enforces Renderable at compile time.
+    /// drawLayer(SceneT,Camera,DrawContext&). Enforces Renderable at compile
+    /// time. The renderer reference is SHARED (T13): the item co-owns the
+    /// renderer, so a stored View can never outlive the renderer it draws
+    /// with (no declaration-order or teardown-order hazard).
     template <typename SceneT, typename RendererT>
-    void addItem(SceneT scene, RendererT* renderer) {
+    void addItem(SceneT scene, std::shared_ptr<RendererT> renderer) {
         struct Impl final : public IRenderable {
             SceneT scene_;
-            RendererT* renderer_;
-            Impl(SceneT s, RendererT* r) : scene_(std::move(s)), renderer_(r) {}
+            std::shared_ptr<RendererT> renderer_;
+            Impl(SceneT s, std::shared_ptr<RendererT> r)
+                : scene_(std::move(s)), renderer_(std::move(r)) {}
             data::Result<void> drawLayer(const Camera& cam, core::DrawContext& ctx) override {
                 return renderer_->drawLayer(scene_, cam, ctx);
             }
         };
-        addRenderable(std::make_unique<Impl>(std::move(scene), renderer));
+        addRenderable(std::make_unique<Impl>(std::move(scene), std::move(renderer)));
     }
 
     std::size_t itemCount() const noexcept { return items_.size(); }
@@ -109,7 +116,11 @@ class View {
     /// Blit the View's FBO into its pinned window rect on destination
     /// (nullptr = the window's default framebuffer 0) via core::blit. The copy
     /// is GL_NEAREST, 1:1 when target size == rect size (the pinned gate).
-    data::Result<void> blitTo(core::Framebuffer* destination) const;
+    /// @note lifetime: `destination` is borrowed for the DURATION OF THIS CALL
+    /// only (structurally guaranteed — the blit consumes it synchronously and
+    /// retains nothing); owned by the caller (window default FB or a
+    /// caller-held ViewTarget).
+    data::Result<void> blitTo(core::Framebuffer* /*borrow*/ destination) const;
 
     /// Helpers for multi-view composition: render then blit.
     data::Result<void> renderAndBlit(core::DrawContext& ctx, core::Framebuffer* destination) {

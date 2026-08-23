@@ -8,6 +8,7 @@
 // via Broker still dedups to one GL object when later AssetId path lands (T7).
 // No raw gl* (gpu_api_ownership — render/ helpers own GL via core/).
 
+#include <memory>
 #include <optional>
 #include <unordered_map>
 
@@ -29,8 +30,10 @@ class MeshObjectMapper : public ICachedMapper<scene::MeshObject, render::MeshIns
    public:
     using AppType = scene::MeshObject;
     using ReType = render::MeshInstance;
-    /// Construct with the shared asset registry (must outlive mapper).
-    explicit MeshObjectMapper(render::AssetRegistry* registry) : registry_(registry) {}
+    /// Construct with the shared asset registry (SHARED ownership, T13 —
+    /// co-owned with the renderers and other mappers; can never dangle).
+    explicit MeshObjectMapper(std::shared_ptr<render::AssetRegistry> registry)
+        : registry_(std::move(registry)) {}
 
     /// Pure translation: registers mesh in AssetRegistry and returns MeshInstance.
     data::Result<render::MeshInstance> map(
@@ -45,11 +48,14 @@ class MeshObjectMapper : public ICachedMapper<scene::MeshObject, render::MeshIns
     /// Invalidate cached entry for the given object id.
     void invalidate(uint64_t id) override;
 
-    /// Access registry (for test dedup invariant — slotCount).
-    render::AssetRegistry* registry() const noexcept { return registry_; }
+    /// Access registry (for test dedup invariant — slotCount). Shared handle:
+    /// the mapper co-owns it (non-null unless constructed with nullptr).
+    const std::shared_ptr<render::AssetRegistry>& registry() const noexcept {
+        return registry_;
+    }
 
    private:
-    render::AssetRegistry* registry_;
+    std::shared_ptr<render::AssetRegistry> registry_;
     struct Entry {
         uint64_t generation{0};
         render::MeshInstance instance{};

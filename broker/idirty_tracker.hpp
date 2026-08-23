@@ -10,6 +10,7 @@
 // Pure interfaces, header-only, GL-free.
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "scene/store.hpp" // for FieldId
@@ -66,9 +67,13 @@ class InlineJobExecutor final : public IJobExecutor {
 ///
 /// SceneStore itself stays broker-free (scene/ never includes broker/); the adapter
 /// lives in broker/ and translates SceneStore's concrete dirty API to IDirtyTracker.
+/// Ownership (T13): the adapter holds a SHARED reference to the store — co-owned
+/// with its owner, so a long-lived tracker can never dangle, and no const_cast
+/// is needed for markDirty (the store is mutable through the shared handle).
 class SceneStoreTracker final : public IDirtyTracker {
     public:
-     explicit SceneStoreTracker(const re::scene::SceneStore* store) : store_(store) {}
+     explicit SceneStoreTracker(std::shared_ptr<re::scene::SceneStore> store)
+         : store_(std::move(store)) {}
      uint64_t storeGeneration() const noexcept override {
          return store_ ? store_->storeGeneration() : 0;
      }
@@ -76,17 +81,18 @@ class SceneStoreTracker final : public IDirtyTracker {
          return store_ ? store_->dirtyFieldsSince(lastGen) : std::vector<re::scene::FieldId>{};
      }
      void markDirty(uint64_t id, re::scene::FieldId field) noexcept override {
-         if (store_) const_cast<re::scene::SceneStore*>(store_)->markDirty(id, field);
+         if (store_) store_->markDirty(id, field);
      }
 
     private:
-     const re::scene::SceneStore* store_;
+     std::shared_ptr<re::scene::SceneStore> store_;
 };
 
-/// Adapter: ViewStore as IDirtyTracker.
+/// Adapter: ViewStore as IDirtyTracker (shared ownership — see SceneStoreTracker).
 class ViewStoreTracker final : public IDirtyTracker {
     public:
-     explicit ViewStoreTracker(const re::scene::ViewStore* store) : store_(store) {}
+     explicit ViewStoreTracker(std::shared_ptr<re::scene::ViewStore> store)
+         : store_(std::move(store)) {}
      uint64_t storeGeneration() const noexcept override {
          return store_ ? store_->storeGeneration() : 0;
      }
@@ -94,11 +100,11 @@ class ViewStoreTracker final : public IDirtyTracker {
          return store_ ? store_->dirtyFieldsSince(lastGen) : std::vector<re::scene::FieldId>{};
      }
      void markDirty(uint64_t id, re::scene::FieldId field) noexcept override {
-         if (store_) const_cast<re::scene::ViewStore*>(store_)->markDirty(id, field);
+         if (store_) store_->markDirty(id, field);
      }
 
     private:
-     const re::scene::ViewStore* store_;
+     std::shared_ptr<re::scene::ViewStore> store_;
 };
 
 } // namespace re::broker

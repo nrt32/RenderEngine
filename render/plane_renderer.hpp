@@ -20,7 +20,8 @@
 // Stateless rendering: PlaneRenderer::render(scene, camera, target) receives
 // all of its data per call; the renderer owns only GL resources (its cached
 // textured-plane shader program, one shared unit-quad VAO/VBO, and the GPU
-// textures it has uploaded, keyed by data::Image pointer). The same image is
+// textures it has uploaded, keyed by a weak observer of the shared CPU image
+// — see texture_cache_key.hpp). The same image is
 // uploaded to the GPU once and reused across plane instances and views — this
 // is the renderer MPRView drives for its Transverse/Coronal/Sagittal slice
 // views (T14).
@@ -44,6 +45,7 @@
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -57,6 +59,7 @@
 #include "core/vertex_buffer.hpp"
 #include "data/image.hpp"
 #include "data/result.hpp"
+#include "render/texture_cache_key.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
 
 namespace re::render {
@@ -93,13 +96,17 @@ struct PlaneGeometry {
 /// Produced by broker::PlaneMapper from scene::PlaneObject (V3.4b T12) — app/
 /// code does not assemble instances by hand.
 ///
-/// @note lifetime: `geometry` borrows PlaneMapper's program-duration shared
-/// unit quad; `image` borrows the caller's data::Image. Both must outlive
-/// every draw that consumes this instance (the renderer uploads `image`
-/// lazily via textureFor and never retains the instance itself).
+/// Ownership (T13): both references are SHARED (`shared_ptr<const T>`) — the
+/// instance co-owns the mapper's shared unit quad and the caller's image, so
+/// a stored scene can never outlive the bytes it draws.
 struct PlaneInstance {
-    const PlaneGeometry* geometry = nullptr;
-    const data::Image* image = nullptr; // source texture (RGBA8/RGB/gray)
+    /// Shared reference to the plane geometry (PlaneMapper's program-duration
+    /// shared unit quad). Null is invalid: render/drawLayer return a typed
+    /// error instead of dereferencing (SPEC §5).
+    std::shared_ptr<const PlaneGeometry> geometry = nullptr;
+    /// Shared reference to the source image (RGBA8/RGB/gray). Null is
+    /// invalid: render/drawLayer return a typed error (SPEC §5).
+    std::shared_ptr<const data::Image> image = nullptr;
     glm::mat4 model{1.0f};
 };
 
@@ -113,10 +120,11 @@ struct PlaneScene {
 ///
 /// Owns only GL resources: the cached textured-plane shader program, one
 /// shared unit-quad vertex array (all planes are unit quads transformed by
-/// their model matrix), and a texture cache keyed by image pointer so each
-/// data::Image is uploaded to the GPU once. Textures are sampled with
-/// GL_LINEAR and CLAMP_TO_EDGE (core::Texture2D defaults), so a quad mapped
-/// 1:1 onto the viewport reproduces the source texels exactly (FR-render.5).
+/// their model matrix), and a texture cache keyed by a weak observer of the
+/// shared CPU image so each data::Image is uploaded to the GPU once. Textures
+/// are sampled with GL_LINEAR and CLAMP_TO_EDGE (core::Texture2D defaults),
+/// so a quad mapped 1:1 onto the viewport reproduces the source texels
+/// exactly (FR-render.5).
 class PlaneRenderer : public IRenderer {
    public:
     /// Render `scene` into `target` from `camera`. On success the target
@@ -151,11 +159,17 @@ class PlaneRenderer : public IRenderer {
 
     /// Ensure the shared unit-quad geometry is uploaded, returning a pointer
     /// to the cached vertex array (non-null on success).
+    /// @note lifetime: non-owning view of renderer-owned storage (the
+    /// quadVao_ `optional<>` member) — valid while this renderer is.
     data::Result<core::VertexArray*> quadGeometry();
 
-    /// Ensure `image` is uploaded as a GPU texture (cached by image pointer),
-    /// returning a pointer to the cached texture (non-null on success).
-    data::Result<core::Texture2D*> textureFor(const data::Image& image);
+    /// Ensure `image` is uploaded as a GPU texture (cached by weak OBSERVER
+    /// of the shared asset — see texture_cache_key.hpp), returning a pointer
+    /// to the cached texture (non-null on success).
+    /// @note lifetime: non-owning view of renderer-owned storage (the
+    /// textures_ map entry) — valid until this renderer evicts it or dies.
+    data::Result<core::Texture2D*> textureFor(
+        const std::shared_ptr<const data::Image>& image);
 
     /// Upload `image` to a fresh texture bound to `*out` (used by textureFor).
     data::Result<void> uploadTexture(const data::Image& image,
@@ -166,7 +180,14 @@ class PlaneRenderer : public IRenderer {
     std::optional<core::VertexBuffer> quadVbo_;
     std::optional<core::ElementBuffer> quadEbo_; // index buffer referenced by quadVao_
     std::size_t quadIndexCount_{6u}; // two triangles
-    std::unordered_map<const data::Image*, core::Texture2D> textures_;
+    /// GPU texture cache keyed by a weak OBSERVER of the shared CPU image
+    /// (T13): an expired image's key expires with it — the cache can never
+    /// serve stale GPU data for a destroyed asset, and it never keeps a CPU
+    /// asset alive by itself.
+    std::unordered_map<WeakAssetKey<data::Image>, core::Texture2D,
+                       WeakAssetOwnerHash<data::Image>,
+                       WeakAssetOwnerEq<data::Image>>
+        textures_;
 };
 
 } // namespace re::render

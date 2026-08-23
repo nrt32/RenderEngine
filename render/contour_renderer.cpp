@@ -17,8 +17,8 @@ namespace re::render {
 // world space by a unit normal + point; the outline is the set of segments
 // where the plane cuts the mesh surface (computed by contour.geom.glsl).
 
-ContourRenderer::ContourRenderer(AssetRegistry* registry)
-    : registry_(registry) {}
+ContourRenderer::ContourRenderer(std::shared_ptr<AssetRegistry> registry)
+    : registry_(std::move(registry)) {}
 
 data::Result<core::ShaderProgram*> ContourRenderer::program() {
     if (program_.has_value()) {
@@ -38,9 +38,9 @@ data::Result<core::ShaderProgram*> ContourRenderer::program() {
 
 data::Result<MeshGeometry*> ContourRenderer::geometryFor(
     const AssetHandle& handle) {
-    if (registry_ == nullptr) {
+    if (!registry_) {
         return data::makeError<MeshGeometry*>(
-            1, "ContourRenderer: no asset registry injected");
+            4, "ContourRenderer: no asset registry injected");
     }
     // The shared AssetRegistry is the single owner of GPU geometry (SPEC §9
     // V2.5): resolving the handle returns the one GPU object registered for

@@ -32,6 +32,7 @@
 
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -77,10 +78,11 @@ struct ContourScene {
 /// MeshRenderer and SliceRenderer.
 class ContourRenderer {
    public:
-    /// Construct with the shared asset registry (`registry` must be non-null
-    /// and outlive the renderer; objects' handles resolve through it, SPEC §9
-    /// V2.5).
-    explicit ContourRenderer(AssetRegistry* registry);
+    /// Construct with the shared asset registry (SHARED ownership, T13 — see
+    /// MeshRenderer). A null registry is accepted at construction so member
+    /// init order never matters; every draw validates it and returns a typed
+    /// error (code 4) instead of dereferencing.
+    explicit ContourRenderer(std::shared_ptr<AssetRegistry> registry);
 
     ContourRenderer(const ContourRenderer&) = delete;
     ContourRenderer& operator=(const ContourRenderer&) = delete;
@@ -111,8 +113,9 @@ class ContourRenderer {
                                  const Camera& camera, core::DrawContext& ctx);
 
     /// The shared asset registry objects' handles resolve through (non-null
-    /// after construction).
-    AssetRegistry* assetRegistry() const noexcept {
+    /// after a valid construction; null only if constructed with nullptr —
+    /// draws then fail with typed error code 4).
+    const std::shared_ptr<AssetRegistry>& assetRegistry() const noexcept {
         return registry_;
     }
 
@@ -124,6 +127,8 @@ class ContourRenderer {
     /// Resolve `handle` to its GPU geometry through the shared asset registry
     /// (SPEC §9 V2.5; shared with MeshRenderer/SliceRenderer). Returns a
     /// typed error for a stale/dangling handle.
+    /// @note lifetime: non-owning view of registry-owned storage (the shared
+    /// slot's unique_ptr) — valid until the handle's slot is unregistered.
     data::Result<MeshGeometry*> geometryFor(const AssetHandle& handle);
 
     /// Issue the outline draw for one object with `program` already in use
@@ -131,7 +136,7 @@ class ContourRenderer {
     data::Result<void> drawOne(const ContourObject& object,
                                core::ShaderProgram* program);
 
-    AssetRegistry* registry_;
+    std::shared_ptr<AssetRegistry> registry_;
 
     std::optional<core::ShaderProgram> program_;
 };

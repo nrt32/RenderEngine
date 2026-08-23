@@ -26,6 +26,7 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -65,10 +66,12 @@ struct SliceScene {
 /// across MeshRenderer + SliceRenderer.
 class SliceRenderer : public IRenderer {
    public:
-    /// Construct with the shared asset registry (`registry` must be non-null
-    /// and outlive the renderer; scenes' AssetHandles resolve through it, SPEC
-    /// §9 V2.5). Slicing does not use OIT in v1.
-    explicit SliceRenderer(AssetRegistry* registry);
+    /// Construct with the shared asset registry (SHARED ownership, T13 — see
+    /// MeshRenderer). A null registry is accepted at construction so member
+    /// init order never matters; every draw validates it and returns a typed
+    /// error (code 4) instead of dereferencing. Slicing does not use OIT in
+    /// v1.
+    explicit SliceRenderer(std::shared_ptr<AssetRegistry> registry);
 
     SliceRenderer(const SliceRenderer&) = delete;
     SliceRenderer& operator=(const SliceRenderer&) = delete;
@@ -116,8 +119,9 @@ class SliceRenderer : public IRenderer {
                                            std::vector<glm::vec3>& out);
 
     /// The shared asset registry instances' handles resolve through (non-null
-    /// after construction).
-    AssetRegistry* assetRegistry() const noexcept {
+    /// after a valid construction; null only if constructed with nullptr —
+    /// draws then fail with typed error code 4).
+    const std::shared_ptr<AssetRegistry>& assetRegistry() const noexcept {
         return registry_;
     }
 
@@ -137,9 +141,11 @@ class SliceRenderer : public IRenderer {
     /// Resolve `handle` to its GPU geometry through the shared asset registry
     /// (SPEC §9 V2.5; shared with MeshRenderer). Returns a typed error for a
     /// stale/dangling handle.
+    /// @note lifetime: non-owning view of registry-owned storage (the shared
+    /// slot's unique_ptr) — valid until the handle's slot is unregistered.
     data::Result<MeshGeometry*> geometryFor(const AssetHandle& handle);
 
-    AssetRegistry* registry_;
+    std::shared_ptr<AssetRegistry> registry_;
 
     std::optional<core::ShaderProgram> clipProgram_;
     std::optional<core::ShaderProgram> captureProgram_;

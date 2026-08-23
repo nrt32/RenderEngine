@@ -6,10 +6,10 @@ namespace re::broker {
 
 data::Result<render::MeshInstance> MeshObjectMapper::map(
     const scene::MeshObject& app, const scene::TranslateContext& /*ctx*/) const {
-    if (app.mesh == nullptr) {
-        return data::makeError<render::MeshInstance>(1, "MeshObjectMapper: null mesh pointer");
+    if (!app.mesh) {
+        return data::makeError<render::MeshInstance>(1, "MeshObjectMapper: null mesh asset reference");
     }
-    if (registry_ == nullptr) {
+    if (!registry_) {
         return data::makeError<render::MeshInstance>(2, "MeshObjectMapper: null AssetRegistry");
     }
     auto h = registry_->registerAsset(*app.mesh);

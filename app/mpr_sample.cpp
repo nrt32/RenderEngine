@@ -170,18 +170,22 @@ app::MprSliceState makeInitialSliceState(const data::VolumeDataset& dataset) {
 class MPRView final : public app::ISample {
    public:
     MPRView(data::VolumeDataset dataset, volume::TransferFunction tf)
-        : dataset_(std::move(dataset)),
+        : dataset_(std::make_shared<data::VolumeDataset>(std::move(dataset))),
           tf_(std::move(tf)),
-          sliceState_(makeInitialSliceState(dataset_)),
-          transverseImage_(makeSliceImage(dataset_, tf_,
-                                          app::MprAxis::Transverse,
-                                          sliceState_.transverseZ)),
-          coronalImage_(makeSliceImage(dataset_, tf_, app::MprAxis::Coronal,
-                                       sliceState_.coronalY)),
-          sagittalImage_(makeSliceImage(dataset_, tf_, app::MprAxis::Sagittal,
-                                        sliceState_.sagittalX)),
-          box_(app::makeBoxMesh(kGoldenBoxMin, kGoldenBoxMax)),
-          boxMaterial_(kBoxMaterialColor) {
+          sliceState_(makeInitialSliceState(*dataset_)),
+          transverseImage_(std::make_shared<data::Image>(
+              makeSliceImage(*dataset_, tf_, app::MprAxis::Transverse,
+                             sliceState_.transverseZ))),
+          coronalImage_(std::make_shared<data::Image>(
+              makeSliceImage(*dataset_, tf_, app::MprAxis::Coronal,
+                             sliceState_.coronalY))),
+          sagittalImage_(std::make_shared<data::Image>(
+              makeSliceImage(*dataset_, tf_, app::MprAxis::Sagittal,
+                             sliceState_.sagittalX))),
+          box_(std::make_shared<data::Mesh>(
+              app::makeBoxMesh(kGoldenBoxMin, kGoldenBoxMax))),
+          boxMaterial_(
+              std::make_shared<render::PhongMaterial>(kBoxMaterialColor)) {
         // Each slice view's textured layer is expressed scene-side as a
         // PlaneObject{image asset ref, transform} whose transform scales the
         // shared unit quad onto that view's image pixel rectangle
@@ -198,15 +202,15 @@ class MPRView final : public app::ISample {
         // impossible registration failure, see mesh_sample). The 3D-view camera
         // is driven by the slice state (make3dCamera): it looks at the
         // intersection point of the three slice planes.
-        const auto boxHandle = registry_.registerAsset(box_);
+        const auto boxHandle = registry_->registerAsset(*box_);
         if (boxHandle.failed()) {
             spdlog::error("mpr sample: failed to register box mesh: {}",
                           boxHandle.error().message);
         } else {
             boxScene_.meshes.push_back(render::MeshInstance{
-                *boxHandle, &boxMaterial_, glm::mat4(1.0f)});
+                *boxHandle, boxMaterial_, glm::mat4(1.0f)});
         }
-        boxCamera_ = app::make3dCamera(sliceState_, box_.bounds(),
+        boxCamera_ = app::make3dCamera(sliceState_, box_->bounds(),
                                        static_cast<float>(kViewportWidth) /
                                            static_cast<float>(kViewportHeight));
 
@@ -267,7 +271,7 @@ class MPRView final : public app::ISample {
         // (one mapper per AppT, OCP via type_index — SPEC §11): ContourMapper
         // for the contour overlay (V3.8b T11) and PlaneMapper for the
         // textured slice layers (V3.4b T12).
-        broker_.registerMapper(std::make_unique<broker::ContourMapper>(&registry_));
+        broker_.registerMapper(std::make_unique<broker::ContourMapper>(registry_));
         broker_.registerMapper(std::make_unique<broker::PlaneMapper>());
         auto* contourMapper =
             broker_.get<scene::ContourObject, render::ContourObject>();
@@ -281,13 +285,13 @@ class MPRView final : public app::ISample {
         // Translate each slice view's textured layer scene→render through the
         // type-erased IMapper interface fetched from the Broker (app never
         // holds a concrete mapper handle). The mapped render::PlaneInstance
-        // borrows this sample's image members and PlaneMapper's shared unit
-        // quad — both outlive every draw below.
-        const std::array<const data::Image*, 3> sliceImages = {
-            &transverseImage_, &coronalImage_, &sagittalImage_};
+        // SHARES this sample's image members and PlaneMapper's shared unit
+        // quad (shared_ptr co-ownership, T13) — nothing to outlive.
+        const std::array<std::shared_ptr<data::Image>, 3> sliceImages = {
+            transverseImage_, coronalImage_, sagittalImage_};
         for (std::size_t i = 0u; i < 3u; ++i) {
             scene::PlaneObject appPlane;
-            appPlane.image = sliceImages[i];
+            appPlane.image = sliceImages[i]; // shared asset reference (T13)
             appPlane.transform = app::makeSliceModel(*sliceImages[i]);
             scene::TranslateContext planeCtx;
             auto mappedPlane = planeMapper->map(appPlane, planeCtx);
@@ -307,7 +311,7 @@ class MPRView final : public app::ISample {
 
         for (std::size_t i = 0u; i < 3u; ++i) {
             scene::ContourObject appContour;
-            appContour.mesh = &box_;
+            appContour.mesh = box_; // shared asset reference (T13)
             appContour.transform = axisModel[i];
             // The clip plane in the object's local (= display) frame: constant
             // Z at the sliced voxel layer's coordinate.
@@ -356,20 +360,20 @@ class MPRView final : public app::ISample {
         // in the constructor (the held slice images are static per run).
         std::vector<render::View> views;
         views.reserve(4u);
-        const std::array<const data::Image*, 3> sliceImages = {
-            &transverseImage_, &coronalImage_, &sagittalImage_};
+        const std::array<std::shared_ptr<data::Image>, 3> sliceImages = {
+            transverseImage_, coronalImage_, sagittalImage_};
         for (std::size_t i = 0u; i < 3u; ++i) {
             render::ViewRect rect{grid[i].x, grid[i].y, grid[i].width, grid[i].height};
             render::View view(rect, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
             view.setCamera(app::makeSliceCamera(*sliceImages[i]));
             if (!sliceScenes_[i].planes.empty()) {
-                view.addItem(sliceScenes_[i], &sliceRenderer_);
+                view.addItem(sliceScenes_[i], sliceRenderer_);
             }
             // Second layer: the GPU-computed plane∩mesh contour over the
             // slice (FR-app.3). View::render draws layers without clearing,
             // so the contour strokes overwrite exactly their own pixels.
             if (!contourScenes_[i].contours.empty()) {
-                view.addItem(contourScenes_[i], &contourRenderer_);
+                view.addItem(contourScenes_[i], contourRenderer_);
             }
             core::DrawContext ctx;
             auto r = view.renderWithEnsure(ctx);
@@ -383,7 +387,7 @@ class MPRView final : public app::ISample {
             render::ViewRect rect{grid[3].x, grid[3].y, grid[3].width, grid[3].height};
             render::View view(rect, glm::vec4(0.10f, 0.10f, 0.14f, 1.0f));
             view.setCamera(boxCamera_);
-            view.addItem(boxScene_, &boxRenderer_);
+            view.addItem(boxScene_, boxRenderer_);
             core::DrawContext ctx;
             auto r = view.renderWithEnsure(ctx);
             if (r.failed()) return r;
@@ -488,24 +492,35 @@ class MPRView final : public app::ISample {
         return data::Result<void>(data::value);
     }
 
-    data::VolumeDataset dataset_;
-    volume::TransferFunction tf_;
+    // Shared asset + renderer handles (T13 ownership discipline): every
+    // member below that participates in a shared-ownership graph is a
+    // shared_ptr with a self-initializing NSDMI. Reordering these
+    // declarations can therefore never dangle or silently break init — a
+    // not-yet-initialized shared handle degrades to a typed per-draw error
+    // (e.g. registry code 4), surfaced via spdlog, never to undefined
+    // behavior.
+    std::shared_ptr<data::VolumeDataset> dataset_;
+    volume::TransferFunction tf_; // immutable value; copied into instances
     app::MprSliceState sliceState_;
 
-    data::Image transverseImage_;
-    data::Image coronalImage_;
-    data::Image sagittalImage_;
+    std::shared_ptr<data::Image> transverseImage_;
+    std::shared_ptr<data::Image> coronalImage_;
+    std::shared_ptr<data::Image> sagittalImage_;
 
-    // The golden box mesh + material for the 3D view (FR-app.3).
-    data::Mesh box_;
-    render::PhongMaterial boxMaterial_;
-    // The shared asset registry (SPEC §9 V2.5): owns the box's GPU geometry;
-    // declared before the renderer(s) and the mapper so `&registry_` is valid
-    // at their construction.
-    render::AssetRegistry registry_;
+    // The golden box mesh + material for the 3D view (FR-app.3); both shared:
+    // the mesh is co-owned by scene-side contour objects, the material by the
+    // render::MeshInstance.
+    std::shared_ptr<data::Mesh> box_;
+    std::shared_ptr<render::PhongMaterial> boxMaterial_;
+
+    // The shared GPU asset registry (SPEC §9 V2.5) — one GL object per CPU
+    // mesh, co-owned by every renderer/mapper that resolves through it.
+    std::shared_ptr<render::AssetRegistry> registry_{
+        std::make_shared<render::AssetRegistry>()};
     render::MeshScene boxScene_;
     render::Camera boxCamera_;
-    render::MeshRenderer boxRenderer_{&registry_};
+    std::shared_ptr<render::MeshRenderer> boxRenderer_{
+        std::make_shared<render::MeshRenderer>(registry_)};
 
     // Per-slice-view textured slice layers (FR-app.2), translated scene→render
     // through the Broker-mediated PlaneMapper (V3.4b T12) and drawn by the
@@ -514,7 +529,8 @@ class MPRView final : public app::ISample {
     // vertex parsing (the unit-quad VAO belongs to PlaneRenderer alone).
     broker::Broker broker_;
     std::array<render::PlaneScene, 3> sliceScenes_{};
-    render::PlaneRenderer sliceRenderer_;
+    std::shared_ptr<render::PlaneRenderer> sliceRenderer_{
+        std::make_shared<render::PlaneRenderer>()};
 
     // Per-slice-view GPU contour layers (FR-app.3): translated scene→render
     // through the Broker-mediated contour mapper and drawn by the
@@ -522,7 +538,8 @@ class MPRView final : public app::ISample {
     // T11). The Broker owns the mappers; app only fetches the type-erased
     // IMapper interfaces from it (no mapper handle held).
     std::array<render::ContourScene, 3> contourScenes_{};
-    render::ContourRenderer contourRenderer_{&registry_};
+    std::shared_ptr<render::ContourRenderer> contourRenderer_{
+        std::make_shared<render::ContourRenderer>(registry_)};
 
     /// One-shot guard for the RE_SAMPLE_DUMP_FRAME diagnostic capture.
     bool frameDumped_{false};

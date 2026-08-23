@@ -31,7 +31,9 @@ class IRenderBridge {
    public:
     virtual ~IRenderBridge() = default;
     virtual data::Result<void> renderAll() = 0;
-    virtual data::Result<void> presentAll(core::Framebuffer* destination) = 0;
+    /// @note lifetime: `destination` is a call-scoped borrow (null = window
+    /// default framebuffer); owned by the caller, consumed synchronously.
+    virtual data::Result<void> presentAll(core::Framebuffer* /*borrow*/ destination) = 0;
 };
 
 /// Full view bridge façade (composes sync + render).

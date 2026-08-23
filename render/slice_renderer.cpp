@@ -32,7 +32,8 @@ constexpr float kCaptureSentinel = 1.0e30f;
 // geometry shader declares max_vertices = 6).
 constexpr std::size_t kMaxVerticesPerTriangle = 6u;
 
-SliceRenderer::SliceRenderer(AssetRegistry* registry) : registry_(registry) {}
+SliceRenderer::SliceRenderer(std::shared_ptr<AssetRegistry> registry)
+    : registry_(std::move(registry)) {}
 
 data::Result<core::ShaderProgram*> SliceRenderer::clipProgram() {
     if (clipProgram_.has_value()) {
@@ -85,9 +86,9 @@ data::Result<core::TransformFeedback*> SliceRenderer::captureFeedback() {
 
 data::Result<MeshGeometry*> SliceRenderer::geometryFor(
     const AssetHandle& handle) {
-    if (registry_ == nullptr) {
+    if (!registry_) {
         return data::makeError<MeshGeometry*>(
-            1, "SliceRenderer: no asset registry injected");
+            4, "SliceRenderer: no asset registry injected");
     }
     // The shared AssetRegistry is the single owner of GPU geometry (SPEC §9
     // V2.5): resolving the handle returns the one GPU object registered for
@@ -134,7 +135,7 @@ data::Result<void> SliceRenderer::render(const SliceScene& scene,
     program->setUniformVec3("uPlanePoint", plane.point);
 
     for (const MeshInstance& instance : scene.meshes) {
-        if (instance.material == nullptr || instance.mesh.isNull()) {
+        if (!instance.material || instance.mesh.isNull()) {
             continue;
         }
         // Slicing does not use OIT in v1 (SPEC §3): every instance is clipped
@@ -192,7 +193,7 @@ data::Result<void> SliceRenderer::drawLayer(const SliceScene& scene, const Camer
     program->setUniformVec3("uPlaneNormal", plane.normal);
     program->setUniformVec3("uPlanePoint", plane.point);
     for (const MeshInstance& instance : scene.meshes) {
-        if (instance.material == nullptr || instance.mesh.isNull()) {
+        if (!instance.material || instance.mesh.isNull()) {
             continue;
         }
         auto geometry = geometryFor(instance.mesh);

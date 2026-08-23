@@ -35,15 +35,18 @@ struct Aabb {
 
 /// View-scoped context — needed by every mapper (ISP role interface).
 struct ViewContext {
-    /// View plane (lives on View for 2D, nullopt→nullptr for 3D). Null means 3D view — LSP valid.
-    const PlaneDesc* viewPlane{nullptr};
+    /// View plane carried BY VALUE (T13: no raw borrow of the app View's
+    /// plane — the context is a self-contained snapshot). `nullopt` means a
+    /// 3D view — LSP valid.
+    std::optional<PlaneDesc> viewPlane{std::nullopt};
     /// View matrix from Camera (lookAt).
     glm::mat4 viewMatrix{1.0f};
     /// Projection matrix from Camera.
     glm::mat4 projMatrix{1.0f};
 
-    /// LSP predicate — keeps preconditions weak (null is valid for 3D mappers).
-    bool hasPlane() const noexcept { return viewPlane != nullptr; }
+    /// LSP predicate — keeps preconditions weak (absent plane is valid for 3D
+    /// mappers).
+    bool hasPlane() const noexcept { return viewPlane.has_value(); }
 };
 
 /// Volume-scoped context — only where voxel→world conversion is needed (ISP).

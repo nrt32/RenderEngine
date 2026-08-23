@@ -108,7 +108,7 @@ TEST(T2CompositeKey, LayoutIdScopePreventsAlias) {
 TEST(T2TranslateContext, NullViewPlaneValidFor3D) {
     // 3D view: null viewPlane must be valid (LSP — does not throw, hasPlane false).
     scene::TranslateContext ctx3d;
-    ctx3d.view.viewPlane = nullptr;
+    ctx3d.view.viewPlane = std::nullopt; // absent plane == 3D (value semantics, T13)
     ctx3d.view.viewMatrix = scene::Camera{}.viewMatrix();
     ctx3d.view.projMatrix = scene::Camera{}.projMatrix();
     // volume absent for 3D — null volume is valid (ISP segregated).
@@ -126,7 +126,7 @@ TEST(T2TranslateContext, NullViewPlaneValidFor3D) {
     plane.normal = glm::vec3{0, 0, 1};
     plane.point = glm::vec3{0, 0, 0};
     scene::TranslateContext ctx2d;
-    ctx2d.view.viewPlane = &plane;
+    ctx2d.view.viewPlane = plane; // by-value plane snapshot (T13)
     ctx2d.view.viewMatrix = glm::mat4{1.0f};
     ctx2d.view.projMatrix = glm::mat4{1.0f};
     scene::VolumeContext vol;

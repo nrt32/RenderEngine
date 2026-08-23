@@ -48,6 +48,12 @@ class Broker {
     }
 
     /// Retrieve mapper for AppT/ReT, or nullptr if not registered.
+    ///
+    /// @note lifetime: returns a NON-OWNING VIEW of a mapper SOLELY OWNED by
+    /// this Broker (`unique_ptr` storage). The alias stays valid while the
+    /// Broker does and until the caller re-registers the same key
+    /// (registerMapper replaces the owned mapper); it must never be deleted,
+    /// stored past Broker destruction, or handed across threads.
     template <typename AppT, typename ReT>
     IMapper<AppT, ReT>* get() const {
         auto key = std::type_index(typeid(AppT));
@@ -59,6 +65,7 @@ class Broker {
     }
 
     /// Non-const variant for cached mappers needing mapCached (non-const).
+    /// Same non-owning-view contract as get().
     template <typename AppT, typename ReT>
     IMapper<AppT, ReT>* getMutable() {
         return const_cast<IMapper<AppT, ReT>*>(static_cast<const Broker*>(this)->get<AppT, ReT>());
@@ -70,7 +77,9 @@ class Broker {
         static_assert(std::is_base_of_v<IMapperBase, MapperT>,
                       "MapperT must inherit IMapperBase");
         auto key = std::type_index(typeid(MapperT));
-        MapperT* raw = mapper.get();
+        MapperT* /*borrow*/ raw = mapper.get(); // borrow of the unique_ptr's
+        // object; ownership moves into ownedByMapper_ below, which becomes the
+        // sole owner — the alias is recorded in aliasByApp_/ownedByMapper_.
         ownedByMapper_[key] = std::unique_ptr<IMapperBase>(mapper.release());
         if constexpr (requires { typename MapperT::AppType; typename MapperT::ReType; }) {
             using AppT = typename MapperT::AppType;
@@ -79,8 +88,12 @@ class Broker {
     }
 
     /// Concrete-mapper overload: get by MapperT type, or nullptr if not registered.
+    /// @note lifetime: non-owning view over the mapper SOLELY OWNED by this
+    /// Broker (ownedByMapper_ `unique_ptr`) — same contract as get<AppT,ReT>()
+    /// above: valid while the Broker does and until re-registration of the
+    /// same key; never delete or store past Broker destruction.
     template <typename MapperT>
-    MapperT* get() const {
+    MapperT* /*borrow*/ get() const {
         auto key = std::type_index(typeid(MapperT));
         auto it = ownedByMapper_.find(key);
         if (it == ownedByMapper_.end()) return nullptr;
@@ -88,8 +101,9 @@ class Broker {
     }
 
     /// Non-const concrete getter (for mapCached).
+    /// @note lifetime: same Broker-owned storage view as get<MapperT>().
     template <typename MapperT>
-    MapperT* getMutable() {
+    MapperT* /*borrow*/ getMutable() {
         auto key = std::type_index(typeid(MapperT));
         auto it = ownedByMapper_.find(key);
         if (it == ownedByMapper_.end()) return nullptr;
@@ -120,6 +134,9 @@ class Broker {
 
    private:
     std::unordered_map<std::type_index, std::unique_ptr<IMapperBase>> ownedByApp_;
+    // Non-owning aliases into ownedByMapper_ storage (keyed by AppT for the
+    // app-typed get() overload). Every alias points at a mapper owned by
+    // ownedByMapper_; re-registration overwrites both entries together.
     std::unordered_map<std::type_index, IMapperBase*> aliasByApp_;
     std::unordered_map<std::type_index, std::unique_ptr<IMapperBase>> ownedByMapper_;
 };

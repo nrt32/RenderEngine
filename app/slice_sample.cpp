@@ -90,20 +90,21 @@ class SliceSample final : public re::app::ISample {
    public:
     explicit SliceSample(re::data::Mesh mesh)
         : mesh_(std::move(mesh)),
-          material_(glm::vec4(0.25f, 0.55f, 0.85f, 1.0f)),
+          material_(std::make_shared<re::render::PhongMaterial>(
+              glm::vec4(0.25f, 0.55f, 0.85f, 1.0f))),
           plane_(makeMidplane(mesh_)),
           camera_(makeFramingCamera(mesh_)) {
         // Register the mesh once with the shared registry (SPEC §9 V2.5): the
         // scene carries its AssetHandle, resolved by the renderer (graceful
         // degradation on the impossible registration failure, see mesh_sample).
-        const auto handle = registry_.registerAsset(mesh_);
+        const auto handle = registry_->registerAsset(mesh_);
         if (handle.failed()) {
             spdlog::error("slice sample: failed to register mesh: {}",
                           handle.error().message);
             return;
         }
         scene_.meshes.push_back(
-            re::render::MeshInstance{*handle, &material_, glm::mat4(1.0f)});
+            re::render::MeshInstance{*handle, material_, glm::mat4(1.0f)});
     }
 
     re::data::Result<void> renderFrame(int width, int height) override {
@@ -132,15 +133,16 @@ class SliceSample final : public re::app::ISample {
 
    private:
     re::data::Mesh mesh_;
-    re::render::PhongMaterial material_;
+    std::shared_ptr<re::render::PhongMaterial> material_;
     re::render::ClipPlane plane_;
     re::render::Camera camera_;
-    // The shared asset registry (SPEC §9 V2.5): owns the mesh's GPU geometry;
-    // declared before the renderer so `&registry_` is valid at its
-    // construction.
-    re::render::AssetRegistry registry_;
+    // Shared asset registry (SPEC §9 V2.5, T13): self-initializing NSDMI — no
+    // declaration-order hazard; the renderer holds a shared reference and
+    // validates it per draw (typed error code 4, never a crash).
+    std::shared_ptr<re::render::AssetRegistry> registry_{
+        std::make_shared<re::render::AssetRegistry>()};
     re::render::SliceScene scene_;
-    re::render::SliceRenderer renderer_{&registry_};
+    re::render::SliceRenderer renderer_{registry_};
 };
 
 } // namespace

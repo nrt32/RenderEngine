@@ -7,11 +7,11 @@ namespace re::broker {
 data::Result<render::ContourObject> ContourMapper::map(
     const scene::ContourObject& app,
     const scene::TranslateContext& /*ctx*/) const {
-    if (app.mesh == nullptr) {
+    if (!app.mesh) {
         return data::makeError<render::ContourObject>(
-            1, "ContourMapper: null mesh pointer");
+            1, "ContourMapper: null mesh asset reference");
     }
-    if (registry_ == nullptr) {
+    if (!registry_) {
         return data::makeError<render::ContourObject>(
             2, "ContourMapper: null AssetRegistry");
     }

@@ -193,8 +193,12 @@ data::Result<void> PlaneRenderer::uploadTexture(const data::Image& image,
 }
 
 data::Result<core::Texture2D*> PlaneRenderer::textureFor(
-    const data::Image& image) {
-    const auto it = textures_.find(&image);
+    const std::shared_ptr<const data::Image>& image) {
+    // Weak-observer cache key (T13): the key expires together with its asset,
+    // so a destroyed image can never be looked up again and expired entries
+    // are pruned here rather than served.
+    const WeakAssetKey<data::Image> key = image;
+    auto it = textures_.find(key);
     if (it != textures_.end()) {
         return data::makeValue<core::Texture2D*>(&it->second);
     }
@@ -203,12 +207,13 @@ data::Result<core::Texture2D*> PlaneRenderer::textureFor(
         return data::makeError<core::Texture2D*>(texture.error().code,
                                                  texture.error().message);
     }
-    auto upload = uploadTexture(image, *texture);
+    auto upload = uploadTexture(*image, *texture);
     if (upload.failed()) {
         return data::makeError<core::Texture2D*>(upload.error().code,
                                                  upload.error().message);
     }
-    auto inserted = textures_.emplace(&image, std::move(*texture));
+    textures_.erase(key); // prune any expired twin that hashed to this key
+    auto inserted = textures_.emplace(key, std::move(*texture));
     return data::makeValue<core::Texture2D*>(&inserted.first->second);
 }
 
@@ -257,10 +262,10 @@ data::Result<void> PlaneRenderer::render(const PlaneScene& scene,
     program->setUniformInt("uTex", 0); // sampler reads texture unit 0
 
     for (const PlaneInstance& instance : scene.planes) {
-        if (instance.geometry == nullptr || instance.image == nullptr) {
+        if (!instance.geometry || !instance.image) {
             continue;
         }
-        auto texture = textureFor(*instance.image);
+        auto texture = textureFor(instance.image);
         if (texture.failed()) {
             return data::makeError<void>(texture.error().code,
                                          texture.error().message);
@@ -339,10 +344,10 @@ data::Result<void> PlaneRenderer::drawLayer(const PlaneScene& scene, const Camer
     program->setUniformMat4("uProj", camera.proj);
     program->setUniformInt("uTex", 0);
     for (const PlaneInstance& instance : scene.planes) {
-        if (instance.geometry == nullptr || instance.image == nullptr) {
+        if (!instance.geometry || !instance.image) {
             continue;
         }
-        auto texture = textureFor(*instance.image);
+        auto texture = textureFor(instance.image);
         if (texture.failed()) {
             return data::makeError<void>(texture.error().code, texture.error().message);
         }

@@ -72,6 +72,30 @@ project.
   in v1**.
 - Errors are typed and actionable; never silent.
 
+## 8b. Ownership & borrow notation (hard, T13 user mandate)
+- **No raw pointers where ownership/lifetime matters.** Use `unique_ptr`
+  (sole owner), `shared_ptr` (shared owner), `std::weak_ptr` (observer), or a
+  generational handle (`AssetHandle` / `AssetId`) instead.
+- **GPU resources are handle-based**, never refcounted per draw: generational
+  handles into pools (`AssetHandle`) — no atomic-refcount churn in frame
+  loops, no post-teardown zombie resources. `shared_ptr` is reserved for
+  genuinely shared CPU-side assets across layers (e.g. an immutable
+  `data::Mesh` co-owned by scene objects and stores).
+- **Marked borrows:** a raw pointer is allowed only where the borrow is
+  structurally scope-bounded (e.g. a call-scoped destination framebuffer, a
+  store getter borrowing its own storage). Every such site MUST be written
+  with the marker between star and identifier, and carry a Doxygen lifetime
+  note naming its owner:
+  ```cpp
+  /// @note lifetime: borrowed for the duration of one render/blit call;
+  /// owned by the caller (ViewTarget inner FB or the window's default FB).
+  core::Framebuffer* /*borrow*/ framebuffer = nullptr;
+  ```
+- The mechanical audit floor (`ownership_raw_ptr_scene|broker|app` in
+  `tools/audit.rules`) fails any UNMARKED raw-pointer declaration under
+  `scene/`, `broker/`, `app/`; the allowlist of documented borrows is exactly
+  the greppable set of `/*borrow*/` sites.
+
 ## 9. Comments
 - Doxygen `///` on all public API (SPEC §5).
 - `//` for inline notes; no commented-out code.

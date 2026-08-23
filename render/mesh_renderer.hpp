@@ -23,6 +23,7 @@
 // objects (guardrail gpu_api_ownership).
 
 #include <glm/mat4x4.hpp>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -42,7 +43,12 @@ namespace re::render {
 /// handle — the currency views exchange — never a raw CPU pointer.
 struct MeshInstance {
     AssetHandle mesh; ///< Handle of the GPU geometry in the shared registry.
-    const IMaterial* material = nullptr;
+    /// Shared reference to the (immutable-during-draw) material. Null is the
+    /// documented "invalid instance" value — render() returns a typed error,
+    /// never dereferences null (SPEC §5).
+    /// @note lifetime: co-owned with the material's owner (sample/store);
+    /// the instance keeps the material alive for as long as it references it.
+    std::shared_ptr<IMaterial> material = nullptr;
     glm::mat4 model{1.0f};
 };
 
@@ -59,13 +65,17 @@ struct MeshScene {
 /// is uploaded to the GPU once — even across MeshRenderer + SliceRenderer.
 class MeshRenderer : public IRenderer {
    public:
-    /// Construct with the shared asset registry (`registry` must be non-null
-    /// and outlive the renderer; scenes' AssetHandles resolve through it, SPEC
-    /// §9 V2.5) and the injected transparency pipeline (`transparency` may be
-    /// null when no OIT is available). The pipeline is auto-engaged only when
-    /// a scene contains a transparent material (FR-render.3).
-    explicit MeshRenderer(AssetRegistry* registry,
-                          ITransparencyPipeline* transparency = nullptr);
+    /// Construct with the shared asset registry (SHARED ownership, T13: the
+    /// renderer co-owns the registry with every other mesh-family renderer
+    /// and mapper — declaration order can never dangle it) and the injected
+    /// transparency pipeline (shared ownership; null = no OIT available). The
+    /// pipeline is auto-engaged only when a scene contains a transparent
+    /// material (FR-render.3). A null registry is accepted at construction so
+    /// member-init order never matters, but every render/drawLayer validates
+    /// it and returns a typed error (code 4) instead of dereferencing.
+    explicit MeshRenderer(std::shared_ptr<AssetRegistry> registry,
+                          std::shared_ptr<ITransparencyPipeline> transparency =
+                              nullptr);
 
     /// Render `scene` into `target` from `camera`. On success the target
     /// framebuffer is left bound (so tests can read it back). Returns a typed
@@ -87,14 +97,18 @@ class MeshRenderer : public IRenderer {
     data::Result<void> drawLayer(const MeshScene& scene, const Camera& camera,
                                  core::DrawContext& ctx);
 
-    /// The injected transparency pipeline (may be null).
-    ITransparencyPipeline* transparencyPipeline() const noexcept {
+    /// The injected transparency pipeline (may be null). The returned
+    /// shared_ptr is a non-owning OBSERVER handle in spirit — it shares the
+    /// same ownership the renderer has (no exclusive claim).
+    const std::shared_ptr<ITransparencyPipeline>& transparencyPipeline()
+        const noexcept {
         return transparency_;
     }
 
     /// The shared asset registry instances' handles resolve through (non-null
-    /// after construction).
-    AssetRegistry* assetRegistry() const noexcept {
+    /// after a valid construction; null only if constructed with nullptr —
+    /// renders then fail with typed error code 4).
+    const std::shared_ptr<AssetRegistry>& assetRegistry() const noexcept {
         return registry_;
     }
 
@@ -105,6 +119,8 @@ class MeshRenderer : public IRenderer {
 
     /// Resolve `handle` to its GPU geometry through the shared asset registry
     /// (SPEC §9 V2.5). Returns a typed error for a stale/dangling handle.
+    /// @note lifetime: non-owning view of registry-owned storage (the shared
+    /// slot's unique_ptr) — valid until the handle's slot is unregistered.
     data::Result<MeshGeometry*> geometryFor(const AssetHandle& handle);
 
     /// Draw every opaque mesh instance directly to `target`.
@@ -117,8 +133,8 @@ class MeshRenderer : public IRenderer {
     data::Result<void> drawTransparent(const MeshScene& scene,
                                        const Camera& camera);
 
-    AssetRegistry* registry_;
-    ITransparencyPipeline* transparency_;
+    std::shared_ptr<AssetRegistry> registry_;
+    std::shared_ptr<ITransparencyPipeline> transparency_;
 
     std::optional<core::ShaderProgram> opaqueProgram_;
 };

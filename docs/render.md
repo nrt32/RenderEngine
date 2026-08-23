@@ -317,7 +317,9 @@ heap-stable); the renderers resolve per draw and never retain pointers across
 registrations.
 
 **Renderer integration.** `MeshRenderer` and `SliceRenderer` are constructed
-with a shared `AssetRegistry*` (non-null, outliving the renderer) and resolve
+with a shared registry handle (`std::shared_ptr<AssetRegistry>` — T13 shared
+ownership, so declaration order can never dangle it; a null registry fails per
+draw with typed error code 4) and resolve
 every instance's handle through it — the registry, not the renderer, owns the
 GPU geometry. This is what makes the dedup global: the same mesh drawn by both
 renderers (and by any number of views) is uploaded once.
@@ -360,9 +362,11 @@ dependency inversion).
 > `Directional/Point/Spot` (§12.3) are **deferred** — headers not added;
 > no new `render/material/` files this iteration (`G` enforces). `TransferFunction`
 > stays **beside** `VolumeMaterial` in `VolumePresentation` (already decided
-> §12.5) — `VolumeRenderer` still takes `TransferFunction*` separately
-> (no regression). `MaterialDesc`/`LightDesc` remain `app`-local free structs
-> for the `MPR` sample.
+> §12.5) — `VolumeInstance` still carries the `TransferFunction` as its own
+> field, strictly separate from the dataset (T13: owned by value — a small
+> immutable ramp copied per instance; the separation, not the pointer shape,
+> is the §12.5 invariant). `MaterialDesc`/`LightDesc` remain `app`-local free
+> structs for the `MPR` sample.
 
 ### `PhongMaterial` (`render/phong_material.hpp`, `.cpp`)
 
@@ -753,10 +757,10 @@ it is not an app-side quad path).
 **Broker-mediated display path (V3.4b T12):**
 
 ```
-scene::PlaneObject{const data::Image*, transform, presentation}   (app/scene)
+scene::PlaneObject{shared image asset ref, transform, presentation} (app/scene)
   └─ broker::PlaneMapper : IMapper<scene::PlaneObject, render::PlaneInstance>
        binds its ONE program-duration shared unit quad as geometry
-     = render::PlaneInstance{const PlaneGeometry*, const data::Image*, model}
+     = render::PlaneInstance{shared quad, shared image, model}
         └─ render::View::addItem(PlaneScene, &PlaneRenderer)
              └─ View::render(): bind FBO + viewport + clear (DrawContext),
                 then PlaneRenderer::drawLayer per layer (no clear between)
@@ -770,13 +774,14 @@ dedup already lives in `textureFor`): it carries image + transform across and
 binds the shared analytic unit quad; `presentation` deliberately has no RE
 counterpart because the textured-plane path is an unlit texture display by
 design (FR-render.5's quad must reproduce source texels exactly). The mapped
-instance borrows two things: the mapper's program-duration static unit quad,
-and the caller's `data::Image` — both must outlive every draw that consumes the
-instance.
+instance SHARES (T13 `shared_ptr`) the two things it references: the mapper's
+program-duration static unit quad, and the scene object's `data::Image` asset —
+nothing to outlive, nothing to dangle.
 
 `PlaneRenderer::render(scene, camera, target)` receives all of its data per
 call; the renderer owns only GL resources — its cached textured-plane shader,
-one shared unit-quad VAO/VBO, and a texture cache keyed by image pointer (each
+one shared unit-quad VAO/VBO, and a texture cache keyed by a weak observer of
+the shared CPU image (each
 `data::Image` is uploaded to the GPU once and reused across plane instances and
 views). It implements the `IRenderer` dispatch contract (`render/types.hpp`,
 SPEC §9 V2.3): its `IRenderer::render` forwards a `Scene` holding a
@@ -787,7 +792,7 @@ Public scene structs (defined in `plane_renderer.hpp`):
 | Type | Purpose |
 |---|---|
 | `PlaneGeometry` | four world-space corners + per-corner UVs + an analytic unit normal. `unitQuadXY()` builds the unit XY square `[-1,1]^2` at z=0 with normal `(0,0,1)` and the UV binding `(0,0)`@c0 … `(1,1)`@c2. A `render/`-internal detail since V3.4b: callers receive it only through `broker::PlaneMapper`. |
-| `PlaneInstance` | a `PlaneGeometry` (borrowed from the mapper's shared quad), the `data::Image` to texture it with (borrowed from the caller), and a model matrix. Produced by `broker::PlaneMapper`. |
+| `PlaneInstance` | a `PlaneGeometry` (shared with the mapper's static unit quad), the `data::Image` to texture it with (shared with the scene object's asset — T13 co-ownership), and a model matrix. Produced by `broker::PlaneMapper`. |
 | `PlaneScene` | a vector of `PlaneInstance`s (CPU-side; built by mapping `scene::PlaneObject`s through `broker::PlaneMapper`). |
 
 `PlaneRenderer::render(scene, camera, target)`:
@@ -846,7 +851,7 @@ viewport pixel `(px,py)` (py=0 is the bottom) samples image pixel
 | T12 gate: four corners via ReView + Broker | BL `{0,252,…}`, BR `{252,252,…}`, TL `{0,0,…}`, TR `{252,0,…}` B=`128`, A=`255` (±1) | corner probes pin the row-flip orientation through the composed path |
 | MPR slice layer via PlaneMapper (`makeSliceModel`+`makeSliceCamera`) | solid bytes at center + all four corners (±1) | ortho `[0,img]²` ↔ viewport 1:1, quad covers the viewport edge-to-edge |
 | `broker::PlaneMapper` null-image map | typed error code 1 | SPEC §5: no exceptions, no silently-empty instance |
-| Shared unit quad across mappings | one geometry pointer | mapper owns exactly one program-duration static `PlaneGeometry`; instances only borrow it |
+| Shared unit quad across mappings | one geometry pointer | mapper owns exactly one program-duration static `PlaneGeometry`; instances co-own a reference (T13 shared ownership) |
 
 ### `VolumeRenderer` (`render/volume_renderer.hpp`, `.cpp`) — T9
 
@@ -855,8 +860,10 @@ pure `volume/` math (SPEC §3: "VolumeRenderer (ray-cast GL draw; volume/ provid
 the pure math)"). `VolumeRenderer::render(scene, camera, target)` receives all of
 its data per call; the renderer owns only GL resources — its cached ray-cast
 shader program, one shared full-screen quad VAO/VBO, and a 3D-texture cache keyed
-by dataset pointer (each `data::VolumeDataset` is uploaded to the GPU once and
-reused across instances and views). It implements the `IRenderer` dispatch
+by a weak observer of the shared CPU dataset (each `data::VolumeDataset` is
+uploaded to the GPU once and
+reused across instances and views; an expired dataset's cache key expires with
+it — T13). It implements the `IRenderer` dispatch
 contract (`render/types.hpp`, SPEC §9 V2.3): its `IRenderer::render` forwards a
 `Scene` holding a `VolumeScene` to this concrete method.
 
@@ -864,7 +871,7 @@ Public scene structs and constant (defined in `volume_renderer.hpp`):
 
 | Type | Purpose |
 |---|---|
-| `VolumeInstance` | a `data::VolumeDataset`, the `volume::TransferFunction` mapping its scalar values to RGBA, and a model matrix. The dataset occupies the unit cube `[0,1]^3` in **model space**; the model matrix places/orients it in world space. |
+| `VolumeInstance` | a shared `data::VolumeDataset` reference (T13 co-ownership), an owned by-value `volume::TransferFunction` mapping its scalar values to RGBA (T13: small immutable ramp copied per instance — the null-pointer case is impossible), and a model matrix. The dataset occupies the unit cube `[0,1]^3` in **model space**; the model matrix places/orients it in world space. |
 | `VolumeScene` | a vector of `VolumeInstance`s (CPU-side; `app/` builds these). |
 | `kDefaultStepLength` | the default ray-cast sampling step length in world units (`0.25`); the shader samples `floor(span / stepLength)` steps at their centers (FR-vol.3). |
 
@@ -950,7 +957,8 @@ out.rgb = 0.5*(1 + 0.5 + 0.25 + 0.125)     = 0.9375  (along green)
 - **Stateless + dependency inversion**: `render()` takes all data per call;
   renderers depend on `IMaterial` / `ITransparencyPipeline` abstractions and
   expose the `IRenderer` dispatch contract (SPEC §9 V2.3). GPU geometry is
-  injected: the mesh-family renderers take a shared `AssetRegistry*` and resolve
+  injected: the mesh-family renderers take a shared `AssetRegistry` handle
+  (`std::shared_ptr`, T13 co-ownership) and resolve
   scene `AssetHandle`s through it (SPEC §9 V2.5) — never a raw GL call, never a
   per-renderer duplicate upload.
 - **Typed diagnostics**: draw/geometry failures return `data::Result` — no

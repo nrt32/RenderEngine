@@ -53,6 +53,8 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <memory>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/vec3.hpp>
@@ -227,27 +229,28 @@ TEST(T3V2AssetRegistry, SameMeshRegisteredTwiceIsOneGpuObject) {
 // ---------------------------------------------------------------------------
 
 TEST(T3V2AssetRegistry, MeshAndSliceRenderersShareOneGpuObject) {
-    render::AssetRegistry registry;
+    // Shared registry handle (T13): both renderer techniques co-own it.
+    auto registry = std::make_shared<render::AssetRegistry>();
     data::Mesh mesh = makeQuadMesh();
-    const auto handle = registry.registerAsset(mesh);
+    const auto handle = registry->registerAsset(mesh);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
-    render::PhongMaterial material(kBaseColor);
-    ASSERT_FALSE(material.isTransparent());
+    auto material = std::make_shared<render::PhongMaterial>(kBaseColor);
+    ASSERT_FALSE(material->isTransparent());
 
     // The same AssetHandle appears in both scenes (the currency views
     // exchange): the mesh path and the slice path reference the same CPU
     // object through the shared registry.
     render::MeshScene meshScene;
     meshScene.meshes.push_back(
-        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, material, glm::mat4(1.0f)});
     render::SliceScene sliceScene;
     sliceScene.meshes.push_back(
-        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, material, glm::mat4(1.0f)});
     sliceScene.plane.normal = kPlaneNormal;
     sliceScene.plane.point = kPlanePoint;
 
-    render::MeshRenderer meshRenderer(&registry);
-    render::SliceRenderer sliceRenderer(&registry);
+    render::MeshRenderer meshRenderer(registry);
+    render::SliceRenderer sliceRenderer(registry);
 
     // MeshRenderer: FR-render.1 center pixel {51, 102, 204}.
     {
@@ -286,8 +289,8 @@ TEST(T3V2AssetRegistry, MeshAndSliceRenderersShareOneGpuObject) {
 
     // After BOTH renderers drew the same mesh: still exactly ONE GPU object —
     // neither renderer uploaded a second copy (the pre-V2 double-upload fix).
-    EXPECT_EQ(registry.slotCount(), 1u);
-    const auto resolved = registry.resolve(*handle);
+    EXPECT_EQ(registry->slotCount(), 1u);
+    const auto resolved = registry->resolve(*handle);
     ASSERT_TRUE(resolved.ok()) << resolved.error().message;
     EXPECT_GT((*resolved)->vaoId(), 0u);
 }
@@ -416,21 +419,22 @@ TEST(T3V2AssetRegistry, TwoDistinctMeshesAreTwoGpuObjects) {
 }
 
 TEST(T3V2AssetRegistry, RendererPropagatesStaleHandleError) {
-    render::AssetRegistry registry;
+    auto registry = std::make_shared<render::AssetRegistry>();
     data::Mesh mesh = makeQuadMesh();
-    const auto handle = registry.registerAsset(mesh);
+    const auto handle = registry->registerAsset(mesh);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
-    render::PhongMaterial material(kBaseColor);
+    auto material =
+        std::make_shared<render::PhongMaterial>(kBaseColor);
 
     // Free the slot behind the handle, then render a scene still carrying the
     // now-stale handle: the renderer must surface the typed error (SPEC §5,
     // no exceptions, no crash).
-    const auto freed = registry.unregister(*handle);
+    const auto freed = registry->unregister(*handle);
     ASSERT_TRUE(freed.ok()) << freed.error().message;
 
     render::MeshScene scene;
     scene.meshes.push_back(
-        render::MeshInstance{*handle, &material, glm::mat4(1.0f)});
+        render::MeshInstance{*handle, material, glm::mat4(1.0f)});
 
     RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
     render::RenderTarget rt;
@@ -439,7 +443,7 @@ TEST(T3V2AssetRegistry, RendererPropagatesStaleHandleError) {
     rt.height = kTargetHeight;
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-    render::MeshRenderer renderer(&registry);
+    render::MeshRenderer renderer(registry);
     const auto result = renderer.render(scene, makeCamera(), rt);
     EXPECT_TRUE(result.failed());
     EXPECT_NE(result.error().message.find("stale"), std::string::npos);

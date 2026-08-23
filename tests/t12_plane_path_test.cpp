@@ -146,9 +146,9 @@ std::string readFile(const std::filesystem::path& p) {
 // ---------------------------------------------------------------------------
 
 TEST(T12PlanePath, PlaneMapperTranslatesSceneToRender) {
-    data::Image image = makeGradientImage();
+    auto image = std::make_shared<data::Image>(makeGradientImage());
     scene::PlaneObject plane;
-    plane.image = &image;
+    plane.image = image; // shared asset reference (T13)
     plane.transform = glm::translate(glm::mat4(1.0f),
                                      glm::vec3(1.0f, 2.0f, 3.0f));
 
@@ -170,24 +170,26 @@ TEST(T12PlanePath, PlaneMapperTranslatesSceneToRender) {
     EXPECT_EQ(mapped->geometry->uv[3], glm::vec2(0.0f, 1.0f));
     EXPECT_EQ(mapped->geometry->normal, glm::vec3(0.0f, 0.0f, 1.0f));
 
-    // Asset ref + transform carried exactly (RE-minimal pass-through).
-    EXPECT_EQ(mapped->image, &image);
+    // Asset ref + transform carried exactly (RE-minimal pass-through): the
+    // instance shares the SAME image object (shared ownership, T13).
+    EXPECT_EQ(mapped->image, image);
     EXPECT_NEAR(mapped->model[3][0], 1.0f, 1e-6f) << "model translation x";
     EXPECT_NEAR(mapped->model[3][1], 2.0f, 1e-6f) << "model translation y";
     EXPECT_NEAR(mapped->model[3][2], 3.0f, 1e-6f) << "model translation z";
 
     // One shared quad: a second object maps to the SAME geometry instance
-    // (the mapper owns exactly one unit quad; instances only borrow it).
+    // (the mapper owns exactly one unit quad; instances co-own a reference,
+    // T13 — pointer identity of the shared_ptr still proves sharing).
     scene::PlaneObject second;
-    second.image = &image;
+    second.image = image;
     auto mappedAgain = mapper.map(second, scene::TranslateContext{});
     ASSERT_TRUE(mappedAgain.ok()) << mappedAgain.error().message;
-    EXPECT_EQ(mappedAgain->geometry, mapped->geometry)
+    EXPECT_EQ(mappedAgain->geometry.get(), mapped->geometry.get())
         << "all mapped instances share the mapper's single unit quad";
 
     // Null image asset ref -> typed error code 1 (SPEC §5, never a crash or
     // a silently-empty instance).
-    scene::PlaneObject broken; // image == nullptr
+    scene::PlaneObject broken; // image == null shared reference
     auto err = mapper.map(broken, scene::TranslateContext{});
     ASSERT_TRUE(err.failed());
     EXPECT_EQ(err.error().code, 1);
@@ -206,12 +208,12 @@ TEST(T12PlanePath, BrokerRegistryRoutesPlaneObjectsThroughIMapper) {
     auto* mapper = broker_.get<scene::PlaneObject, render::PlaneInstance>();
     ASSERT_NE(mapper, nullptr) << "PlaneMapper must be reachable via AppT key";
 
-    data::Image image = makeGradientImage();
+    auto image = std::make_shared<data::Image>(makeGradientImage());
     scene::PlaneObject plane;
-    plane.image = &image;
+    plane.image = image; // shared asset reference (T13)
     auto mapped = mapper->map(plane, scene::TranslateContext{});
     ASSERT_TRUE(mapped.ok()) << mapped.error().message;
-    EXPECT_EQ(mapped->image, &image);
+    EXPECT_EQ(mapped->image, image);
     ASSERT_NE(mapped->geometry, nullptr);
 
     // Unregistered AppT stays null (OCP registry, no cross-type leakage).
@@ -225,14 +227,14 @@ TEST(T12PlanePath, BrokerRegistryRoutesPlaneObjectsThroughIMapper) {
 // ---------------------------------------------------------------------------
 
 TEST(T12PlanePath, CenterAndCornerPixelsMatchTextureThroughReViewAndBroker) {
-    data::Image image = makeGradientImage();
+    auto image = std::make_shared<data::Image>(makeGradientImage());
 
     broker::Broker broker_;
     broker_.registerMapper(std::make_unique<broker::PlaneMapper>());
     auto* mapper = broker_.get<scene::PlaneObject, render::PlaneInstance>();
 
     scene::PlaneObject plane;
-    plane.image = &image; // identity transform: unit quad fills NDC [-1,1]^2
+    plane.image = image; // shared ref (T13); unit quad fills NDC [-1,1]^2
     auto mapped = mapper->map(plane, scene::TranslateContext{});
     ASSERT_TRUE(mapped.ok()) << mapped.error().message;
 
@@ -247,8 +249,8 @@ TEST(T12PlanePath, CenterAndCornerPixelsMatchTextureThroughReViewAndBroker) {
                                        static_cast<int>(kTargetHeight)},
                       glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
     view.setCamera(makeOrthoCamera());
-    render::PlaneRenderer renderer;
-    view.addItem(planeScene, &renderer);
+    auto renderer = std::make_shared<render::PlaneRenderer>();
+    view.addItem(planeScene, renderer);
 
     core::DrawContext ctx;
     auto rendered = view.renderWithEnsure(ctx);
@@ -317,14 +319,15 @@ TEST(T12PlanePath, MprSliceLayerThroughPlaneMapperDisplaysSliceBytes) {
         solid[i + 2u] = kSliceByte;
         solid[i + 3u] = 255u;
     }
-    const data::Image sliceImage(64, 64, 4, std::move(solid));
+    auto sliceImage =
+        std::make_shared<const data::Image>(64, 64, 4, std::move(solid));
 
     // Scene-side object exactly as the MPR sample builds it: {asset ref,
     // transform} where the transform scales the shared quad onto the image's
     // pixel rectangle (shared scaffolding, app/mpr_camera.hpp).
     scene::PlaneObject appPlane;
-    appPlane.image = &sliceImage;
-    appPlane.transform = app::makeSliceModel(sliceImage);
+    appPlane.image = sliceImage; // shared asset reference (T13)
+    appPlane.transform = app::makeSliceModel(*sliceImage);
 
     broker::Broker broker_;
     broker_.registerMapper(std::make_unique<broker::PlaneMapper>());
@@ -340,9 +343,9 @@ TEST(T12PlanePath, MprSliceLayerThroughPlaneMapperDisplaysSliceBytes) {
                                        static_cast<int>(kTargetWidth),
                                        static_cast<int>(kTargetHeight)},
                       glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-    view.setCamera(app::makeSliceCamera(sliceImage));
-    render::PlaneRenderer sliceRenderer;
-    view.addItem(sliceScene, &sliceRenderer);
+    view.setCamera(app::makeSliceCamera(*sliceImage));
+    auto sliceRenderer = std::make_shared<render::PlaneRenderer>();
+    view.addItem(sliceScene, sliceRenderer);
 
     core::DrawContext ctx;
     auto rendered = view.renderWithEnsure(ctx);
