@@ -18,7 +18,11 @@ data::Result<render::MeshInstance> MeshObjectMapper::map(
     }
     render::MeshInstance inst;
     inst.mesh = *h;
-    inst.material = nullptr; // Phong-only placeholder; material path lands in T8
+    // Null material keeps the renderer's fixed-headlight Phong path for now:
+    // translating `app.presentation` into a store-resolved canonical material
+    // is the §12.2 MaterialMapper work (the render::AssetRegistry material
+    // kind landed with T14 provides the value-dedup side).
+    inst.material = nullptr;
     inst.model = app.transform;
     return data::makeValue<render::MeshInstance>(inst);
 }

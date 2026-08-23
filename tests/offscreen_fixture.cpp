@@ -3,6 +3,7 @@
 #include "tests/offscreen_fixture.hpp"
 
 #include "core/logging.hpp"
+#include "render/asset_registry.hpp"
 
 namespace re::tests {
 
@@ -24,6 +25,12 @@ void OffscreenEnvironment::SetUp() {
 }
 
 void OffscreenEnvironment::TearDown() {
+    // Destroy the process-wide shared asset registry (the default store the
+    // volume/plane renderers use) while the GL context is still current, so
+    // its GPU textures are deleted with valid GL state instead of during
+    // static destruction after context death. Every test's local registries
+    // and renderers are already gone by the time TearDown runs.
+    render::AssetRegistry::resetShared();
     delete g_context;
     g_context = nullptr;
 }

@@ -71,21 +71,37 @@ approaches and converges on the last:
 
 **Chosen V3 design (will land in `scene/store` + `broker/`, web-verified EOL):**
 
-> **Implementation gap (Sr. review 2026-08-23 — Task T14):** the GPU-side store
-> is currently **mesh-only**. `render::AssetRegistry` dedups `MeshGeometry`
-> (content-hash + dual-key shim), but volume/image GPU textures live in
-> per-renderer caches (`VolumeRenderer`/`PlaneRenderer` `textures_` maps) with
-> **no cross-instance dedup** — two
-> renderer instances double-upload the same dataset. (`T13 update:` those cache
-> keys are now weak observers of shared CPU assets, so a destroyed asset's key
-> expires with it — the dangling-key hazard is fixed; the store unification,
-> cross-instance dedup, and explicit invalidation remain T14 work.)
-> `broker::AssetStore` mirrors the mesh-only
-> shape even though `scene::computeContentHash` already has unused
-> `VolumeDataset`/`Image` overloads. T14 closes this: one typed multi-kind
-> store (`AssetStore<Mesh|VolumeDataset|Image>` → `MeshGeometry|Texture3D|
-> Texture2D`) keyed `(AssetId, generation, contentHash)` with ref-counting,
-> invalidation, and removal of the per-renderer pointer-keyed maps.
+> **Landed (T14, 2026-08-24):** the GPU-side store is now **one typed
+> multi-kind store**: `render::AssetRegistry` covers all four asset kinds —
+> `data::Mesh → MeshGeometry` (the original V2/T7 table), `data::VolumeDataset
+> → core::Texture3D`, `data::Image → core::Texture2D` and `PhongMaterial
+> value → canonical IMaterial` (new `GpuSlotTable` tables; the material kind
+> hashes every Phong VALUE field — baseColor RGBA, specular RGB, shininess,
+> ambient, diffuse — so identical parameters share one immutable canonical
+> instance, the store side of the §12.2 `ReMaterial` dedup). Every slot is
+> keyed by `(index, generation, contentHash)` and
+> reference-counted: registering already-present content increments the slot's
+> reference count; releasing decrements it; the GPU object is destroyed and its
+> generation bumped (invalidation — every outstanding handle then resolves to
+> typed error code 2) only when the last reference drops. Dedup is by content
+> hash of stable bytes everywhere (no pointer-keyed maps remain in render/):
+> two renderer instances sharing one dataset see one GL texture id, and
+> identical-content distinct allocations alias to one slot. The former
+> per-renderer caches (`VolumeRenderer::textureFor` /
+> `PlaneRenderer::textureFor` maps, weak-observer keyed) are deleted; both
+> renderers resolve lazily through the shared store (`lookupVolume` /
+> `lookupImage` — find-or-upload without reference-count changes), defaulting
+> to the process-wide instance (`AssetRegistry::shared()`, torn down by the
+> test fixture via `resetShared()` while the GL context is current). The
+> scene→RE material HAND-OFF (`MeshObjectMapper` translating `presentation`
+> into a store-resolved material instead of the current null) remains §12.2
+> `MaterialMapper` work tracked with the broker mapper inventory. The
+> CPU-side identity layers are unchanged: `scene::AssetRegistry<T>` stays the
+> GL-free typed registry template and `broker::AssetStore` the broker-side
+> generational-handle skeleton; the hash values match byte-for-byte because
+> `render/asset_registry.cpp` mirrors `scene::computeContentHash`'s overloads
+> locally (render may not include scene/; consolidation into a shared GL-free
+> header is planned follow-up cleanup).
 - **`scene::SceneStore` owns `AssetId` handles** (`uint64_t` stable, `generation`+`contentHash` per `data::Mesh`/`VolumeDataset`/`Image` imported through `io/`) — hierarchical `Version:AssetId:Hash` with SHA-256 of canonicalized stable bytes at load time (not per-frame) + `contentHash` cache (System Overflow SHA-256 correctness + Dev Genius version-your-cache-keys 2025-12-25). The store is **hybrid** per SPEC §10.2/10.5: `SceneStore` global for assets (maximises content-hash dedup, pointer-identity `byObject_` replaced by `(AssetId,gen,hash)`), `ViewStore`/`LayoutStore` per-page for visibility (page-local `itemIds`). A mesh visible on page A but hidden on page B remains in global store, page B's `ReView` does not `items` it — one global entry, released when last `ReView` drops (ref-count `atomic` per Q35). **T7 binding (V3 anal review):** `VolumeDataset`/`Image` migrate **atomically** to `AssetId+contentHash` (global, `LayoutId`-scoped arena); `MeshGeometry` keeps **dual-key `byObject_` shim + `AssetId` in V3.6** with deprecation (shim removed V4) — avoids big-bang migration while still fixing hot-reload identity (Q3/Q28/Q35). See Q35/Q46 in `open_questions.md`.
 - **`broker/` `Broker` holds the `Re*` cache** keyed by `CompositeKey{Version,LayoutId, AssetId/ObjectId, TypeIndex, Generation, ContentHash}` (SPEC §10.1, hierarchical `Version:LayoutId:Type:Hash` + SHA-256 at load time). `MeshObjectMapper::mapCached` probes `fieldGen==lastFieldGen && fieldHash==lastHash` (per-field gen split §10.4 — SRP/ISP per Clean Architecture Ch.7 + ICS SRP) — on hit returns cached `ReMeshObject` (same `AssetHandle`+`ReMaterial*`+`model+worldBounds`) without touching `AssetRegistry` or recreating `ReView::items_`. `AssetStore<T>` typed template (`AssetStore<Mesh>`, `AssetStore<VolumeDataset>`) per kind (SRP per `T`, OCP via template) — avoids per-kind duplicate. `Broker` holds mapper *registry* `type_index→IMapper`, `ViewSynchronizer` holds generation *cache* `CompositeKey→ReView` (SRP split).
 - **`RE` topics:** `core::Texture3D` (`IRHITexture` via `IRHIContext::createTexture3D`) for volumes, `MeshGeometry` (`IRHIBuffer` via `IRHIContext::createBuffer`) for meshes (via existing `AssetRegistry` shim + new `AssetStore<Mesh>`), `Texture2D` (`IRHITexture`) for images — each `AssetStore<T>` with `atomic<uint32_t>` ref-count even under inline `IJobExecutor` (data-race-free per NFR §5; EOL Q37). `ReMaterial` via `MaterialMapper` SHA-256 value-hash dedup (identical `baseColor/shininess` share one `ReMaterial*`; `MaterialId` opt-in for shared themes — hybrid `variant<Desc,MaterialId>` cache, see §12.2). `Re*Object`s carry only derived GPU-ready values (`AssetHandle/ReMaterial*/Tex/ClipPlane/worldBounds/sliceUVW/normalMatrix` — §12.4 inventory) — never verbatim `data::Mesh` bytes (guardrail `asset_indirection` enforces RE-minimal; audit `asset_indirection` forbids `data::Mesh::positions` copy in `render/re_scene/`).

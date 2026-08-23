@@ -26,7 +26,7 @@ peer to `scene`/`render`/`core`). Owns no GL and no app rendering logic — only
 
 - `camera_mapper.*` — `ICachedMapper<scene::Camera, render::Camera>` (per-field viewGen/projGen)
 - `mesh_object_mapper.*` — `ICachedMapper<scene::MeshObject, render::MeshInstance>` (AssetHandle via AssetRegistry dedup)
-- `asset_store.*` — generational `BrokerAssetHandle` skeleton (T3: pointer dedup, typed `StaleHandle` code 2; T7: content-hash AssetId)
+- `asset_store.*` — generational `BrokerAssetHandle` skeleton (T3: pointer dedup, typed `StaleHandle` code 2; T7: content-hash AssetId). CPU-side identity layer only — no GL, no core/. The GPU-side multi-kind store (mesh/volume/image, ref-counted, content-hash-deduped) is `render::AssetRegistry` since T14 (SPEC §7); broker mappers resolve handles through it.
 - `view_synchronizer.*` — polls `SceneStore::storeGeneration()` early-out + bounded `dirtyFieldsSince` (SRP: cache/dirty)
 - `view_compositor.*` — owns dispatch/present (SRP: ReView map)
 - `view_bridge.*` — `IViewBridge` façade composing `ViewSynchronizer` + `ViewCompositor` (SRP via composition)

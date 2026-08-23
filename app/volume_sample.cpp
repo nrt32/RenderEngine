@@ -107,7 +107,13 @@ class VolumeSample final : public re::app::ISample {
     re::volume::TransferFunction tf_;
     re::render::VolumeScene scene_;
     re::render::Camera camera_;
-    re::render::VolumeRenderer renderer_;
+    // The shared GPU asset store (SPEC §7 T14): one GPU 3D texture per
+    // distinct dataset content, co-owned by every renderer that resolves
+    // through it. Declared before its renderer and injected as a shared_ptr
+    // copy, so member-init order can never dangle it (T13).
+    std::shared_ptr<re::render::AssetRegistry> assets_{
+        std::make_shared<re::render::AssetRegistry>()};
+    re::render::VolumeRenderer renderer_{assets_};
 };
 
 } // namespace

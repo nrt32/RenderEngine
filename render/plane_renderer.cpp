@@ -19,6 +19,9 @@
 
 namespace re::render {
 
+PlaneRenderer::PlaneRenderer(std::shared_ptr<AssetRegistry> assets)
+    : assets_(std::move(assets)) {}
+
 // Textured-plane shaders live as .glsl files under render/shaders/
 // (SPEC §9 V2.6) and are loaded via core::ShaderProgram's file helpers.
 // The plane is drawn as a plain textured quad; fragment samples the texture
@@ -31,20 +34,6 @@ constexpr std::size_t kStrideBytes = 8u * sizeof(float);
 constexpr std::size_t kUvOffsetBytes = 3u * sizeof(float);
 constexpr std::size_t kNormalOffsetBytes = 5u * sizeof(float);
 
-/// Byte-per-pixel sizes of the image channel counts this renderer accepts
-/// (4 = RGBA, 3 = RGB, 1 = grayscale). Any other channel count is rejected
-/// with a typed error.
-constexpr std::int32_t kSupportedChannels[] = {1, 3, 4};
-
-bool supportedChannels(std::int32_t channels) noexcept {
-    for (const std::int32_t c : kSupportedChannels) {
-        if (c == channels) {
-            return true;
-        }
-    }
-    return false;
-}
-
 PlaneGeometry PlaneGeometry::unitQuadXY() {
     PlaneGeometry g;
     g.corners = {glm::vec3(-1.0f, -1.0f, 0.0f), glm::vec3(1.0f, -1.0f, 0.0f),
@@ -55,50 +44,6 @@ PlaneGeometry PlaneGeometry::unitQuadXY() {
     g.normal = glm::normalize(
         glm::cross(g.corners[1] - g.corners[0], g.corners[3] - g.corners[0]));
     return g;
-}
-
-std::vector<std::uint8_t> PlaneRenderer::imageToRgba8(
-    const data::Image& image) {
-    const std::int32_t width = image.width();
-    const std::int32_t height = image.height();
-    const std::int32_t channels = image.channels();
-    std::vector<std::uint8_t> rgba(
-        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u,
-        0u);
-
-    // The source image uses a top-left origin (data::Image, stb convention),
-    // while core::Texture2D expects row 0 = the BOTTOM scanline (GL
-    // convention). Flipping rows here makes the image's top row the quad's
-    // top (the v direction of the quad increases upward), so the image's
-    // top-left pixel lands at the quad's top-left corner when viewed from the
-    // normal's side.
-    for (std::int32_t y = 0; y < height; ++y) {
-        const std::int32_t glRow = height - 1 - y;
-        for (std::int32_t x = 0; x < width; ++x) {
-            const std::size_t src = static_cast<std::size_t>(y * width + x) *
-                                    static_cast<std::size_t>(channels);
-            const std::size_t dst =
-                static_cast<std::size_t>(glRow * width + x) * 4u;
-            if (channels == 4) {
-                rgba[dst + 0u] = image.pixels()[src + 0u];
-                rgba[dst + 1u] = image.pixels()[src + 1u];
-                rgba[dst + 2u] = image.pixels()[src + 2u];
-                rgba[dst + 3u] = image.pixels()[src + 3u];
-            } else if (channels == 3) {
-                rgba[dst + 0u] = image.pixels()[src + 0u];
-                rgba[dst + 1u] = image.pixels()[src + 1u];
-                rgba[dst + 2u] = image.pixels()[src + 2u];
-                rgba[dst + 3u] = 255u;
-            } else { // 1 channel (grayscale)
-                const std::uint8_t v = image.pixels()[src];
-                rgba[dst + 0u] = v;
-                rgba[dst + 1u] = v;
-                rgba[dst + 2u] = v;
-                rgba[dst + 3u] = 255u;
-            }
-        }
-    }
-    return rgba;
 }
 
 data::Result<core::ShaderProgram*> PlaneRenderer::planeProgram() {
@@ -175,51 +120,25 @@ data::Result<core::VertexArray*> PlaneRenderer::quadGeometry() {
     return data::makeValue<core::VertexArray*>(&*quadVao_);
 }
 
-data::Result<void> PlaneRenderer::uploadTexture(const data::Image& image,
-                                                core::Texture2D& out) {
-    if (!supportedChannels(image.channels())) {
-        return data::makeError<void>(
-            1, "PlaneRenderer: unsupported image channel count (" +
-                   std::to_string(image.channels()) +
-                   "); supported: 1 (gray), 3 (RGB), 4 (RGBA)");
-    }
-    const std::vector<std::uint8_t> rgba =
-        imageToRgba8(image); // already flipped to GL bottom-up rows
-    out.bind(0u);
-    out.upload(static_cast<std::uint32_t>(image.width()),
-               static_cast<std::uint32_t>(image.height()), rgba.data());
-    out.unbind(0u);
-    return data::Result<void>(data::value);
-}
-
 data::Result<core::Texture2D*> PlaneRenderer::textureFor(
     const std::shared_ptr<const data::Image>& image) {
-    // Weak-observer cache key (T13): the key expires together with its asset,
-    // so a destroyed image can never be looked up again and expired entries
-    // are pruned here rather than served.
-    const WeakAssetKey<data::Image> key = image;
-    auto it = textures_.find(key);
-    if (it != textures_.end()) {
-        return data::makeValue<core::Texture2D*>(&it->second);
-    }
-    auto texture = core::Texture2D::create();
-    if (texture.failed()) {
-        return data::makeError<core::Texture2D*>(texture.error().code,
-                                                 texture.error().message);
-    }
-    auto upload = uploadTexture(*image, *texture);
-    if (upload.failed()) {
-        return data::makeError<core::Texture2D*>(upload.error().code,
-                                                 upload.error().message);
-    }
-    textures_.erase(key); // prune any expired twin that hashed to this key
-    auto inserted = textures_.emplace(key, std::move(*texture));
-    return data::makeValue<core::Texture2D*>(&inserted.first->second);
+    // The shared asset store dedups by content hash (T14): identical pixel
+    // content — even through a second renderer instance or a distinct
+    // allocation — resolves to ONE store-owned GL texture. The lazy lookup
+    // never changes reference counts; owners manage explicit lifetimes via
+    // registerImage/unregisterImage. Unsupported channel counts surface as a
+    // typed error from the store's upload.
+    return assets_->lookupImage(image);
 }
 
 data::Result<void> PlaneRenderer::render(const PlaneScene& scene,
                                          const Camera& camera,
                                          const RenderTarget& target) {
+    if (assets_ == nullptr) {
+        // Constructed with a null store (member-init-order safety): fail with
+        // a typed error instead of dereferencing (mirrors MeshRenderer).
+        return data::makeError<void>(4, "PlaneRenderer: no shared asset store");
+    }
     if (target.width == 0u || target.height == 0u) {
         return data::makeError<void>(1, "PlaneRenderer: invalid target size");
     }
@@ -329,6 +248,9 @@ data::Result<void> PlaneRenderer::drawLayer(const PlaneScene& scene, const Camer
                                             core::DrawContext& ctx) {
     // ReView already bind+viewport+clear via ctx; does not clear between layers.
     (void)ctx;
+    if (assets_ == nullptr) {
+        return data::makeError<void>(4, "PlaneRenderer: no shared asset store");
+    }
     auto programResult = planeProgram();
     if (programResult.failed()) {
         return data::makeError<void>(programResult.error().code, programResult.error().message);

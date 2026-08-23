@@ -159,10 +159,16 @@ class PlaneSample final : public re::app::ISample {
     re::render::PlaneScene scene_;
     re::render::Camera camera_;
     re::broker::Broker broker_;
+    // The shared GPU asset store (SPEC §7 T14): one GPU 2D texture per
+    // distinct image content, co-owned by every renderer that resolves
+    // through it. Declared before its renderer and injected as a shared_ptr
+    // copy, so member-init order can never dangle it (T13).
+    std::shared_ptr<re::render::AssetRegistry> assets_{
+        std::make_shared<re::render::AssetRegistry>()};
     // Shared renderer (T13): the View's renderable items co-own it, so view
     // and renderer lifetimes can never race at teardown.
     std::shared_ptr<re::render::PlaneRenderer> renderer_{
-        std::make_shared<re::render::PlaneRenderer>()};
+        std::make_shared<re::render::PlaneRenderer>(assets_)};
 };
 
 } // namespace

@@ -286,58 +286,85 @@ its rect, so the blit is 1:1):
 
 > **V2 T2 historic note.** The V2 T2 gate (Model B: per-view FBO + engine blit via `ViewRenderer`) used the same 1280×480 / 640×480 constants but dispatched through `IRenderer` + `Scene` variant via `ViewRenderer{setRenderer,renderViews,present}`. T5 replaces that compositor with `ReView`/`ViewTarget` + `IRenderable` type erasure + `drawLayer`; `ViewRenderer` + `render/types.hpp` `Scene` raw-pointer `View` struct are deleted. The `Scene` variant in `render/types.hpp` remains for single-item `render()` direct tests until `AssetId` handles replace it in T7.
 
-### The asset registry: `AssetHandle` + `AssetRegistry` (SPEC §9 V2.5, V2 T3)
+### The unified asset store: `AssetRegistry` (SPEC §9 V2.5 mesh kind, SPEC §7 T14 volume/image/material kinds)
 
-The **asset system of the multi-view workstream**: a single registry owns exactly
-**ONE GPU object per individual CPU object registered, globally** across every
-mesh-family renderer. Scenes carry **copyable `AssetHandle`s — `{index,
-generation}`** — instead of raw `const data::Mesh*` pointers, and **handles are
-the currency views exchange**: a `View`'s `Scene` holds handles, and the
-renderers resolve them through the shared registry. Registering the same
-`data::Mesh` twice (e.g. once through the MeshRenderer path and once through
-the SliceRenderer path) yields one GPU object — the registry dedups by
-CPU-object identity — fixing the pre-V2 per-renderer double-upload of the same
-mesh.
+The **asset system of the render layer**: one registry instance owns exactly
+**ONE GPU object per distinct asset CONTENT, globally** across every renderer
+that resolves through it — four kinds share the same generational,
+content-hash-deduped, reference-counted contract:
+
+| Kind (CPU → GPU) | Register | Resolve | Release |
+|---|---|---|---|
+| `data::Mesh → MeshGeometry` | `registerAsset(mesh)` | `resolve(handle)` | `unregister(handle)` |
+| `data::VolumeDataset → core::Texture3D` | `registerVolume(shared_ptr)` | `resolveVolume(handle)` | `unregisterVolume(handle)` |
+| `data::Image → core::Texture2D` | `registerImage(shared_ptr)` | `resolveImage(handle)` | `unregisterImage(handle)` |
+| `PhongMaterial value → canonical IMaterial` | `registerMaterial(shared_ptr)` | `resolveMaterial(handle)` | `unregisterMaterial(handle)` |
+
+Scenes carry **copyable generational handles** instead of raw CPU pointers, and
+handles are the currency views exchange. Registering the same content twice —
+the same CPU object, or two distinct allocations with identical bytes — yields
+ONE GPU object: dedup is by the content hash of stable bytes, never by pointer
+identity. This fixes both the pre-V2 MeshRenderer+SliceRenderer double-upload
+of a mesh and (T14) the per-renderer double-upload of volumes/images: two
+`VolumeRenderer` instances rendering one dataset share one `Texture3D` GL id.
+The material kind extends the same dedup to material VALUES (every
+`PhongMaterial` field — baseColor RGBA, specular RGB, shininess, ambient,
+diffuse — participates in the identity hash), so identical Phong parameters
+share one immutable store-owned canonical instance; the scene→RE material
+hand-off that consumes it is the §12.2 `MaterialMapper` work tracked with the
+broker mapper inventory.
 
 | Type / member | Purpose |
 |---|---|
-| `AssetHandle` | a copyable `{index, generation}` handle into the registry's slot table. `index` selects the slot, `generation` validates it. Cheap to copy; the default handle `{0, 0}` is the reserved **null handle** (`isNull()`), the "no asset" instance renderers skip (like the pre-V2 null mesh pointer) — real handles always carry `generation >= 1`. |
-| `AssetRegistry::registerAsset(mesh)` | registers `mesh` (uploading its GPU geometry once) and returns its handle. Registering the **same CPU object again returns the EXISTING handle** (dedup by identity, `slotCount()` unchanged); two distinct objects — even with identical content — are two GPU objects. Returns a typed error if the upload fails (no GL context). Named `registerAsset`, not `register` — `register` is a C++ reserved keyword. |
-| `AssetRegistry::resolve(handle)` | returns the handle's `MeshGeometry*`. A **stale/dangling handle** — out-of-range index (code 1), generation mismatch (code 2, message "stale handle": a freed, reused, or fabricated handle), or a freed slot (code 3) — returns a **typed error, never a crash** (SPEC §5). |
-| `AssetRegistry::unregister(handle)` | frees the slot: destroys its GPU object, **bumps the slot's generation** so every outstanding handle to it goes stale immediately, and makes the slot reusable. A later `registerAsset` of a different mesh may **reuse the freed index with a fresh generation** — the old handle stays stale. |
-| `AssetRegistry::slotCount()` | the number of currently registered (live) GPU objects: one per distinct individual CPU object (the V2 T3 gate: registering the same mesh twice leaves this at exactly 1). |
+| `AssetHandle` | copyable `{index, generation}` handle into the mesh table. Cheap to copy; `{0, 0}` is the reserved **null handle** (`isNull()`) — real handles carry `generation >= 1`. |
+| `VolumeTextureHandle` / `ImageTextureHandle` / `MaterialHandle` | T14 handles for the volume/image/material tables with the same contract plus the slot's `contentHash` (the three-field shape of the app-side `scene::AssetId`) — a fabricated handle with the right index+generation but the wrong hash resolves to a typed error. |
+| `AssetRegistry::registerAsset / registerVolume / registerImage / registerMaterial` | upload the GPU object once and take ONE REFERENCE on its slot; registering already-present content returns the EXISTING handle and increments the reference count (`slotCount()` unchanged). Returns a typed error if the upload fails (no GL context) or — volume/image/material kinds — the shared pointer is null (code 4). Named `register*`, not `register` — `register` is a C++ reserved keyword. |
+| `AssetRegistry::resolve / resolveVolume / resolveImage / resolveMaterial` | return the handle's live GPU object. A **stale/dangling handle** — out-of-range index (code 1), generation mismatch (code 2: freed, reused, or fabricated), wrong content hash (code 2, volume/image/material kinds) — returns a **typed error, never a crash** (SPEC §5). |
+| `AssetRegistry::unregister / unregisterVolume / unregisterImage / unregisterMaterial` | release one reference. At the LAST reference the GPU object is destroyed and the slot's generation bumped, so every outstanding handle goes stale immediately, and the slot becomes reusable (a later registration reuses the index with a fresh generation). With references outstanding, release only decrements — co-owned assets survive other owners' releases. |
+| `AssetRegistry::lookupVolume / lookupImage` | the renderers' lazy path: find-or-upload by content hash WITHOUT changing any reference count. A miss leaves the entry store-pinned (zero references) until an owner claims it via register and releases it later; after full invalidation the next lookup re-uploads fresh — stale GPU data can never be served for freed content. |
+| `AssetRegistry::volumeRefs / imageRefs / materialRefs` | live reference count of a slot (gate evidence for the ref-counting contract). |
+| `AssetRegistry::shared() / resetShared()` | the process-wide default instance behind the volume/plane renderer constructor defaults — two default-constructed renderers therefore share one GPU object per content (the T14 invariant). `resetShared()` destroys it while a GL context is current (test-fixture teardown); the next `shared()` recreates it empty. |
 
 **Generational safety.** Every slot's generation starts at 1 and is bumped each
 time the slot is freed (and again when a freed slot is reused). A handle is
-valid only while its `{index, generation}` exactly matches the slot's — so a
-dangling handle (its slot freed or reused) is detected at resolve time and
-surfaced as a typed error, never a dereference of freed memory. Resolved
-geometry pointers stay valid until the slot is freed (each slot's geometry is
-heap-stable); the renderers resolve per draw and never retain pointers across
-registrations.
+valid only while its fields exactly match the slot's — so a dangling handle is
+detected at resolve time and surfaced as a typed error, never a dereference of
+freed memory. Resolved GPU-object pointers stay valid until the slot's last
+reference drops (each slot owns its object); the renderers resolve per draw and
+never retain pointers across frames.
 
-**Renderer integration.** `MeshRenderer` and `SliceRenderer` are constructed
-with a shared registry handle (`std::shared_ptr<AssetRegistry>` — T13 shared
-ownership, so declaration order can never dangle it; a null registry fails per
-draw with typed error code 4) and resolve
-every instance's handle through it — the registry, not the renderer, owns the
-GPU geometry. This is what makes the dedup global: the same mesh drawn by both
-renderers (and by any number of views) is uploaded once.
+**Renderer integration.** All four technique renderers hold a
+`std::shared_ptr<AssetRegistry>` (T13 shared ownership, so declaration order
+can never dangle it; a null store fails per draw with typed error code 4):
+Mesh/Slice/Contour since V2/T5 via explicit injection, Volume/Plane since T14
+(defaulting to `AssetRegistry::shared()`). Mesh-family renderers resolve scene
+`AssetHandle`s; the volume/plane renderers lazily resolve datasets/images by
+content hash through `lookupVolume`/`lookupImage` — the registry, not the
+renderer, owns every GPU asset, which is what makes dedup global.
 
-#### Acceptance constants (V2 T3 asset-registry gate, docs/render.md)
+#### Acceptance constants (V2 T3 + T14 asset-store gates, docs/render.md)
 
 | Quantity | Value | Where it comes from |
 |---|---|---|
-| Same `data::Mesh` registered twice (via the MeshRenderer path + the SliceRenderer path) | `slotCount() == 1` | the registry dedups by CPU-object identity: one GPU object per individual CPU object (SPEC §9 V2.5) |
-| The two registration handles | equal (`{index, generation}` identical) | `registerAsset` of an already-registered object returns the existing handle |
+| Same `data::Mesh` registered twice (via the MeshRenderer path + the SliceRenderer path) | `slotCount() == 1` | the registry dedups by content hash of stable bytes: one GPU object per distinct content (SPEC §9 V2.5 + T7) |
+| The two registration handles | equal (`{index, generation}` identical) | `registerAsset` of already-present content returns the existing handle and takes another reference |
 | Both handles resolve to | the same **non-zero** GL object id (`MeshGeometry::vaoId()`) | one GPU object behind both handles; GL reserves 0, so a live VAO name is non-zero |
-| Two DISTINCT meshes with identical content | `slotCount() == 2`, distinct VAO ids | dedup is per individual CPU object; GL object names are unique among live objects of a type |
+| Two DISTINCT meshes with identical bytes | `slotCount()` stays at 1, same VAO id | content-hash dedup (T7): identical stable bytes alias to one GPU object |
 | Stale `{index, generation+1}` lookup | typed error, code 2, message contains `stale` | generation mismatch (fabricated stale handle) |
 | `{index, 0}` lookup | typed error | generation 0 is the never-allocated marker (null handle) |
-| Out-of-range index lookup | typed error, code 1 | index beyond the slot table |
-| Handle after `unregister` | typed error (code 2) | the freed slot's generation is bumped at free time; unregistering it again is also a typed error |
+| Handle after `unregister` of its last reference | typed error (code 2) | the freed slot's generation is bumped at free time; unregistering it again is also a typed error |
 | Freed-slot reuse for a NEW mesh | same index, **new generation**; old handle still stale, new handle resolves | slot reuse issues a fresh generation — the generational mechanism |
-| Stale handle inside a rendered scene | `render()` returns the typed error, no crash | the renderer propagates the resolve error (SPEC §5) |
+| Same dataset through TWO `VolumeRenderer` instances | one `Texture3D` GL id; center pixel `{0,239,0,239}` ±1 from both | FR-render.6 analytic constant; the T14 gate asserts pointer/id equality through the shared store |
+| Identical-content distinct-pointer volumes/images | one slot (`volumeSlotCount()/imageSlotCount() == 1`) | content-hash dedup (T14): voxel/pixel bytes are the key, never the address |
+| Volume refs: register ×2 → release → release | refs `1 → 2 → 1`, freed at second release | the reference-counting contract: the last release destroys the GPU object and bumps the generation |
+| Stale volume/image handle after full release | typed error, code 2, no crash | generational invalidation at free time |
+| Out-of-range index lookup | typed error, code 1 | index beyond the slot table |
+| Fabricated wrong-`contentHash` handle (volume/image/material) | typed error, code 2 | handles bind `(index, generation, contentHash)` — the `scene::AssetId` shape |
+| Lazy lookups (`lookupVolume`/`lookupImage`) | reference count unchanged | renderer-path find-or-upload never claims ownership |
+| Lookup after full release | succeeds with a fresh valid texture; old handle stays dead (code 2) | content-addressed recovery — no stale GPU data for freed content |
+| Identical-value distinct-pointer `PhongMaterial`s (base `{0.2,0.4,0.8,1}`, shininess `32`) | one slot (`materialSlotCount() == 1`), equal handles, canonical `baseColor()` bit-exact | material kind value dedup (T14): every Phong field participates in the hash; the canonical is a byte-exact clone |
+| Differing shininess or differing alpha | new slot each (`materialSlotCount() == 3` after the two negative controls) | alpha drives `isTransparent()` (FR-render.3 ⇔ a<1), so it must participate in material identity |
+| Stale handle inside a rendered mesh scene | `render()` returns the typed error, no crash | the renderer propagates the resolve error (SPEC §5) |
 | Mesh + Slice renderers drawing one shared handle | both center pixels `{51, 102, 204}` (±1), `slotCount()` still 1 | FR-render.1/4 analytic center pixels (regression lock R3) — see the FR-render.1/4 tables below |
 
 ### `IMaterial` (`render/imaterial.hpp`)
@@ -716,7 +743,7 @@ Public scene structs (defined in `contour_renderer.hpp`):
 **Broker translation.** `broker::ContourMapper`
 (`: IMapper<scene::ContourObject, render::ContourObject>`, SPEC §11) performs
 the scene→render translation: it registers the scene object's `data::Mesh` in
-the shared `AssetRegistry` (dedup by CPU-object identity) and produces the RE-minimal
+the shared `AssetRegistry` (dedup by content hash of stable bytes) and produces the RE-minimal
 render object. Typed errors: null mesh pointer (code 1), null registry (code
 2), `Space::VoxelIndex` planes (code 3 — the voxel→world conversion needs the
 volume context and is deliberately not silently identity-mapped, SPEC §5).
@@ -770,22 +797,23 @@ scene::PlaneObject{shared image asset ref, transform, presentation} (app/scene)
 ```
 
 `broker::PlaneMapper` is a pure translator (ISP `IMapper`, no cache — texture
-dedup already lives in `textureFor`): it carries image + transform across and
-binds the shared analytic unit quad; `presentation` deliberately has no RE
-counterpart because the textured-plane path is an unlit texture display by
-design (FR-render.5's quad must reproduce source texels exactly). The mapped
-instance SHARES (T13 `shared_ptr`) the two things it references: the mapper's
-program-duration static unit quad, and the scene object's `data::Image` asset —
-nothing to outlive, nothing to dangle.
+dedup lives in the shared asset store, SPEC §7 T14): it carries image +
+transform across and binds the shared analytic unit quad; `presentation`
+deliberately has no RE counterpart because the textured-plane path is an
+unlit texture display by design (FR-render.5's quad must reproduce source
+texels exactly). The mapped instance SHARES (T13 `shared_ptr`) the two things
+it references: the mapper's program-duration static unit quad, and the scene
+object's `data::Image` asset — nothing to outlive, nothing to dangle.
 
 `PlaneRenderer::render(scene, camera, target)` receives all of its data per
-call; the renderer owns only GL resources — its cached textured-plane shader,
-one shared unit-quad VAO/VBO, and a texture cache keyed by a weak observer of
-the shared CPU image (each
-`data::Image` is uploaded to the GPU once and reused across plane instances and
-views). It implements the `IRenderer` dispatch contract (`render/types.hpp`,
-SPEC §9 V2.3): its `IRenderer::render` forwards a `Scene` holding a
-`PlaneScene` to this concrete method.
+call; the renderer owns only GL resources — its cached textured-plane shader
+and one shared unit-quad VAO/VBO. GPU textures live in the shared
+`AssetRegistry` (SPEC §7 T14): each `data::Image` is content-hash-deduped into
+one `core::Texture2D` per store (uploaded once, reused across plane instances,
+renderers, and views), so no per-renderer texture map exists. It implements
+the `IRenderer` dispatch contract (`render/types.hpp`, SPEC §9 V2.3): its
+`IRenderer::render` forwards a `Scene` holding a `PlaneScene` to this concrete
+method.
 
 Public scene structs (defined in `plane_renderer.hpp`):
 
@@ -799,9 +827,10 @@ Public scene structs (defined in `plane_renderer.hpp`):
 
 1. Binds the target framebuffer, sets the viewport, clears to the clear color,
    and leaves depth/blend off (v1 FBOs are color-only, SPEC §6 / docs/core.md).
-2. For each plane, uploads (or reuses) its image as an RGBA8 `core::Texture2D`
-   (converted and **vertically flipped** by `imageToRgba8`, see below), binds it
-   to texture unit 0, and draws the shared unit quad through the cached
+2. For each plane, resolves (or lazily uploads) its image as an RGBA8
+   `core::Texture2D` in the shared `AssetRegistry` — the store's conversion is
+   **vertically flipped** to GL bottom-up rows during upload (see below) — binds
+   it to texture unit 0, and draws the shared unit quad through the cached
    textured shader.
 
 **Geometry mapping.** Every plane is drawn from one shared unit-quad VAO whose
@@ -822,10 +851,11 @@ so the quad covers the viewport 1:1 under the T8 orthographic camera.
 
 **UV mapping & orientation (analytic, FR-render.5).** The UV space maps the
 source image exactly once across the quad with `(u,v)=(0,0)` at corner0 and
-`(1,1)` at corner2. `imageToRgba8` flips the image's rows (data::Image is
-top-left origin; core::Texture2D is bottom-up), so **the image's top row
-renders at the quad's top when viewed from the normal's side**. Textures are
-sampled with GL_LINEAR and CLAMP_TO_EDGE (core::Texture2D defaults).
+`(1,1)` at corner2. The shared store's RGBA8 conversion flips the image's rows
+(data::Image is top-left origin; core::Texture2D is bottom-up), so **the
+image's top row renders at the quad's top when viewed from the normal's side**.
+Textures are sampled with GL_LINEAR and CLAMP_TO_EDGE (core::Texture2D
+defaults).
 
 #### Acceptance constants (FR-render.5, docs/render.md)
 
@@ -859,13 +889,14 @@ A **stateless ray-cast volume renderer** (SPEC §3, FR-render.6) that consumes t
 pure `volume/` math (SPEC §3: "VolumeRenderer (ray-cast GL draw; volume/ provides
 the pure math)"). `VolumeRenderer::render(scene, camera, target)` receives all of
 its data per call; the renderer owns only GL resources — its cached ray-cast
-shader program, one shared full-screen quad VAO/VBO, and a 3D-texture cache keyed
-by a weak observer of the shared CPU dataset (each `data::VolumeDataset` is
-uploaded to the GPU once and
-reused across instances and views; an expired dataset's cache key expires with
-it — T13). It implements the `IRenderer` dispatch
-contract (`render/types.hpp`, SPEC §9 V2.3): its `IRenderer::render` forwards a
-`Scene` holding a `VolumeScene` to this concrete method.
+shader program and one shared full-screen quad VAO/VBO. GPU 3D textures live in
+the shared `AssetRegistry` (SPEC §7 T14): each `data::VolumeDataset` is
+content-hash-deduped into one `core::Texture3D` per store (uploaded once,
+reused across instances, renderers, and views — two renderer instances share
+one GL texture id), so no per-renderer texture map exists. It implements the
+`IRenderer` dispatch contract (`render/types.hpp`, SPEC §9 V2.3): its
+`IRenderer::render` forwards a `Scene` holding a `VolumeScene` to this concrete
+method.
 
 Public scene structs and constant (defined in `volume_renderer.hpp`):
 
@@ -879,10 +910,11 @@ Public scene structs and constant (defined in `volume_renderer.hpp`):
 
 1. Binds the target framebuffer, sets the viewport, clears to the clear color,
    and leaves depth/blend off (v1 FBOs are color-only, SPEC §6 / docs/core.md).
-2. For each volume, uploads (or reuses) its dataset as a `core::Texture3D`
-   (`GL_R32F`, `GL_LINEAR` trilinear filtering, `GL_CLAMP_TO_EDGE`), uploads the
-   transfer function's control points as uniforms, and draws the shared
-   full-screen quad through the cached ray-cast shader.
+2. For each volume, resolves (or lazily uploads) its dataset as a
+   `core::Texture3D` in the shared `AssetRegistry` (`GL_R32F`, `GL_LINEAR`
+   trilinear filtering, `GL_CLAMP_TO_EDGE`), uploads the transfer function's
+   control points as uniforms, and draws the shared full-screen quad through
+   the cached ray-cast shader.
 
 **The ray-cast fragment shader** reconstructs the pixel's world ray by
 unprojecting its NDC near/far points through `uViewProj = proj * view` (works for
@@ -956,11 +988,12 @@ out.rgb = 0.5*(1 + 0.5 + 0.25 + 0.125)     = 0.9375  (along green)
   `SliceRenderer::captureCrossSection`) — guardrail `no_production_readback`.
 - **Stateless + dependency inversion**: `render()` takes all data per call;
   renderers depend on `IMaterial` / `ITransparencyPipeline` abstractions and
-  expose the `IRenderer` dispatch contract (SPEC §9 V2.3). GPU geometry is
-  injected: the mesh-family renderers take a shared `AssetRegistry` handle
-  (`std::shared_ptr`, T13 co-ownership) and resolve
-  scene `AssetHandle`s through it (SPEC §9 V2.5) — never a raw GL call, never a
-  per-renderer duplicate upload.
+  expose the `IRenderer` dispatch contract (SPEC §9 V2.3). GPU assets are
+  injected: every technique renderer takes a shared `AssetRegistry` handle
+  (`std::shared_ptr`, T13 co-ownership; the volume/plane renderers default to
+  the process-wide store) and resolves scene handles or asset content through
+  it (SPEC §9 V2.5 / §7 T14) — never a raw GL call, never a per-renderer
+  duplicate upload, no per-renderer pointer-keyed caches anywhere.
 - **Typed diagnostics**: draw/geometry failures return `data::Result` — no
   exceptions, no silent failure.
 - **Deterministic / single-threaded**: one render thread; the v1 opaque pass is

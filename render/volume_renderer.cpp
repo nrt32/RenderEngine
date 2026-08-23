@@ -19,6 +19,9 @@
 
 namespace re::render {
 
+VolumeRenderer::VolumeRenderer(std::shared_ptr<AssetRegistry> assets)
+    : assets_(std::move(assets)) {}
+
 // Ray-cast shaders live as .glsl files under render/shaders/ (SPEC §9 V2.6)
 // and are loaded via core::ShaderProgram's file helpers. The fragment shader
 // mirrors the pure volume/ math (FR-vol.1/2/3).
@@ -116,38 +119,14 @@ data::Result<core::VertexArray*> VolumeRenderer::screenQuad() {
     return data::makeValue<core::VertexArray*>(&*screenQuadVao_);
 }
 
-data::Result<void> VolumeRenderer::uploadTexture(
-    const data::VolumeDataset& dataset, core::Texture3D& out) {
-    out.bind(0u);
-    out.upload(dataset.sizeX(), dataset.sizeY(), dataset.sizeZ(),
-               dataset.voxels().data());
-    out.unbind(0u);
-    return data::Result<void>(data::value);
-}
-
 data::Result<core::Texture3D*> VolumeRenderer::textureFor(
     const std::shared_ptr<const data::VolumeDataset>& dataset) {
-    // Weak-observer cache key (T13): the key expires together with its asset,
-    // so a destroyed dataset can never be looked up again and expired entries
-    // are pruned here rather than served.
-    const WeakAssetKey<data::VolumeDataset> key = dataset;
-    auto it = textures_.find(key);
-    if (it != textures_.end()) {
-        return data::makeValue<core::Texture3D*>(&it->second);
-    }
-    auto texture = core::Texture3D::create();
-    if (texture.failed()) {
-        return data::makeError<core::Texture3D*>(texture.error().code,
-                                                 texture.error().message);
-    }
-    auto upload = uploadTexture(*dataset, *texture);
-    if (upload.failed()) {
-        return data::makeError<core::Texture3D*>(upload.error().code,
-                                                 upload.error().message);
-    }
-    textures_.erase(key); // prune any expired twin that hashed to this key
-    auto inserted = textures_.emplace(key, std::move(*texture));
-    return data::makeValue<core::Texture3D*>(&inserted.first->second);
+    // The shared asset store dedups by content hash (T14): identical voxel
+    // content — even through a second renderer instance or a distinct
+    // allocation — resolves to ONE store-owned GL texture. The lazy lookup
+    // never changes reference counts; owners manage explicit lifetimes via
+    // registerVolume/unregisterVolume.
+    return assets_->lookupVolume(dataset);
 }
 
 void VolumeRenderer::uploadTransferFunction(
@@ -169,6 +148,11 @@ void VolumeRenderer::uploadTransferFunction(
 data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
                                           const Camera& camera,
                                           const RenderTarget& target) {
+    if (assets_ == nullptr) {
+        // Constructed with a null store (member-init-order safety): fail with
+        // a typed error instead of dereferencing (mirrors MeshRenderer).
+        return data::makeError<void>(4, "VolumeRenderer: no shared asset store");
+    }
     if (target.width == 0u || target.height == 0u) {
         return data::makeError<void>(1, "VolumeRenderer: invalid target size");
     }
@@ -267,6 +251,9 @@ data::Result<void> VolumeRenderer::drawLayer(const VolumeScene& scene, const Cam
                                              core::DrawContext& ctx) {
     // ReView already bind+viewport+clear via ctx; does not clear between layers.
     (void)ctx;
+    if (assets_ == nullptr) {
+        return data::makeError<void>(4, "VolumeRenderer: no shared asset store");
+    }
     auto programResult = rayCastProgram();
     if (programResult.failed()) {
         return data::makeError<void>(programResult.error().code, programResult.error().message);

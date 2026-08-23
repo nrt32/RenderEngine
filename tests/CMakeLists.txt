@@ -35,6 +35,7 @@ add_executable(${RE_TEST_TARGET}
     t8_phong_tf_test.cpp
     t9_re_scene_inventory_test.cpp
     t12_plane_path_test.cpp
+    t14_unified_asset_store_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

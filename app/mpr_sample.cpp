@@ -526,11 +526,14 @@ class MPRView final : public app::ISample {
     // through the Broker-mediated PlaneMapper (V3.4b T12) and drawn by the
     // PlaneRenderer as the first ReView layer of each slice view. app/ holds
     // only scene::PlaneObject values — no RE-side quad geometry, no quad
-    // vertex parsing (the unit-quad VAO belongs to PlaneRenderer alone).
+    // vertex parsing (the unit-quad VAO belongs to PlaneRenderer alone). The
+    // PlaneRenderer resolves slice-image textures through the SAME shared
+    // asset store as the mesh-family renderers (SPEC §7 T14), so meshes and
+    // images share one registry instance.
     broker::Broker broker_;
     std::array<render::PlaneScene, 3> sliceScenes_{};
     std::shared_ptr<render::PlaneRenderer> sliceRenderer_{
-        std::make_shared<render::PlaneRenderer>()};
+        std::make_shared<render::PlaneRenderer>(registry_)};
 
     // Per-slice-view GPU contour layers (FR-app.3): translated scene→render
     // through the Broker-mediated contour mapper and drawn by the

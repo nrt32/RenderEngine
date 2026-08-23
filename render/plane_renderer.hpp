@@ -13,18 +13,18 @@
 // corners/UVs into vertex buffers — the unit-quad VAO is built and owned by
 // quadGeometry() below, PlaneGeometry::unitQuadXY() stays a render/-internal
 // detail (reached through broker, not re-parsed by callers), and the
-// data::Image → core::Texture2D upload stays inside textureFor()
-// (imageToRgba8's CPU row-flip feeds that GPU upload; it is NOT an app-side
-// quad path).
+// data::Image → core::Texture2D upload lives in the SHARED asset store
+// (`render::AssetRegistry`, SPEC §7 T14 — the RGBA8 conversion and row flip
+// are part of that GPU-upload contract, not an app-side quad path).
 //
 // Stateless rendering: PlaneRenderer::render(scene, camera, target) receives
 // all of its data per call; the renderer owns only GL resources (its cached
-// textured-plane shader program, one shared unit-quad VAO/VBO, and the GPU
-// textures it has uploaded, keyed by a weak observer of the shared CPU image
-// — see texture_cache_key.hpp). The same image is
-// uploaded to the GPU once and reused across plane instances and views — this
-// is the renderer MPRView drives for its Transverse/Coronal/Sagittal slice
-// views (T14).
+// textured-plane shader program and one shared unit-quad VAO/VBO). GPU
+// textures live in the shared asset store: every image is content-hash-deduped
+// into exactly one Texture2D per registry, so identical pixel content shares
+// one GL texture id across instances and views, and no per-renderer
+// pointer-keyed cache exists. This is the renderer MPRView drives for its
+// Transverse/Coronal/Sagittal slice views (T14).
 //
 // Plane geometry is defined per-instance by PlaneGeometry (four world-space
 // corners + per-corner UVs + a precomputed normal) and transformed by the
@@ -32,9 +32,10 @@
 // UV mapping convention (analytic, verified by the T8 gate): the plane's UV
 // space maps the source image exactly once across the quad, with (u,v) = (0,0)
 // at corner0 and (1,1) at corner2; the image's top-left pixel appears at the
-// quad's top-left when viewed from the side the normal points toward (see
-// imageToRgba8). The model matrix maps the geometry's corners into world
-// space (applied after the affine corner-box map the renderer builds).
+// quad's top-left when viewed from the side the normal points toward (the
+// store's row-flipping RGBA8 conversion). The model matrix maps the geometry's
+// corners into world space (applied after the affine corner-box map the
+// renderer builds).
 //
 // render/ is GL-call-free: it draws through the core::Draw API and core/ RAII
 // objects (guardrail gpu_api_ownership).
@@ -47,7 +48,6 @@
 #include <glm/vec4.hpp>
 #include <memory>
 #include <optional>
-#include <unordered_map>
 #include <vector>
 
 #include "core/draw.hpp"
@@ -59,7 +59,7 @@
 #include "core/vertex_buffer.hpp"
 #include "data/image.hpp"
 #include "data/result.hpp"
-#include "render/texture_cache_key.hpp"
+#include "render/asset_registry.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
 
 namespace re::render {
@@ -118,15 +118,26 @@ struct PlaneScene {
 
 /// Stateless textured-plane renderer (SPEC §3; feeds MPR, T14).
 ///
-/// Owns only GL resources: the cached textured-plane shader program, one
+/// Owns only GL resources: the cached textured-plane shader program and one
 /// shared unit-quad vertex array (all planes are unit quads transformed by
-/// their model matrix), and a texture cache keyed by a weak observer of the
-/// shared CPU image so each data::Image is uploaded to the GPU once. Textures
-/// are sampled with GL_LINEAR and CLAMP_TO_EDGE (core::Texture2D defaults),
-/// so a quad mapped 1:1 onto the viewport reproduces the source texels
-/// exactly (FR-render.5).
+/// their model matrix). GPU textures live in the shared `AssetRegistry`
+/// (SPEC §7 T14): the renderer lazily resolves each instance's image by
+/// content hash, so each distinct image is uploaded to the GPU once per store
+/// and no per-renderer texture map exists. Textures are sampled with
+/// GL_LINEAR and CLAMP_TO_EDGE (core::Texture2D defaults), so a quad mapped
+/// 1:1 onto the viewport reproduces the source texels exactly (FR-render.5).
 class PlaneRenderer : public IRenderer {
    public:
+    /// Construct with the shared asset store (SHARED ownership: the renderer
+    /// co-owns the registry with every other renderer — declaration order can
+    /// never dangle it). Defaults to the process-wide registry
+    /// (`AssetRegistry::shared()`), so two default-constructed renderers share
+    /// one GPU texture per content. A null pointer is accepted at construction
+    /// so member-init order never matters, but every render/drawLayer validates
+    /// it and returns a typed error (code 4) instead of dereferencing.
+    explicit PlaneRenderer(
+        std::shared_ptr<AssetRegistry> assets = AssetRegistry::shared());
+
     /// Render `scene` into `target` from `camera`. On success the target
     /// framebuffer is left bound (so tests can read it back). Returns a typed
     /// error if the shader fails to build, a texture upload fails, or a draw
@@ -146,13 +157,14 @@ class PlaneRenderer : public IRenderer {
     data::Result<void> drawLayer(const PlaneScene& scene, const Camera& camera,
                                  core::DrawContext& ctx);
 
-   private:
-    /// Convert an image's pixels to RGBA8 bytes for GL upload: 4-channel
-    /// images pass through, 3-channel images get alpha 255, 1-channel
-    /// (grayscale) images replicate the value to RGB with alpha 255. The
-    /// result is laid out like core::Texture2D expects (row 0 = bottom).
-    static std::vector<std::uint8_t> imageToRgba8(const data::Image& image);
+    /// The shared asset store textures resolve through (non-null after a valid
+    /// construction; null only if constructed with nullptr — renders then fail
+    /// with typed error code 4).
+    const std::shared_ptr<AssetRegistry>& assets() const noexcept {
+        return assets_;
+    }
 
+   private:
     /// Build (and cache) the textured-plane shader program, returning a
     /// pointer to the cached program (non-null on success).
     data::Result<core::ShaderProgram*> planeProgram();
@@ -163,31 +175,22 @@ class PlaneRenderer : public IRenderer {
     /// quadVao_ `optional<>` member) — valid while this renderer is.
     data::Result<core::VertexArray*> quadGeometry();
 
-    /// Ensure `image` is uploaded as a GPU texture (cached by weak OBSERVER
-    /// of the shared asset — see texture_cache_key.hpp), returning a pointer
-    /// to the cached texture (non-null on success).
-    /// @note lifetime: non-owning view of renderer-owned storage (the
-    /// textures_ map entry) — valid until this renderer evicts it or dies.
+    /// Resolve `image`'s content in the shared asset store (lazy
+    /// find-or-upload by content hash, no reference-count change — T14),
+    /// returning a pointer to the store-owned texture (non-null on success;
+    /// unsupported channel counts surface as a typed error from the upload).
+    /// @note lifetime: non-owning view of store-owned storage (the slot's
+    /// unique_ptr) — valid until the slot's last reference is released or the
+    /// store dies; renderers never retain it across frames.
     data::Result<core::Texture2D*> textureFor(
         const std::shared_ptr<const data::Image>& image);
 
-    /// Upload `image` to a fresh texture bound to `*out` (used by textureFor).
-    data::Result<void> uploadTexture(const data::Image& image,
-                                     core::Texture2D& out);
-
+    std::shared_ptr<AssetRegistry> assets_;
     std::optional<core::ShaderProgram> planeProgram_;
     std::optional<core::VertexArray> quadVao_;
     std::optional<core::VertexBuffer> quadVbo_;
     std::optional<core::ElementBuffer> quadEbo_; // index buffer referenced by quadVao_
     std::size_t quadIndexCount_{6u}; // two triangles
-    /// GPU texture cache keyed by a weak OBSERVER of the shared CPU image
-    /// (T13): an expired image's key expires with it — the cache can never
-    /// serve stale GPU data for a destroyed asset, and it never keeps a CPU
-    /// asset alive by itself.
-    std::unordered_map<WeakAssetKey<data::Image>, core::Texture2D,
-                       WeakAssetOwnerHash<data::Image>,
-                       WeakAssetOwnerEq<data::Image>>
-        textures_;
 };
 
 } // namespace re::render

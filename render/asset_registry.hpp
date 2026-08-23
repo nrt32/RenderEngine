@@ -1,34 +1,63 @@
 #pragma once
 
-// render/asset_registry.hpp — generational GPU-asset registry (SPEC §9 V2.5,
-// V2 T3, T7 V3.6 content-hash + dual-key shim).
+// render/asset_registry.hpp — the unified typed multi-kind GPU asset store
+// (SPEC §9 V2.5 for the mesh kind; SPEC §7 T14 for the volume/image/material
+// kinds).
 //
-// The asset system of the multi-view workstream: a single registry owns exactly
-// ONE GPU object per individual CPU object registered, GLOBALLY across every
-// mesh-family renderer. Scenes carry copyable AssetHandles — `{index,
-// generation}` — instead of raw `const data::*` pointers, and handles are the
-// currency views exchange: a View's Scene holds handles, and the renderers
-// resolve them through the shared registry. Registering the same `data::Mesh`
-// twice (e.g. once through the MeshRenderer path and once through the
-// SliceRenderer path) yields one GPU object — the registry dedups by
-// content hash of stable bytes (T7, not bare pointer) — which fixes the
-// pre-V2 per-renderer double-upload and the T7 hot-reload identity bug
-// (SPEC §7 T7, Q3/Q28). Dual-key shim: `byObject_` (pointer) + `byHash_`
-// (content hash) in V3.6; shim removed V4.
+// One registry instance owns exactly ONE GPU object per distinct asset
+// CONTENT, globally across every renderer that resolves through it:
 //
-// Generational safety (dangling-handle detection): every slot carries a
-// generation that starts at 1 and is bumped each time the slot is freed (and
-// again when a freed slot is reused by a later registration). A handle is valid
-// only while its {index,generation} exactly matches the slot's; a stale handle
-// (out-of-range index, generation mismatch — a freed, reused, or fabricated
-// handle) resolves to a typed error (SPEC §5, no exceptions), never a crash.
-// The default-constructed handle {0,0} is reserved as the null handle: real
-// handles always have generation >= 1.
+//   data::Mesh          → MeshGeometry      (mesh kind, V2 T3 + T7)
+//   data::VolumeDataset → core::Texture3D   (volume kind, T14)
+//   data::Image         → core::Texture2D   (image kind, T14)
+//   PhongMaterial value → canonical IMaterial (material kind, T14)
 //
-// render/ is GL-call-free: the registry uploads geometry through
-// MeshGeometry::create (core/ RAII buffers), never raw GL calls (guardrail
-// gpu_api_ownership). The registry is single-threaded (SPEC §5) and not
-// thread-safe.
+// Scenes carry copyable generational handles instead of raw CPU pointers, and
+// the renderers resolve them through the shared registry. Registering the same
+// content twice (the same CPU object, or two distinct allocations with
+// identical bytes) yields one GPU object — the store dedups by the content
+// hash of stable bytes, not by pointer identity — which fixes both the pre-V2
+// MeshRenderer+SliceRenderer double-upload and the T14 per-renderer
+// double-upload of volumes/images (two VolumeRenderer instances now share one
+// Texture3D GL id). The material kind extends the same dedup to material
+// VALUES so identical Phong parameters share one canonical instance (the
+// scene→RE material hand-off that consumes it is the §12.2 MaterialMapper
+// work, tracked with the broker mapper inventory).
+//
+// Keying and lifetime (T14): every slot carries a `generation` plus the
+// `contentHash` it was created from, and every registration takes a reference
+// on the slot (`refs`). Registration of already-present content increments
+// `refs`; releasing decrements; the slot's GPU object is destroyed and its
+// generation bumped (invalidating every outstanding handle) only when the last
+// reference drops. A handle whose slot was freed, reused, or fabricated
+// resolves to a typed error — never a crash (SPEC §5). The default-constructed
+// handle is the reserved null handle: real handles always carry
+// `generation >= 1`.
+//
+// Renderer integration: all four technique renderers hold a shared_ptr to one
+// registry (mesh/slice/contour via constructor injection since V2 T5; volume/
+// plane likewise since T14). The volume/plane renderers additionally use the
+// lazy lookup path (`lookupVolume`/`lookupImage`), which finds-or-uploads by
+// content hash WITHOUT changing any reference count — a scene can be rendered
+// statelessly while owners manage explicit lifetimes through
+// register/unregister. Lazily-created entries are pinned by the store until an
+// owner claims (re-registers) and releases them, or until the store itself is
+// destroyed. The process-wide default instance behind the renderer defaults is
+// created by `shared()` and must be torn down with `resetShared()` while a GL
+// context is still current (the test fixture does this in TearDown).
+//
+// render/ is GL-call-free: the store uploads geometry through
+// MeshGeometry::create and textures through core::Texture3D/Texture2D RAII
+// wrappers, never raw GL calls (guardrail gpu_api_ownership). Single-threaded
+// (SPEC §5), not thread-safe.
+//
+// Hash note: the mesh/volume/image content hashes are computed locally in
+// asset_registry.cpp, byte-identical to `scene::computeContentHash`'s
+// overloads — render must not include scene/ (layer disposition: broker is the
+// only library that includes both), so the byte-hash definitions are
+// duplicated there until the planned consolidation into a shared GL-free
+// data/ header. The material kind's hash has no scene/ counterpart by design:
+// it is defined on the RE-side PhongMaterial VALUE (RE-minimal, §12.4).
 
 #include <cstddef>
 #include <cstdint>
@@ -37,22 +66,28 @@
 #include <utility>
 #include <vector>
 
+#include "core/texture2d.hpp"
+#include "core/texture3d.hpp"
+#include "data/image.hpp"
 #include "data/mesh.hpp"
 #include "data/result.hpp"
+#include "data/volume_dataset.hpp"
+#include "render/imaterial.hpp"
 #include "render/mesh_geometry.hpp"
+#include "render/phong_material.hpp"
 
 namespace re::render {
 
-/// Copyable handle to a registered GPU asset (SPEC §9 V2.5): the registry slot
-/// index plus the slot's generation at issue time.
+/// Copyable handle to a registered GPU geometry (mesh kind, SPEC §9 V2.5): the
+/// registry slot index plus the slot's generation at issue time.
 ///
 /// Handles are cheap to copy and are the currency scene instances and views
 /// exchange — a `MeshInstance` holds one instead of a raw `const data::Mesh*`
 /// pointer, so a scene never touches a CPU mesh directly. A handle is valid
-/// only for the registry that issued it, and only until the slot is freed:
-/// resolving a stale handle returns a typed error, never a crash (SPEC §5).
-/// The default-constructed handle `{0, 0}` is the reserved null handle
-/// (generation 0 is never issued to a live slot).
+/// only for the registry that issued it, and only until its slot's last
+/// reference is released: resolving a stale handle returns a typed error,
+/// never a crash (SPEC §5). The default-constructed handle `{0, 0}` is the
+/// reserved null handle (generation 0 is never issued to a live slot).
 struct AssetHandle {
     std::uint32_t index = 0u;      ///< Slot index in the registry's slot table.
     std::uint32_t generation = 0u; ///< Slot generation at issue time.
@@ -73,24 +108,304 @@ inline bool operator!=(const AssetHandle& a, const AssetHandle& b) noexcept {
     return !(a == b);
 }
 
-/// Generational GPU-asset registry (SPEC §9 V2.5, V2 T3, T7 V3.6).
+/// Copyable handle to a registered GPU 3D texture (volume kind, T14).
 ///
-/// Owns exactly one `MeshGeometry` per distinct `data::Mesh` content
-/// (content hash of stable bytes, not bare pointer). `registerAsset()` dedups
-/// by content hash: registering the same mesh by pointer or a distinct
-/// pointer with identical bytes returns the EXISTING handle and does not
-/// upload a second GPU object. Dual-key shim `byObject_ + byHash_` in V3.6
-/// keeps the pointer path for diagnostics while the hash path is the binding
-/// key from `scene::SceneStore::AssetId` (T7, Q3). The mesh-family renderers
-/// resolve their handles through the shared registry, so the same content is
-/// uploaded once even when both renderers draw it.
+/// Same generational contract as `AssetHandle`, plus the `contentHash` the
+/// slot was created from (the same three-field shape as the app-side
+/// `scene::AssetId`): a fabricated handle with the right index and generation
+/// but the wrong content hash is rejected at resolve time with a typed error.
+/// The default-constructed value is the reserved null handle.
+struct VolumeTextureHandle {
+    std::uint32_t index = 0u;       ///< Slot index in the volume table.
+    std::uint32_t generation = 0u;  ///< Slot generation at issue time.
+    std::uint64_t contentHash = 0u; ///< Content hash the slot was created from.
+
+    /// True for the reserved null handle (all fields zero).
+    bool isNull() const noexcept {
+        return index == 0u && generation == 0u && contentHash == 0u;
+    }
+};
+
+inline bool operator==(const VolumeTextureHandle& a,
+                       const VolumeTextureHandle& b) noexcept {
+    return a.index == b.index && a.generation == b.generation &&
+           a.contentHash == b.contentHash;
+}
+
+inline bool operator!=(const VolumeTextureHandle& a,
+                       const VolumeTextureHandle& b) noexcept {
+    return !(a == b);
+}
+
+/// Copyable handle to a registered GPU 2D texture (image kind, T14).
 ///
-/// `unregister()` frees a slot (destroying its GPU object), bumps the slot's
-/// generation so every outstanding handle to it becomes stale immediately, and
-/// makes the slot reusable; a later registration may reuse the freed index
-/// with a fresh generation. Resolved geometry pointers stay valid until the
-/// slot is freed (each slot's geometry is heap-stable) — the renderers resolve
-/// per draw and never retain pointers across registrations.
+/// Same contract as `VolumeTextureHandle`, for the `data::Image →
+/// core::Texture2D` table.
+struct ImageTextureHandle {
+    std::uint32_t index = 0u;       ///< Slot index in the image table.
+    std::uint32_t generation = 0u;  ///< Slot generation at issue time.
+    std::uint64_t contentHash = 0u; ///< Content hash the slot was created from.
+
+    /// True for the reserved null handle (all fields zero).
+    bool isNull() const noexcept {
+        return index == 0u && generation == 0u && contentHash == 0u;
+    }
+};
+
+inline bool operator==(const ImageTextureHandle& a,
+                       const ImageTextureHandle& b) noexcept {
+    return a.index == b.index && a.generation == b.generation &&
+           a.contentHash == b.contentHash;
+}
+
+inline bool operator!=(const ImageTextureHandle& a,
+                       const ImageTextureHandle& b) noexcept {
+    return !(a == b);
+}
+
+/// Copyable handle to a registered canonical material (material kind, T14).
+///
+/// Same contract as the texture handles: `{index, generation, contentHash}`
+/// with the content hash computed from every `PhongMaterial` VALUE field
+/// (baseColor RGBA, specular RGB, shininess, ambient, diffuse — float bit
+/// patterns in that order), so two distinct allocations carrying identical
+/// material values alias to one canonical store-owned instance. The
+/// default-constructed value is the reserved null handle.
+struct MaterialHandle {
+    std::uint32_t index = 0u;       ///< Slot index in the material table.
+    std::uint32_t generation = 0u;  ///< Slot generation at issue time.
+    std::uint64_t contentHash = 0u; ///< Value hash the slot was created from.
+
+    /// True for the reserved null handle (all fields zero).
+    bool isNull() const noexcept {
+        return index == 0u && generation == 0u && contentHash == 0u;
+    }
+};
+
+inline bool operator==(const MaterialHandle& a,
+                       const MaterialHandle& b) noexcept {
+    return a.index == b.index && a.generation == b.generation &&
+           a.contentHash == b.contentHash;
+}
+
+inline bool operator!=(const MaterialHandle& a,
+                       const MaterialHandle& b) noexcept {
+    return !(a == b);
+}
+
+/// Generational, ref-counted slot table for one CPU→GPU asset kind (T14
+/// internal machinery shared by the volume, image, and material tables).
+///
+/// Dedup key: the caller-computed `contentHash` of stable bytes (never the
+/// pointer). Each slot owns its GPU object (`unique_ptr`) and co-owns the CPU
+/// bytes (`shared_ptr<const CpuT>`, T13 ownership ladder), so a live slot
+/// always resolves to live bytes. Reference counting: `acquire` with
+/// `claimRefs = 1` models owner registration (create with refs 1, or increment
+/// on a hit); `claimRefs = 0` models the renderers' lazy find-or-upload (no
+/// reference change); `release` decrements and destroys/invaldates the slot
+/// only when the count reaches zero. Slots are reused from a free list with a
+/// fresh generation so outstanding handles to previous occupants stay stale.
+///
+/// Not thread-safe (SPEC §5 single render thread).
+template <typename CpuT, typename GpuT>
+class GpuSlotTable {
+   public:
+    /// The co-owned immutable CPU view stored per slot.
+    using CpuPtr = std::shared_ptr<const CpuT>;
+
+    /// Kind-specific upload: create the GPU object for `cpu`'s bytes (e.g.
+    /// Texture3D::create + voxel upload). Returning an error aborts the
+    /// acquisition without mutating the table.
+    using Factory = data::Result<std::unique_ptr<GpuT>> (*)(const CpuT&);
+
+    /// Index + live generation of a slot, returned by acquire().
+    struct Location {
+        std::uint32_t index{0u};
+        std::uint32_t generation{0u};
+    };
+
+    /// Find `cpu`'s content by hash, or upload it via `factory`. `claimRefs`
+    /// is added to the slot's reference count on BOTH paths (1 for owner
+    /// registration, 0 for lazy lookup). Returns the slot location.
+    data::Result<Location> acquire(const CpuPtr& cpu, std::uint64_t contentHash,
+                                   std::uint32_t claimRefs, Factory factory) {
+        if (!cpu) {
+            return data::makeError<Location>(
+                4, "AssetRegistry: null asset shared_ptr");
+        }
+        auto hit = byHash_.find(contentHash);
+        if (hit != byHash_.end()) {
+            if (hit->second < slots_.size()) {
+                Slot& slot = slots_[hit->second];
+                if (slot.live && slot.contentHash == contentHash) {
+                    slot.refs += claimRefs;
+                    return data::makeValue<Location>(
+                        Location{hit->second, slot.generation});
+                }
+            }
+            // Stale map entry (its slot was freed) — drop it and allocate.
+            byHash_.erase(hit);
+        }
+
+        // Upload first so a failure never mutates the table.
+        auto created = factory(*cpu);
+        if (created.failed()) {
+            return data::makeError<Location>(created.error().code,
+                                             created.error().message);
+        }
+
+        Location loc;
+        if (!freeIndices_.empty()) {
+            // Reuse a freed slot: its generation was bumped at free time and
+            // is bumped again here, so every handle to the previous occupant
+            // stays stale.
+            loc.index = static_cast<std::uint32_t>(freeIndices_.back());
+            freeIndices_.pop_back();
+            Slot& slot = slots_[loc.index];
+            slot.gpu = std::move(*created);
+            slot.cpuObject = cpu;
+            slot.contentHash = contentHash;
+            slot.refs = claimRefs;
+            slot.live = true;
+            ++slot.generation;
+            loc.generation = slot.generation;
+        } else {
+            // Fresh slot: generation starts at 1 (0 is the never-allocated /
+            // null-handle marker).
+            Slot slot;
+            slot.gpu = std::move(*created);
+            slot.cpuObject = cpu;
+            slot.contentHash = contentHash;
+            slot.refs = claimRefs;
+            slot.generation = 1u;
+            slot.live = true;
+            loc.index = static_cast<std::uint32_t>(slots_.size());
+            loc.generation = 1u;
+            slots_.push_back(std::move(slot));
+        }
+        byHash_[contentHash] = loc.index;
+        ++liveCount_;
+        return data::makeValue<Location>(loc);
+    }
+
+    /// Resolve `(index, generation, contentHash)` to the live GPU object.
+    /// Typed errors: code 1 out-of-range index, code 2 stale handle
+    /// (generation or content-hash mismatch — a freed, reused, or fabricated
+    /// handle; freed slots are detected through their bumped generation).
+    /// Never crashes (SPEC §5). (Code 3 is the mesh-kind freed-slot code and
+    /// is never produced by this table.)
+    data::Result<GpuT*> resolve(std::uint32_t index, std::uint32_t generation,
+                                std::uint64_t contentHash) const {
+        if (index >= slots_.size()) {
+            return data::makeError<GpuT*>(
+                1, "AssetRegistry: handle index " + std::to_string(index) +
+                       " out of range (slot table size " +
+                       std::to_string(slots_.size()) + ")");
+        }
+        const Slot& slot = slots_[index];
+        if (!slot.live || slot.generation != generation) {
+            return data::makeError<GpuT*>(
+                2, "AssetRegistry: stale handle (generation " +
+                       std::to_string(generation) + " != slot generation " +
+                       std::to_string(slot.generation) + ")");
+        }
+        if (slot.contentHash != contentHash) {
+            return data::makeError<GpuT*>(
+                2, "AssetRegistry: stale handle (contentHash mismatch)");
+        }
+        return data::makeValue<GpuT*>(slot.gpu.get());
+    }
+
+    /// Release one reference on `(index, generation, contentHash)`. When the
+    /// count reaches zero the GPU object is destroyed (invalidation: the
+    /// generation is bumped so every outstanding handle goes stale) and the
+    /// slot becomes reusable. Typed errors mirror `resolve`.
+    data::Result<void> release(std::uint32_t index, std::uint32_t generation,
+                               std::uint64_t contentHash) {
+        if (index >= slots_.size()) {
+            return data::makeError<void>(1, "AssetRegistry: handle index out "
+                                            "of range");
+        }
+        Slot& slot = slots_[index];
+        if (!slot.live || slot.generation != generation) {
+            return data::makeError<void>(
+                2, "AssetRegistry: stale handle (generation mismatch)");
+        }
+        if (slot.contentHash != contentHash) {
+            return data::makeError<void>(
+                2, "AssetRegistry: stale handle (contentHash mismatch)");
+        }
+        if (slot.refs > 0u) {
+            --slot.refs;
+        }
+        if (slot.refs != 0u) {
+            return data::Result<void>(data::value); // other refs keep it alive
+        }
+        byHash_.erase(slot.contentHash);
+        slot.gpu.reset();     // destroys the GPU object
+        slot.cpuObject.reset(); // releases the store's co-owned CPU reference
+        slot.contentHash = 0u;
+        slot.live = false;
+        ++slot.generation; // every outstanding handle to this slot is stale
+        freeIndices_.push_back(index);
+        --liveCount_;
+        return data::Result<void>(data::value);
+    }
+
+    /// Current reference count of a live slot (typed errors mirror resolve).
+    data::Result<std::uint32_t> refsAt(std::uint32_t index,
+                                       std::uint32_t generation,
+                                       std::uint64_t contentHash) const {
+        auto resolved = resolve(index, generation, contentHash);
+        if (resolved.failed()) {
+            return data::makeError<std::uint32_t>(resolved.error().code,
+                                                  resolved.error().message);
+        }
+        return data::makeValue<std::uint32_t>(slots_[index].refs);
+    }
+
+    /// Number of currently live slots (one per distinct content hash).
+    std::size_t liveCount() const noexcept {
+        return liveCount_;
+    }
+
+   private:
+    struct Slot {
+        std::unique_ptr<GpuT> gpu;   ///< Owned GPU object (reset on free).
+        CpuPtr cpuObject;            ///< Co-owned CPU bytes (reset on free).
+        std::uint64_t contentHash{0u};
+        std::uint32_t generation{0u}; ///< 0 = never allocated; bumped on free.
+        std::uint32_t refs{0u};       ///< Outstanding owner references.
+        bool live{false};
+    };
+    std::vector<Slot> slots_;
+    std::vector<std::size_t> freeIndices_;
+    std::unordered_map<std::uint64_t, std::uint32_t> byHash_;
+    std::size_t liveCount_{0u};
+};
+
+/// Unified typed multi-kind GPU asset store (SPEC §9 V2.5 mesh kind; SPEC §7
+/// T14 volume/image/material kinds) — see the file-header comment for the full
+/// design.
+///
+/// Owns exactly one GPU object per distinct asset content across ALL technique
+/// renderers that resolve through the instance. Four kinds share the same
+/// generational handle contract (`{index, generation[, contentHash]}`, typed
+/// stale-handle errors, ref-counted release):
+///
+/// | Kind | Register | Resolve | Release |
+/// |---|---|---|---|
+/// | `data::Mesh → MeshGeometry` | `registerAsset` | `resolve` | `unregister` |
+/// | `data::VolumeDataset → core::Texture3D` | `registerVolume` | `resolveVolume` | `unregisterVolume` |
+/// | `data::Image → core::Texture2D` | `registerImage` | `resolveImage` | `unregisterImage` |
+/// | `PhongMaterial value → canonical IMaterial` | `registerMaterial` | `resolveMaterial` | `unregisterMaterial` |
+///
+/// The mesh kind keeps its V2-era idempotent registration shape (dedup by
+/// content hash + diagnostic pointer shim; regression lock R3 — its public
+/// behavior is unchanged except that unregistering content that was
+/// registered N times now requires N unregisters to destroy the GPU object).
+/// The volume/image/material kinds use the same semantics via `GpuSlotTable`
+/// from day one, with no pointer-keyed maps anywhere.
 class AssetRegistry {
    public:
     AssetRegistry() = default;
@@ -101,11 +416,33 @@ class AssetRegistry {
     AssetRegistry(AssetRegistry&&) noexcept = default;
     AssetRegistry& operator=(AssetRegistry&&) noexcept = default;
 
+    // ------------------------------------------------------------------
+    // Process-wide default instance (renderer constructor defaults, T14).
+    // ------------------------------------------------------------------
+
+    /// The process-wide registry used as the default asset store by the
+    /// volume/plane renderer constructors: two default-constructed renderers
+    /// therefore share one GPU object per content (the T14 invariant).
+    /// Single-threaded by design (SPEC §5); recreated on demand after
+    /// resetShared().
+    static std::shared_ptr<AssetRegistry> shared();
+
+    /// Destroy the process-wide instance NOW, while a GL context is current,
+    /// so its GPU objects are deleted with valid GL state instead of during
+    /// static destruction after context death. Safe to call when the shared
+    /// instance was never created. The next shared() recreates it empty.
+    static void resetShared();
+
+    // ------------------------------------------------------------------
+    // Mesh kind: data::Mesh → MeshGeometry (V2 T3 / T7 — unchanged API).
+    // ------------------------------------------------------------------
+
     /// Register `mesh`, uploading its GPU geometry once, and return a copyable
-    /// handle. Registering the same CPU object again returns the EXISTING
-    /// handle: the slot count stays unchanged and both handles resolve to the
-    /// same GPU object (the registry's dedup invariant, V2 T3 gate). Returns a
-    /// typed error if the geometry upload fails (no GL context).
+    /// handle. Registering the same content again (same object or identical
+    /// bytes) returns the EXISTING handle and takes one more reference on the
+    /// slot: the slot count stays unchanged and both handles resolve to the
+    /// same GPU object. Returns a typed error if the geometry upload fails
+    /// (no GL context).
     data::Result<AssetHandle> registerAsset(const data::Mesh& mesh);
 
     /// Resolve `handle` to its GPU geometry. Returns a typed error for an
@@ -114,32 +451,148 @@ class AssetRegistry {
     /// a freed slot (code 3). Never crashes (SPEC §5).
     data::Result<MeshGeometry*> resolve(const AssetHandle& handle);
 
-    /// Free the slot `handle` references: destroy its GPU object, bump the
-    /// slot's generation (so the handle and every copy of it become stale),
-    /// and make the slot reusable by a later registration. Returns a typed
-    /// error for the same invalid-handle cases as `resolve`.
+    /// Release one reference on the slot `handle` references. When the last
+    /// reference drops: destroy its GPU object, bump the slot's generation
+    /// (so the handle and every copy become stale), and make the slot
+    /// reusable. Returns a typed error for the same invalid-handle cases as
+    /// `resolve`.
     data::Result<void> unregister(const AssetHandle& handle);
 
-    /// The number of currently registered (live) GPU objects — one per
+    /// The number of currently registered (live) GPU geometries — one per
     /// distinct content hash (V2 T3 gate: registering the same mesh twice
-    /// leaves this at exactly 1; T7 extends to content-hash dedup).
+    /// leaves this at exactly 1; T7 extends dedup to identical-byte copies).
     std::size_t slotCount() const noexcept {
         return liveCount_;
     }
 
+    // ------------------------------------------------------------------
+    // Volume kind: data::VolumeDataset → core::Texture3D (T14).
+    // ------------------------------------------------------------------
+
+    /// Acquire `dataset` as a GPU 3D texture: uploads it once (GL_R32F,
+    /// trilinear filtering, clamp-to-edge) and takes one reference. Registering
+    /// identical content again — including through a second renderer or a
+    /// distinct allocation with identical voxels — returns the SAME handle
+    /// backed by ONE GL texture (content-hash dedup, no pointer maps).
+    data::Result<VolumeTextureHandle> registerVolume(
+        const std::shared_ptr<const data::VolumeDataset>& dataset);
+
+    /// Resolve `handle` to its live texture. Typed errors mirror the volume
+    /// kind: code 1 out-of-range index, code 2 stale handle (freed, reused,
+    /// or fabricated) — never a crash (SPEC §5).
+    data::Result<core::Texture3D*> resolveVolume(
+        const VolumeTextureHandle& handle) const;
+
+    /// Release one reference; the texture is destroyed and its handle
+    /// invalidated when the last reference drops.
+    data::Result<void> unregisterVolume(const VolumeTextureHandle& handle);
+
+    /// Lazy find-or-upload used by the volume renderer per frame: returns the
+    /// texture for `dataset`'s content WITHOUT changing any reference count.
+    /// A miss uploads and leaves the entry store-pinned (zero references)
+    /// until an owner claims it via registerVolume and releases it later.
+    data::Result<core::Texture3D*> lookupVolume(
+        const std::shared_ptr<const data::VolumeDataset>& dataset);
+
+    /// Live reference count of the slot `handle` points at (gate evidence:
+    /// registering twice yields refs 2, one release keeps it resolvable).
+    data::Result<std::uint32_t> volumeRefs(
+        const VolumeTextureHandle& handle) const;
+
+    /// Number of currently live volume textures (one per distinct voxel
+    /// content).
+    std::size_t volumeSlotCount() const noexcept {
+        return volumes_.liveCount();
+    }
+
+    // ------------------------------------------------------------------
+    // Image kind: data::Image → core::Texture2D (T14).
+    // ------------------------------------------------------------------
+
+    /// Acquire `image` as a GPU 2D texture: converts to RGBA8 (row-flipped to
+    /// GL bottom-up order) and uploads once, taking one reference. Identical
+    /// pixel content shares one GL texture regardless of CPU address.
+    data::Result<ImageTextureHandle> registerImage(
+        const std::shared_ptr<const data::Image>& image);
+
+    /// Resolve `handle` to its live texture. Typed errors mirror the volume
+    /// kind (codes 1/2 — stale handles are errors, never a crash).
+    data::Result<core::Texture2D*> resolveImage(
+        const ImageTextureHandle& handle) const;
+
+    /// Release one reference; the texture is destroyed and its handle
+    /// invalidated when the last reference drops.
+    data::Result<void> unregisterImage(const ImageTextureHandle& handle);
+
+    /// Lazy find-or-upload used by the plane renderer per frame: returns the
+    /// texture for `image`'s content WITHOUT changing any reference count
+    /// (same store-pinned-miss contract as `lookupVolume`).
+    data::Result<core::Texture2D*> lookupImage(
+        const std::shared_ptr<const data::Image>& image);
+
+    /// Live reference count of the slot `handle` points at.
+    data::Result<std::uint32_t> imageRefs(
+        const ImageTextureHandle& handle) const;
+
+    /// Number of currently live image textures (one per distinct pixel
+    /// content).
+    std::size_t imageSlotCount() const noexcept {
+        return images_.liveCount();
+    }
+
+    // ------------------------------------------------------------------
+    // Material kind: PhongMaterial value → canonical IMaterial (T14).
+    // ------------------------------------------------------------------
+
+    /// Acquire a canonical shared material for `material`'s VALUE: the store
+    /// keeps one immutable `PhongMaterial` instance per distinct value tuple
+    /// (baseColor RGBA, specular RGB, shininess, ambient, diffuse — every
+    /// field participates in the identity hash) and takes one reference.
+    /// Registering identical values again — distinct allocation or not —
+    /// returns the SAME handle backed by ONE canonical instance, so identical
+    /// materials dedup exactly like meshes/textures do. The store-owned
+    /// canonical is immutable by convention: resolve it read-only
+    /// (`resolveMaterial` returns `IMaterial*`), never mutate it in place
+    /// (mutation would desynchronize the slot's contentHash from its bytes —
+    /// register new values instead).
+    data::Result<MaterialHandle> registerMaterial(
+        const std::shared_ptr<const PhongMaterial>& material);
+
+    /// Resolve `handle` to its live canonical material. Typed errors mirror
+    /// the texture kinds (codes 1/2 — stale handles are errors, never a
+    /// crash). The pointer aliases store-owned storage: valid until the
+    /// slot's last reference is released or the store dies.
+    data::Result<IMaterial*> resolveMaterial(const MaterialHandle& handle) const;
+
+    /// Release one reference; the canonical instance is destroyed and its
+    /// handle invalidated when the last reference drops.
+    data::Result<void> unregisterMaterial(const MaterialHandle& handle);
+
+    /// Live reference count of the slot `handle` points at (gate evidence for
+    /// the ref-counting contract).
+    data::Result<std::uint32_t> materialRefs(const MaterialHandle& handle) const;
+
+    /// Number of currently live canonical materials (one per distinct value
+    /// tuple).
+    std::size_t materialSlotCount() const noexcept {
+        return materials_.liveCount();
+    }
+
    private:
-    /// A single registry slot: GPU geometry (heap-stable), stable content hash,
-    /// and generation (0 = never allocated; bumped on every free and reuse).
-    /// `cpuObject` is the diagnostic pointer shim retained in V3.6 dual-key
-    /// mode (not the dedup key — `contentHash` is).
+    /// A single mesh-kind slot: GPU geometry (heap-stable), stable content
+    /// hash, reference count, and generation (0 = never allocated; bumped on
+    /// every free and reuse). `cpuObject` is the diagnostic pointer shim
+    /// retained in V3.6 dual-key mode (not the dedup key — `contentHash` is).
     /// @note lifetime: `cpuObject` borrows the CALLER-owned CPU mesh purely
-    /// for diagnostics; entries keyed by it are erased in unregister(), and
-    /// the registry never dereferences or frees it (the CPU mesh stays
-    /// RE-agnostic, SPEC §7).
+    /// for diagnostics; entries keyed by it are erased whenever a reference
+    /// is released (the borrow is not owned by the store), and the registry
+    /// never dereferences or frees it (the CPU mesh stays RE-agnostic,
+    /// SPEC §7).
     struct Slot {
         std::unique_ptr<MeshGeometry> geometry;
         const data::Mesh* /*borrow*/ cpuObject = nullptr;
         std::uint64_t contentHash{0u};
+        std::uint32_t refs{0u};
         std::uint32_t generation = 0u;
     };
 
@@ -148,6 +601,10 @@ class AssetRegistry {
     std::unordered_map<const data::Mesh*, AssetHandle> byObject_; // dual-key shim
     std::unordered_map<uint64_t, AssetHandle> byHash_;           // content-hash key (T7)
     std::size_t liveCount_{0u};
+
+    GpuSlotTable<data::VolumeDataset, core::Texture3D> volumes_;
+    GpuSlotTable<data::Image, core::Texture2D> images_;
+    GpuSlotTable<PhongMaterial, IMaterial> materials_;
 };
 
 } // namespace re::render
