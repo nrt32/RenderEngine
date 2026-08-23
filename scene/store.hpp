@@ -10,6 +10,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "scene/asset_id.hpp"
+#include "scene/asset_registry.hpp"
 #include "scene/object.hpp"
 #include "scene/view.hpp"
 
@@ -79,12 +81,52 @@ class SceneStore {
     /// Dirty fields since gen (bounded set — for T1 returns all if storeGen changed).
     std::vector<FieldId> dirtyFieldsSince(uint64_t lastGen) const noexcept;
 
+    // --- Asset identity V3.6 (T7) — SceneStore-owned AssetId -----------------
+    /// Register mesh asset; dedup by content hash (identical bytes alias).
+    data::Result<AssetId> registerMeshAsset(const data::Mesh& mesh);
+    /// Resolve AssetId to live mesh pointer; stale generation+1 → code 2.
+    data::Result<const data::Mesh*> resolveMeshAsset(AssetId id) const;
+    /// Free asset slot; bumps generation.
+    data::Result<void> unregisterMeshAsset(AssetId id);
+    /// Live mesh asset count (distinct content hashes).
+    std::size_t meshAssetCount() const noexcept {
+        return meshAssets_.liveCount();
+    }
+    /// Total mesh asset slots (including free).
+    std::size_t meshAssetSlotCount() const noexcept {
+        return meshAssets_.slotCount();
+    }
+    /// Generic extensible accessors for templated store (OCP per kind).
+    AssetRegistry<data::Mesh>& meshAssetRegistry() noexcept {
+        return meshAssets_;
+    }
+    const AssetRegistry<data::Mesh>& meshAssetRegistry() const noexcept {
+        return meshAssets_;
+    }
+    AssetRegistry<data::VolumeDataset>& volumeAssetRegistry() noexcept {
+        return volumeAssets_;
+    }
+    const AssetRegistry<data::VolumeDataset>& volumeAssetRegistry() const noexcept {
+        return volumeAssets_;
+    }
+    AssetRegistry<data::Image>& imageAssetRegistry() noexcept {
+        return imageAssets_;
+    }
+    const AssetRegistry<data::Image>& imageAssetRegistry() const noexcept {
+        return imageAssets_;
+    }
+
    private:
     uint64_t allocId() noexcept { return nextId_++; }
     uint64_t storeGen_{0};
     uint64_t nextId_{1};
     // Hybrid push log: each bump/markDirty records (gen, field) for bounded scan.
     std::vector<std::pair<uint64_t, FieldId>> dirtyLog_{};
+
+    // Asset registries — typed store per kind, extensible via template (T7).
+    AssetRegistry<data::Mesh> meshAssets_;
+    AssetRegistry<data::VolumeDataset> volumeAssets_;
+    AssetRegistry<data::Image> imageAssets_;
 
     std::unordered_map<uint64_t, MeshObject> meshObjects_;
     std::unordered_map<uint64_t, MeshSliceObject> meshSliceObjects_;

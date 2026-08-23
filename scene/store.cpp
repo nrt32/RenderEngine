@@ -143,6 +143,16 @@ std::vector<FieldId> SceneStore::dirtyFieldsSince(uint64_t lastGen) const noexce
     return {FieldId::Transform, FieldId::Material, FieldId::TransferFunction, FieldId::Items};
 }
 
+data::Result<AssetId> SceneStore::registerMeshAsset(const data::Mesh& mesh) {
+    return meshAssets_.registerAsset(mesh);
+}
+data::Result<const data::Mesh*> SceneStore::resolveMeshAsset(AssetId id) const {
+    return meshAssets_.resolve(id);
+}
+data::Result<void> SceneStore::unregisterMeshAsset(AssetId id) {
+    return meshAssets_.unregister(id);
+}
+
 // ---------------------------------------------------------------------------
 // ViewStore
 // ---------------------------------------------------------------------------

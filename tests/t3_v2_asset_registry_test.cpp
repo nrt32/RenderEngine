@@ -380,22 +380,39 @@ TEST(T3V2AssetRegistry, TwoDistinctMeshesAreTwoGpuObjects) {
     ASSERT_TRUE(a.ok()) << a.error().message;
     ASSERT_TRUE(b.ok()) << b.error().message;
 
-    // One GPU object per individual CPU object: two distinct objects (even
-    // with identical content) are two slots with distinct GL names (GL object
-    // names are unique among live objects of a type).
-    EXPECT_EQ(registry.slotCount(), 2u);
-    EXPECT_NE(*a, *b);
+    // T7 content-hash dedup (V3.6): two distinct objects with identical
+    // stable bytes share ONE GPU object (hash of positions+indices, not
+    // pointer). Dual-key shim byObject_+byHash_ makes hot-reload alias.
+    EXPECT_EQ(registry.slotCount(), 1u)
+        << "T7: identical content must dedup to one GPU object (content hash)";
+    EXPECT_EQ(*a, *b) << "T7: identical bytes → same handle (content-hash path)";
     const auto ga = registry.resolve(*a);
     const auto gb = registry.resolve(*b);
     ASSERT_TRUE(ga.ok()) << ga.error().message;
     ASSERT_TRUE(gb.ok()) << gb.error().message;
-    EXPECT_NE((*ga)->vaoId(), (*gb)->vaoId());
+    EXPECT_EQ((*ga)->vaoId(), (*gb)->vaoId())
+        << "T7: same content → same GL object (vaoId)";
 
     // Registering meshA AGAIN still dedups to its existing slot.
     const auto aAgain = registry.registerAsset(meshA);
     ASSERT_TRUE(aAgain.ok()) << aAgain.error().message;
     EXPECT_EQ(*aAgain, *a);
-    EXPECT_EQ(registry.slotCount(), 2u);
+    EXPECT_EQ(registry.slotCount(), 1u);
+    // Distinct content must produce distinct slot — verify with a differing mesh
+    // (one vertex moved by 0.5 in Z so stable bytes differ deterministically).
+    data::Mesh meshC;
+    {
+        std::vector<glm::vec3> pos = {
+            glm::vec3(-1.0f, -1.0f, 0.0f), glm::vec3(1.0f, -1.0f, 0.0f),
+            glm::vec3(1.0f, 1.0f, 0.0f), glm::vec3(-1.0f, 1.0f, 0.5f)};
+        std::vector<uint32_t> idx = {0u, 1u, 2u, 0u, 2u, 3u};
+        meshC = data::Mesh::fromTriangles(std::move(pos), std::move(idx));
+    }
+    const auto c = registry.registerAsset(meshC);
+    ASSERT_TRUE(c.ok()) << c.error().message;
+    EXPECT_NE(*c, *a) << "different content → different handle (explainable)";
+    EXPECT_EQ(registry.slotCount(), 2u)
+        << "two distinct contents → two slots (explainable)";
 }
 
 TEST(T3V2AssetRegistry, RendererPropagatesStaleHandleError) {

@@ -20,6 +20,7 @@
 
 #include "data/mesh.hpp"
 #include "data/result.hpp"
+#include "scene/asset_id.hpp"
 
 namespace re::broker {
 
@@ -42,13 +43,17 @@ inline bool operator!=(const BrokerAssetHandle& a,
 
 /// Generational asset store with stable handles + typed stale errors (code 2).
 ///
-/// Dedups by CPU-object pointer identity in this skeleton (content-hash dedup
-/// lands in T7). Generational slot table gives the same typed error codes as
+/// T7 content-hash dedup: dedup is by `contentHash` (hash of stable bytes,
+/// not pointer). Two distinct `data::Mesh` allocations with identical bytes
+/// share the same handle — content-hash path (SPEC §7 T7). Pointer identity
+/// `byObject_` kept as dual-key shim for V3.6 diagnostics (not dedup key).
+/// Generational slot table gives the same typed error codes as
 /// render::AssetRegistry:
 ///   code 1 — index out of range
 ///   code 2 — generation mismatch / stale handle (generation+1 probe)
 ///   code 3 — freed slot
-/// No GL, no core/.
+/// No GL, no core/. Broker is the only lib that may include both scene/ and
+/// render/ (ACL), so it may include scene/asset_id.hpp for hash.
 class AssetStore {
    public:
     AssetStore() = default;
@@ -57,7 +62,7 @@ class AssetStore {
     AssetStore(AssetStore&&) noexcept = default;
     AssetStore& operator=(AssetStore&&) noexcept = default;
 
-    /// Register mesh; dedups by pointer identity (one handle per distinct pointer).
+    /// Register mesh; dedup by content hash (identical bytes alias; not pointer).
     data::Result<BrokerAssetHandle> registerAsset(const data::Mesh& mesh);
 
     /// Resolve handle to live mesh pointer; error code 2 for stale generation+1.
@@ -74,10 +79,12 @@ class AssetStore {
         const data::Mesh* cpuObject = nullptr;
         uint32_t generation = 0u;
         bool live = false;
+        uint64_t contentHash{0u};
     };
     std::vector<Slot> slots_;
     std::vector<size_t> freeIndices_;
     std::unordered_map<const data::Mesh*, BrokerAssetHandle> byObject_;
+    std::unordered_map<uint64_t, BrokerAssetHandle> byHash_;
     size_t liveCount_{0u};
 };
 

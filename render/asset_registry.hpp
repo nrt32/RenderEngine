@@ -1,7 +1,7 @@
 #pragma once
 
 // render/asset_registry.hpp — generational GPU-asset registry (SPEC §9 V2.5,
-// V2 T3).
+// V2 T3, T7 V3.6 content-hash + dual-key shim).
 //
 // The asset system of the multi-view workstream: a single registry owns exactly
 // ONE GPU object per individual CPU object registered, GLOBALLY across every
@@ -10,9 +10,11 @@
 // currency views exchange: a View's Scene holds handles, and the renderers
 // resolve them through the shared registry. Registering the same `data::Mesh`
 // twice (e.g. once through the MeshRenderer path and once through the
-// SliceRenderer path) yields one GPU object — the registry dedups by CPU-object
-// identity — which fixes the pre-V2 per-renderer double-upload of the same
-// mesh (SPEC §9 V2.5).
+// SliceRenderer path) yields one GPU object — the registry dedups by
+// content hash of stable bytes (T7, not bare pointer) — which fixes the
+// pre-V2 per-renderer double-upload and the T7 hot-reload identity bug
+// (SPEC §7 T7, Q3/Q28). Dual-key shim: `byObject_` (pointer) + `byHash_`
+// (content hash) in V3.6; shim removed V4.
 //
 // Generational safety (dangling-handle detection): every slot carries a
 // generation that starts at 1 and is bumped each time the slot is freed (and
@@ -71,14 +73,17 @@ inline bool operator!=(const AssetHandle& a, const AssetHandle& b) noexcept {
     return !(a == b);
 }
 
-/// Generational GPU-asset registry (SPEC §9 V2.5, V2 T3).
+/// Generational GPU-asset registry (SPEC §9 V2.5, V2 T3, T7 V3.6).
 ///
-/// Owns exactly one `MeshGeometry` per individual CPU `data::Mesh` registered.
-/// `registerAsset()` dedups by CPU-object identity: registering the same mesh
-/// again returns the EXISTING handle and does not upload a second GPU object.
-/// The mesh-family renderers (MeshRenderer, SliceRenderer) resolve their
-/// scenes' handles through the shared registry, so the same `data::Mesh` is
-/// uploaded to the GPU once even when both renderers draw it.
+/// Owns exactly one `MeshGeometry` per distinct `data::Mesh` content
+/// (content hash of stable bytes, not bare pointer). `registerAsset()` dedups
+/// by content hash: registering the same mesh by pointer or a distinct
+/// pointer with identical bytes returns the EXISTING handle and does not
+/// upload a second GPU object. Dual-key shim `byObject_ + byHash_` in V3.6
+/// keeps the pointer path for diagnostics while the hash path is the binding
+/// key from `scene::SceneStore::AssetId` (T7, Q3). The mesh-family renderers
+/// resolve their handles through the shared registry, so the same content is
+/// uploaded once even when both renderers draw it.
 ///
 /// `unregister()` frees a slot (destroying its GPU object), bumps the slot's
 /// generation so every outstanding handle to it becomes stale immediately, and
@@ -116,25 +121,28 @@ class AssetRegistry {
     data::Result<void> unregister(const AssetHandle& handle);
 
     /// The number of currently registered (live) GPU objects — one per
-    /// distinct individual CPU object (V2 T3 gate: registering the same mesh
-    /// twice leaves this at exactly 1).
+    /// distinct content hash (V2 T3 gate: registering the same mesh twice
+    /// leaves this at exactly 1; T7 extends to content-hash dedup).
     std::size_t slotCount() const noexcept {
         return liveCount_;
     }
 
    private:
-    /// A single registry slot: the GPU geometry (heap-stable), the CPU-object
-    /// identity key, and the generation (0 = never allocated; bumped on every
-    /// free and every reuse).
+    /// A single registry slot: GPU geometry (heap-stable), stable content hash,
+    /// and generation (0 = never allocated; bumped on every free and reuse).
+    /// `cpuObject` is the diagnostic pointer shim retained in V3.6 dual-key
+    /// mode (not the dedup key — `contentHash` is).
     struct Slot {
         std::unique_ptr<MeshGeometry> geometry;
         const data::Mesh* cpuObject = nullptr;
+        std::uint64_t contentHash{0u};
         std::uint32_t generation = 0u;
     };
 
     std::vector<Slot> slots_;
     std::vector<std::size_t> freeIndices_;
-    std::unordered_map<const data::Mesh*, AssetHandle> byObject_;
+    std::unordered_map<const data::Mesh*, AssetHandle> byObject_; // dual-key shim
+    std::unordered_map<uint64_t, AssetHandle> byHash_;           // content-hash key (T7)
     std::size_t liveCount_{0u};
 };
 

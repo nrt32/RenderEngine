@@ -76,6 +76,34 @@ approaches and converges on the last:
 - **`RE` topics:** `core::Texture3D` (`IRHITexture` via `IRHIContext::createTexture3D`) for volumes, `MeshGeometry` (`IRHIBuffer` via `IRHIContext::createBuffer`) for meshes (via existing `AssetRegistry` shim + new `AssetStore<Mesh>`), `Texture2D` (`IRHITexture`) for images — each `AssetStore<T>` with `atomic<uint32_t>` ref-count even under inline `IJobExecutor` (data-race-free per NFR §5; EOL Q37). `ReMaterial` via `MaterialMapper` SHA-256 value-hash dedup (identical `baseColor/shininess` share one `ReMaterial*`; `MaterialId` opt-in for shared themes — hybrid `variant<Desc,MaterialId>` cache, see §12.2). `Re*Object`s carry only derived GPU-ready values (`AssetHandle/ReMaterial*/Tex/ClipPlane/worldBounds/sliceUVW/normalMatrix` — §12.4 inventory) — never verbatim `data::Mesh` bytes (guardrail `asset_indirection` enforces RE-minimal; audit `asset_indirection` forbids `data::Mesh::positions` copy in `render/re_scene/`).
 - **`RE`-minimal rule (SPEC §12.4) + EOL GC:** `LayoutId`-scoped arenas + LRU within arena + deferred GC until `compactHidden` or layout discard (not immediate free) — balances hidden-keep fast re-show (§10.5) vs memory ceiling (Q35). `core/rhi/` abstraction (`IRHIContext` — Qt QRhi/O3DE/Adept) keeps `render`/`broker` agnostic to GL vs Vulkan/Metal (DIP/OCP for EOL graphics API drift).
 
+### T7 — Asset identity V3.6 binding (SceneStore-owned `AssetId`)
+
+**Binding (T7 V3.6):** `SceneStore` owns `AssetId{generation,contentHash}`
+per `data::Mesh` / `data::VolumeDataset` / `data::Image` via typed
+`AssetRegistry<T>` template (`scene/asset_registry.hpp`). No per-kind duplicate
+— `AssetRegistry<Mesh>`, `AssetRegistry<VolumeDataset>`, `AssetRegistry<Image>`
+share one template (SRP per `T`, OCP via template). `data::Mesh` stays pure
+(no `AssetId` field — preserves `data` RE-agnostic for physics/UI). `SceneStore`
+dedups by **content hash of stable bytes** (`scene::computeContentHash` FNV-1a
+64-bit over `positions+indices` / `voxel bytes` / `pixel bytes`, SHA-256
+truncate per SPEC §10.1) — two `Mesh` allocations with identical bytes share
+the same `AssetId` (same `contentHash` → same `index+generation`).
+
+`render::AssetRegistry` keeps `Slot{MeshGeometry}` generational `AssetHandle`
+but keys by stable `contentHash` (`byHash_`) from `SceneStore` — not by
+`byObject_` pointer `render/asset_registry.hpp:137` alone. V3.6 dual-key shim
+`byObject_ + byHash_` (shim removed V4) avoids big-bang migration while still
+fixing hot-reload identity (Q3/Q28/Q35). Stale `AssetId{gen+1}` → typed
+`Error{code=2}` (never crash) — `AssetRegistry<T>::resolve` checks
+`generation != slot.generation` → code 2 (`StaleHandle`) per SPEC §5.
+
+`broker::AssetStore` likewise dedups by `contentHash` (T7) — same
+`scene::computeContentHash` via ACL (`broker` may include both `scene/` and
+`render/`).
+
+RE-minimal unchanged: `render/re_scene/` never copies `data::Mesh::positions`
+(`asset_indirection`).
+
 ### Meshes (sample OBJs)
 - `data/meshes/bunny.obj` — Stanford bunny, public domain.
 - `data/meshes/teapot.obj` — Utah teapot, public domain.

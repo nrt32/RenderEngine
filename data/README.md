@@ -58,6 +58,20 @@ checksums are pinned in SPEC section 7.
   gate (dims + type) and the io/ volume loader test (FR-io.2).
 - **Voxel layout:** x-fastest (index = x + 128*y + 128*128*z).
 
+## Asset identity (V3.6 — SceneStore-owned `AssetId`)
+
+- Assets under `data/` and procedural meshes are accessed via
+  `scene::SceneStore` `AssetId{generation,contentHash}` handles (SPEC §7 T7,
+  `scene/asset_id.hpp` + `scene/asset_registry.hpp`). The hash is of stable
+  bytes (`positions+indices` / `voxel bytes` / `pixel bytes`), not pointer
+  identity — two `data::Mesh` allocations with identical bytes share the same
+  `AssetId` and the same `render::AssetHandle` (one GPU upload). `data::Mesh`
+  stays pure (no `AssetId` field). The typed store is extensible via
+  `AssetRegistry<T>` template (`AssetRegistry<Mesh>`,
+  `AssetRegistry<VolumeDataset>`, `AssetRegistry<Image>`), no per-kind duplicate.
+  Stale `AssetId{gen+1}` → typed error `code 2` (never crash). See
+  `docs/spec/assets.md` §7 T7 addendum.
+
 ## Golden fixtures
 
 The fixtures under `data/fixtures/` are hand-authored in this repo (project

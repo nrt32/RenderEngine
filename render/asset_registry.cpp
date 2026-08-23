@@ -16,15 +16,78 @@ constexpr int kIndexOutOfRangeCode = 1;
 constexpr int kGenerationMismatchCode = 2;
 constexpr int kFreedSlotCode = 3;
 
+// FNV-1a hash of Mesh stable bytes (mirrors scene::computeContentHash, but
+// render must not include scene/ per disposition_render — duplicate locally).
+uint64_t meshContentHash(const data::Mesh& mesh) noexcept {
+    uint64_t h = 1469598103934665603ULL;
+    uint64_t vCount = static_cast<uint64_t>(mesh.positions().size());
+    uint64_t iCount = static_cast<uint64_t>(mesh.indices().size());
+    const uint8_t* cb = reinterpret_cast<const uint8_t*>(&vCount);
+    for (std::size_t i = 0; i < sizeof(vCount); ++i) {
+        h ^= static_cast<uint64_t>(cb[i]);
+        h *= 1099511628211ULL;
+    }
+    cb = reinterpret_cast<const uint8_t*>(&iCount);
+    for (std::size_t i = 0; i < sizeof(iCount); ++i) {
+        h ^= static_cast<uint64_t>(cb[i]);
+        h *= 1099511628211ULL;
+    }
+    for (const auto& p : mesh.positions()) {
+        const uint8_t* xb = reinterpret_cast<const uint8_t*>(&p.x);
+        for (std::size_t i = 0; i < sizeof(float); ++i) {
+            h ^= static_cast<uint64_t>(xb[i]);
+            h *= 1099511628211ULL;
+        }
+        const uint8_t* yb = reinterpret_cast<const uint8_t*>(&p.y);
+        for (std::size_t i = 0; i < sizeof(float); ++i) {
+            h ^= static_cast<uint64_t>(yb[i]);
+            h *= 1099511628211ULL;
+        }
+        const uint8_t* zb = reinterpret_cast<const uint8_t*>(&p.z);
+        for (std::size_t i = 0; i < sizeof(float); ++i) {
+            h ^= static_cast<uint64_t>(zb[i]);
+            h *= 1099511628211ULL;
+        }
+    }
+    for (uint32_t idx : mesh.indices()) {
+        const uint8_t* ib = reinterpret_cast<const uint8_t*>(&idx);
+        for (std::size_t i = 0; i < sizeof(uint32_t); ++i) {
+            h ^= static_cast<uint64_t>(ib[i]);
+            h *= 1099511628211ULL;
+        }
+    }
+    return h;
+}
+
 } // namespace
 
 data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
-    // Dedup by CPU-object identity: one GPU object per individual CPU object
-    // (SPEC §9 V2.5). Registering the same mesh again returns the existing
-    // handle without uploading anything.
+    // T7 content-hash dedup (primary): identical bytes alias even for distinct
+    // pointers. Pointer-identity byObject_ is retained as dual-key shim (V3.6)
+    // for diagnostics; hash is the binding key from SceneStore::AssetId.
+    const uint64_t hash = meshContentHash(mesh);
+    auto hashIt = byHash_.find(hash);
+    if (hashIt != byHash_.end()) {
+        const AssetHandle& existing = hashIt->second;
+        if (existing.index < slots_.size()) {
+            const Slot& s = slots_[existing.index];
+            if (s.generation == existing.generation && s.geometry &&
+                s.contentHash == hash) {
+                return data::makeValue<AssetHandle>(existing);
+            }
+        }
+    }
+    // Fallback pointer shim (dual-key) — same pointer dedup if hash not yet hit.
     const auto existing = byObject_.find(&mesh);
     if (existing != byObject_.end()) {
-        return data::makeValue<AssetHandle>(existing->second);
+        // If pointer hit but hash differs (reused memory with different content),
+        // treat as new asset — hash check above would have missed, so fall through
+        // only when hash differs: pointer reuse is rare, so keep shim.
+        // For same content, hash hit already returned above, so this is redundant.
+        auto hitHash = meshContentHash(*existing->first);
+        if (hitHash == hash) {
+            return data::makeValue<AssetHandle>(existing->second);
+        }
     }
 
     // Upload first so a failure never mutates the slot table.
@@ -44,6 +107,7 @@ data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
         Slot& slot = slots_[index];
         slot.geometry = std::make_unique<MeshGeometry>(std::move(*geometry));
         slot.cpuObject = &mesh;
+        slot.contentHash = hash;
         ++slot.generation;
     } else {
         // Fresh slot: generation starts at 1 (0 is the never-allocated/null
@@ -51,6 +115,7 @@ data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
         Slot slot;
         slot.geometry = std::make_unique<MeshGeometry>(std::move(*geometry));
         slot.cpuObject = &mesh;
+        slot.contentHash = hash;
         ++slot.generation;
         index = slots_.size();
         slots_.push_back(std::move(slot));
@@ -60,6 +125,7 @@ data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
     const AssetHandle handle{static_cast<std::uint32_t>(index),
                              slots_[index].generation};
     byObject_.emplace(&mesh, handle);
+    byHash_[hash] = handle;
     return data::makeValue<AssetHandle>(handle);
 }
 
@@ -105,8 +171,10 @@ data::Result<void> AssetRegistry::unregister(const AssetHandle& handle) {
     if (slot.cpuObject != nullptr) {
         byObject_.erase(slot.cpuObject);
     }
+    byHash_.erase(slot.contentHash);
     slot.geometry.reset(); // destroys the GPU object
     slot.cpuObject = nullptr;
+    slot.contentHash = 0u;
     ++slot.generation; // every outstanding handle to this slot is now stale
     freeIndices_.push_back(handle.index);
     --liveCount_;

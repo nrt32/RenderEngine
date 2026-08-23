@@ -13,9 +13,26 @@ constexpr int kFreedSlotCode = 3;
 } // namespace
 
 data::Result<BrokerAssetHandle> AssetStore::registerAsset(const data::Mesh& mesh) {
+    const uint64_t hash = scene::computeContentHash(mesh);
+    auto hit = byHash_.find(hash);
+    if (hit != byHash_.end()) {
+        const BrokerAssetHandle& existing = hit->second;
+        if (existing.index < slots_.size()) {
+            const Slot& s = slots_[existing.index];
+            if (s.live && s.generation == existing.generation &&
+                s.contentHash == hash) {
+                return data::makeValue<BrokerAssetHandle>(existing);
+            }
+        }
+    }
+    // Pointer shim second check (dual-key diagnostic, not dedup key — hash is primary).
     auto it = byObject_.find(&mesh);
     if (it != byObject_.end()) {
-        return data::makeValue<BrokerAssetHandle>(it->second);
+        // Pointer hit but hash mismatch means different content at same address
+        // (reused memory) — treat as new; otherwise hash hit already returned.
+        if (scene::computeContentHash(*it->first) == hash) {
+            return data::makeValue<BrokerAssetHandle>(it->second);
+        }
     }
     size_t idx = 0;
     if (!freeIndices_.empty()) {
@@ -23,11 +40,13 @@ data::Result<BrokerAssetHandle> AssetStore::registerAsset(const data::Mesh& mesh
         freeIndices_.pop_back();
         Slot& s = slots_[idx];
         s.cpuObject = &mesh;
+        s.contentHash = hash;
         s.live = true;
         ++s.generation;
     } else {
         Slot s;
         s.cpuObject = &mesh;
+        s.contentHash = hash;
         s.generation = 1u;
         s.live = true;
         idx = slots_.size();
@@ -36,6 +55,7 @@ data::Result<BrokerAssetHandle> AssetStore::registerAsset(const data::Mesh& mesh
     ++liveCount_;
     BrokerAssetHandle h{static_cast<uint32_t>(idx), slots_[idx].generation};
     byObject_.emplace(&mesh, h);
+    byHash_[hash] = h;
     return data::makeValue<BrokerAssetHandle>(h);
 }
 
@@ -72,6 +92,7 @@ data::Result<void> AssetStore::unregister(const BrokerAssetHandle& h) {
         return data::makeError<void>(kFreedSlotCode, "AssetStore: freed slot");
     }
     if (s.cpuObject) byObject_.erase(s.cpuObject);
+    byHash_.erase(s.contentHash);
     s.cpuObject = nullptr;
     s.live = false;
     ++s.generation;
