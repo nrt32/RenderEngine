@@ -158,8 +158,8 @@ data::Result<void> SliceRenderer::render(const SliceScene& scene,
 }
 
 data::Result<void> SliceRenderer::render(const Scene& scene,
-                                         const Camera& camera,
-                                         const RenderTarget& target) {
+                                          const Camera& camera,
+                                          const RenderTarget& target) {
     const SliceScene* const* sliceScene = std::get_if<const SliceScene*>(&scene);
     if (sliceScene == nullptr || *sliceScene == nullptr) {
         // The dispatch contract (SPEC §9 V2.3) rejects a scene of a different
@@ -170,6 +170,44 @@ data::Result<void> SliceRenderer::render(const Scene& scene,
     }
     const SliceScene& slice = **sliceScene;
     return render(slice, camera, slice.plane, target);
+}
+
+data::Result<void> SliceRenderer::drawLayer(const SliceScene& scene, const Camera& camera,
+                                            core::DrawContext& ctx) {
+    return drawLayer(scene, camera, scene.plane, ctx);
+}
+
+data::Result<void> SliceRenderer::drawLayer(const SliceScene& scene, const Camera& camera,
+                                            const ClipPlane& plane, core::DrawContext& ctx) {
+    // ReView already bind+viewport+clear via ctx; does not clear between layers.
+    (void)ctx;
+    auto programResult = clipProgram();
+    if (programResult.failed()) {
+        return data::makeError<void>(programResult.error().code, programResult.error().message);
+    }
+    core::ShaderProgram* program = *programResult;
+    program->use();
+    program->setUniformMat4("uView", camera.view);
+    program->setUniformMat4("uProj", camera.proj);
+    program->setUniformVec3("uPlaneNormal", plane.normal);
+    program->setUniformVec3("uPlanePoint", plane.point);
+    for (const MeshInstance& instance : scene.meshes) {
+        if (instance.material == nullptr || instance.mesh.isNull()) {
+            continue;
+        }
+        auto geometry = geometryFor(instance.mesh);
+        if (geometry.failed()) {
+            return data::makeError<void>(geometry.error().code, geometry.error().message);
+        }
+        MeshGeometry* geometryPtr = *geometry;
+        program->setUniformMat4("uModel", instance.model);
+        program->setUniformVec4("uBaseColor", instance.material->baseColor());
+        auto draw = geometryPtr->draw();
+        if (draw.failed()) {
+            return draw;
+        }
+    }
+    return data::Result<void>(data::value);
 }
 
 data::Result<void> SliceRenderer::captureCrossSection(

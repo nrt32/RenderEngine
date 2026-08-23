@@ -187,8 +187,8 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
 }
 
 data::Result<void> MeshRenderer::render(const Scene& scene,
-                                        const Camera& camera,
-                                        const RenderTarget& target) {
+                                         const Camera& camera,
+                                         const RenderTarget& target) {
     const MeshScene* const* meshScene = std::get_if<const MeshScene*>(&scene);
     if (meshScene == nullptr || *meshScene == nullptr) {
         // The dispatch contract (SPEC §9 V2.3) rejects a scene of a different
@@ -198,6 +198,41 @@ data::Result<void> MeshRenderer::render(const Scene& scene,
             2, "MeshRenderer: scene does not hold a MeshScene");
     }
     return render(**meshScene, camera, target);
+}
+
+data::Result<void> MeshRenderer::drawLayer(const MeshScene& scene, const Camera& camera,
+                                           core::DrawContext& ctx) {
+    // ReView already bind+viewport+clear via ctx; single-item render() keeps clear.
+    // This layer draws without clearing — second layer must not clear away the first.
+    (void)ctx;
+    auto programResult = opaqueProgram();
+    if (programResult.failed()) {
+        return data::makeError<void>(programResult.error().code, programResult.error().message);
+    }
+    core::ShaderProgram* program = *programResult;
+    program->use();
+    program->setUniformMat4("uView", camera.view);
+    program->setUniformMat4("uProj", camera.proj);
+    for (const MeshInstance& instance : scene.meshes) {
+        if (instance.material == nullptr || instance.mesh.isNull()) {
+            continue;
+        }
+        // For View compositing we draw every instance (transparent handling via
+        // OIT is orchestrated by View if needed; the gate's opaque mesh is drawn
+        // here). The single-item render() path handles OIT separately.
+        auto geometry = geometryFor(instance.mesh);
+        if (geometry.failed()) {
+            return data::makeError<void>(geometry.error().code, geometry.error().message);
+        }
+        MeshGeometry* geometryPtr = *geometry;
+        program->setUniformMat4("uModel", instance.model);
+        program->setUniformVec4("uBaseColor", instance.material->baseColor());
+        auto draw = geometryPtr->draw();
+        if (draw.failed()) {
+            return draw;
+        }
+    }
+    return data::Result<void>(data::value);
 }
 
 } // namespace re::render

@@ -88,7 +88,7 @@ tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; b
   The store is the source of truth for `id → Object` and is page/layout-scoped
   or global per asset visibility design (see SPEC §10.2).
 
-### 3.2 `render/` — RE-minimal types (SPEC §12)
+### 3.2 `render/` — RE-minimal types (SPEC §12) — landed T5 V3.4 (ViewRenderer deleted)
 
 - **RE keeps only what it can directly use.** Any field that needs conversion
   (voxel-index → world, `MaterialDesc → IMaterial`, TF → uniforms) is
@@ -101,6 +101,16 @@ tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; b
   (SPEC §12). Concrete renderers (`MeshRenderer` etc.) gain `drawLayer`
   for `ReView` list compositing; the single-item `render()` stays for direct
   tests (regression lock).
+- **`ViewRenderer` deleted (T5 V3.4).** Each screen section is a `render::View`
+  (`ReView`) owning one `ViewTarget{Texture2D+Framebuffer}` per `ViewRect`
+  (`rect.w×h`) + `Camera` + `optional<ClipPlane>` (`2D` vs `3D`) +
+  `vector<IRenderable>` (`drawLayer` type-erased, `View` never knows renderer).
+  `ViewTarget` delegates FBO lifecycle (SRP via composition); `View::render(ctx)`
+  does `bind+viewport+clear` via `DrawContext` then iterates `drawLayer` without
+  clearing between layers; `View::blitTo(destination)` presents via `core::blit`.
+  `render::ViewRect` stays in `render/types.hpp` as the shared handle; `ViewRenderer`
+  + the old `render::View{Scene,Camera,clearColor,rect}` struct are deleted (raw
+  `Scene` variant stays for direct `render()` tests until `AssetId` in T7).
 
 ### 3.3 `broker/` — `app→RE` mediation (heavily abstracted, separate library)
 

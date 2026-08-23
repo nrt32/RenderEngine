@@ -32,6 +32,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/draw.hpp"
 #include "core/element_buffer.hpp"
 #include "core/framebuffer.hpp"
 #include "core/shader_program.hpp"
@@ -92,7 +93,13 @@ class VolumeRenderer : public IRenderer {
     /// VolumeScene; returns a typed error when it holds a different technique
     /// (SPEC §5, no exceptions).
     data::Result<void> render(const Scene& scene, const Camera& camera,
-                              const RenderTarget& target) override;
+                               const RenderTarget& target) override;
+
+    /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
+    /// assuming ReView already performed bind+viewport+clear via the same
+    /// DrawContext. Does not clear — second layer must not clear away the first.
+    data::Result<void> drawLayer(const VolumeScene& scene, const Camera& camera,
+                                 core::DrawContext& ctx);
 
     /// The world-space AABB of `instance`: the min/max of its model-space unit
     /// cube [0,1]^3 transformed by the instance's model matrix (exact for

@@ -1,15 +1,19 @@
 #pragma once
 
 // render/types.hpp — shared render types + the IRenderer dispatch contract
-// (SPEC §9 V2.3).
+// (SPEC §9 V2.3, V3.4 T5).
 //
 // The types every renderer shares: Camera and RenderTarget (moved here from
 // mesh_renderer.hpp so renderers that need only the shared types no longer pull
-// in the whole mesh renderer), the Scene dispatch variant, and the pure
-// abstract IRenderer render contract implemented by the four per-technique
-// renderers (Mesh/Plane/Volume/SliceRenderer). The multi-view workstream (T2,
-// SPEC §9 V2.4) dispatches scene objects to the correct renderer through this
-// interface.
+// in the whole mesh renderer), the Scene dispatch variant (kept for direct
+// single-item render() tests; View's heterogeneous list uses IRenderable type
+// erasure instead — Scene variant will be replaced by AssetId handles in T7),
+// and the pure abstract IRenderer render contract implemented by the four
+// per-technique renderers (Mesh/Plane/Volume/SliceRenderer). The multi-view
+// workstream (T2, SPEC §9 V2.4) dispatched scene objects to the correct renderer
+// through this interface; T5 replaces it with render::View (ReView) per screen
+// section + IRenderable list (render/view.hpp) and deletes ViewRenderer.
+// render::ViewRect remains here as the shared window-section handle.
 //
 // The Scene variant holds POINTERS to the per-technique scene structs (defined
 // in mesh_renderer.hpp / plane_renderer.hpp / volume_renderer.hpp /
@@ -86,21 +90,16 @@ struct ViewRect {
     int height{0}; ///< Height in pixels.
 };
 
-/// One view of a multi-view window (SPEC §9 V2.4, Model B: per-view FBO +
-/// engine blit): the abstract scene object, the camera it is rendered from,
-/// the per-view clear color, and the window-section rectangle its FBO is
-/// blitted into.
-///
-/// The front-end (app/) builds these: it shares the abstract scene object
-/// (the `Scene` dispatch variant, SPEC §9 V2.3) and the per-view window-section
-/// handle (`rect`); the engine compositor (render::ViewRenderer) dispatches
-/// the scene through the IRenderer registered for its technique, renders it
-/// into the view's own core::Framebuffer, and blits that FBO into `rect`.
-struct View {
-    Scene scene;   ///< The abstract scene object to render (dispatch payload).
-    Camera camera; ///< Per-view camera (view/projection matrices + eye).
-    glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 0.0f}; ///< Per-view clear color.
-    ViewRect rect; ///< The window rect this view's FBO is blitted into.
+/// A plane used to clip a mesh, defined in world space by a unit normal and a
+/// point on the plane. The kept side is the half-space `dot(normal, p - point)
+/// >= 0`; the cross-section is the set of surface points where the plane cuts
+/// the mesh (all lying on the plane, FR-render.4). Lives here (not in
+/// slice_renderer.hpp) so `render::View` (`ReView`) can own
+/// `optional<ClipPlane>` (`2D` when present, `3D` when `nullopt`) without
+/// depending on `SliceRenderer` (SRP via composition, SPEC §3.2 V3.4 T5).
+struct ClipPlane {
+    glm::vec3 normal{0.0f, 0.0f, 1.0f}; ///< Unit plane normal (world space).
+    glm::vec3 point{0.0f, 0.0f, 0.0f};  ///< A point on the plane (world space).
 };
 
 /// Pure abstract renderer contract (SPEC §9 V2.3): the single narrow dispatch

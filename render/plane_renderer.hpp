@@ -34,6 +34,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/draw.hpp"
 #include "core/element_buffer.hpp"
 #include "core/framebuffer.hpp"
 #include "core/shader_program.hpp"
@@ -106,7 +107,13 @@ class PlaneRenderer : public IRenderer {
     /// PlaneScene; returns a typed error when it holds a different technique
     /// (SPEC §5, no exceptions).
     data::Result<void> render(const Scene& scene, const Camera& camera,
-                              const RenderTarget& target) override;
+                               const RenderTarget& target) override;
+
+    /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
+    /// assuming ReView already performed bind+viewport+clear via the same
+    /// DrawContext. Does not clear — second layer must not clear away the first.
+    data::Result<void> drawLayer(const PlaneScene& scene, const Camera& camera,
+                                 core::DrawContext& ctx);
 
    private:
     /// Convert an image's pixels to RGBA8 bytes for GL upload: 4-channel

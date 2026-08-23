@@ -26,6 +26,7 @@
 #include <optional>
 #include <vector>
 
+#include "core/draw.hpp"
 #include "core/shader_program.hpp"
 #include "data/result.hpp"
 #include "render/asset_registry.hpp"
@@ -77,7 +78,14 @@ class MeshRenderer : public IRenderer {
     /// MeshScene; returns a typed error when it holds a different technique
     /// (SPEC §5, no exceptions).
     data::Result<void> render(const Scene& scene, const Camera& camera,
-                              const RenderTarget& target) override;
+                               const RenderTarget& target) override;
+
+    /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
+    /// assuming ReView already performed bind+viewport+clear via the same
+    /// DrawContext. Does not clear — second layer must not clear away the first.
+    /// Returns typed error for stale handle or draw failure.
+    data::Result<void> drawLayer(const MeshScene& scene, const Camera& camera,
+                                 core::DrawContext& ctx);
 
     /// The injected transparency pipeline (may be null).
     ITransparencyPipeline* transparencyPipeline() const noexcept {

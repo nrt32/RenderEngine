@@ -1,6 +1,6 @@
 // app/mpr_sample.cpp — Multi-Planar Reconstruction (MPR) sample (T14/T15,
-// FR-app.2/3; V2 T2 drives its composition through the multi-view workstream,
-// SPEC §9 V2.4).
+// FR-app.2/3; T5 V3.4 drives its composition through ReView/ViewTarget/IRenderable,
+// SPEC §3.2).
 //
 // Demonstrates the MPR capability (SPEC §1 goal 6): a single 1280x960 window
 // with a 2x2 viewport grid (four 640x480 viewports; T top-left, C top-right,
@@ -19,15 +19,14 @@
 //   - the contour overlay and the 3D-view camera come from the shared
 //     app/mpr_contour scaffolding (meshPlaneContour / overlayContour /
 //     make3dCamera), which the T15 gate tests headlessly;
-//   - the sample shares ONLY per-view window-section handles (render::ViewRect
-//     from mprViewports) + abstract scene objects (render::View, holding Scene
-//     dispatch variants) with the engine: render::ViewRenderer (SPEC §9 V2.4)
-//     dispatches each view's scene through IRenderer (V2 T1) — the three
-//     slice views are PlaneScenes, the 3D view is a MeshScene — renders each
-//     into its OWN 640x480 core::Framebuffer, then blits each FBO into its
-//     window rect via core::blit. There is NO app-side viewport blending: the
-//     textured-quad present pass is gone, the engine present is the whole
-//     composition (V2 T2).
+//   - the sample shares per-view window-section handles (render::ViewRect
+//     from mprViewports) + ReView objects (render::View per screen section
+//     owning ViewTarget + IRenderable list via drawLayer, T5 V3.4) with the
+//     engine: each ReView renders its IRenderables into its OWN 640×480
+//     ViewTarget (Texture2D+Framebuffer) via DrawContext, then blits each FBO
+//     into its window rect via core::blit. There is NO app-side viewport
+//     blending and no ViewRenderer: the textured-quad present pass is gone,
+//     the engine present (View::blitTo) is the whole composition (T5).
 //   - the only app-side window state is the clear of the window's default
 //     framebuffer behind the viewport grid (a background, not a viewport
 //     blend).
@@ -62,7 +61,7 @@
 #include "render/mesh_renderer.hpp" // render::MeshScene / render::Camera
 #include "render/phong_material.hpp"
 #include "render/plane_renderer.hpp"
-#include "render/view_renderer.hpp"
+#include "render/view.hpp"
 #include "volume/transfer_function.hpp"
 
 #ifndef RE_SOURCE_DIR
@@ -175,8 +174,7 @@ class MPRView final : public app::ISample {
           sagittalImage_(makeSliceImage(dataset_, tf_, app::MprAxis::Sagittal,
                                         sliceState_.sagittalX)),
           box_(app::makeBoxMesh(kGoldenBoxMin, kGoldenBoxMax)),
-          boxMaterial_(kBoxMaterialColor),
-          composer_(4u, kViewportWidth, kViewportHeight) {
+          boxMaterial_(kBoxMaterialColor) {
         // One shared unit quad, scaled per slice view onto that view's image
         // pixel rectangle (makeSliceModel) and viewed through a per-view
         // orthographic camera (makeSliceCamera) — the shared 2D-view camera
@@ -220,60 +218,60 @@ class MPRView final : public app::ISample {
                 app::overlayContour(*images[i], curve, app::kContourColor);
         }
 
-        // Register the technique renderers with the engine compositor (SPEC
-        // §9 V2.3): the three slice views are PlaneScenes rendered by
-        // PlaneRenderer, the 3D view is a MeshScene rendered by MeshRenderer.
-        composer_.setRenderer(render::SceneKind::Mesh, &boxRenderer_);
-        composer_.setRenderer(render::SceneKind::Plane, &sliceRenderer_);
     }
 
     data::Result<void> renderFrame(int width, int height) override {
         // Clear the window's default framebuffer behind the viewport grid
         // (a background, not a viewport blend — the views themselves are
-        // placed by the engine blit in composer_.render).
+        // placed by the engine blit).
         core::bindDefaultFramebuffer();
         core::setViewport(0, 0, width, height);
         core::setClearColor(0.02f, 0.02f, 0.03f, 1.0f);
         core::clearColor();
 
         // Build the four views: per-view window-section handles (ViewRects
-        // from app::mprViewports, SPEC FR-app.2) + abstract scene objects
-        // (render::View). The three slice scenes are locals kept alive for the
-        // whole frame: the Scene variant holds pointers into them, valid until
-        // composer_.render below returns.
+        // from app::mprViewports, SPEC FR-app.2) + ReView per screen section
+        // (T5 V3.4). Each ReView owns its ViewTarget + IRenderable list via
+        // drawLayer; no ViewRenderer.
         const std::array<app::MprViewport, 4> grid =
             app::mprViewports(width, height);
         const std::array<const data::Image*, 3> sliceImages = {
             &transverseImage_, &coronalImage_, &sagittalImage_};
 
-        std::array<render::View, 4> views;
+        // Create 4 ReViews with their ViewTargets and renderables.
+        // Three slice views (T/C/S) + one 3D box view.
+        // Use DrawContext per View for per-frame cache isolation.
         std::array<render::PlaneScene, 3> sliceScenes;
+        std::vector<render::View> views;
+        views.reserve(4u);
         for (std::size_t i = 0u; i < 3u; ++i) {
-            // The slice view (T/C/S): the shared unit quad scaled onto the
-            // slice image's pixel rectangle, seen through the per-view camera.
             sliceScenes[i].planes.push_back(render::PlaneInstance{
                 &quad_, sliceImages[i], makeSliceModel(*sliceImages[i])});
-            views[i].scene = &sliceScenes[i];
-            views[i].camera = makeSliceCamera(*sliceImages[i]);
-            views[i].clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-            views[i].rect = render::ViewRect{grid[i].x, grid[i].y,
-                                             grid[i].width, grid[i].height};
+            render::ViewRect rect{grid[i].x, grid[i].y, grid[i].width, grid[i].height};
+            render::View view(rect, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            view.setCamera(makeSliceCamera(*sliceImages[i]));
+            view.addItem(sliceScenes[i], &sliceRenderer_);
+            core::DrawContext ctx;
+            auto r = view.renderWithEnsure(ctx);
+            if (r.failed()) return r;
+            auto b = view.blitTo(nullptr);
+            if (b.failed()) return b;
+            views.push_back(std::move(view));
         }
-        // The 3D view (bottom-right): the golden box mesh (FR-app.3) through
-        // the slice-state-driven camera (make3dCamera).
-        views[3].scene = &boxScene_;
-        views[3].camera = boxCamera_;
-        views[3].clearColor = glm::vec4(0.10f, 0.10f, 0.14f, 1.0f);
-        views[3].rect = render::ViewRect{grid[3].x, grid[3].y, grid[3].width,
-                                         grid[3].height};
-
-        // Engine composition (SPEC §9 V2.4, Model B: per-view FBO + engine
-        // blit): renderViews() dispatches each scene through IRenderer into
-        // its own 640x480 FBO, then present() blits each FBO into its window
-        // rect via core::blit (destination nullptr = the window's default
-        // framebuffer). No app-side viewport blending.
-        const std::vector<render::View> viewList(views.begin(), views.end());
-        return composer_.render(viewList, nullptr);
+        // 3D view (bottom-right): the golden box mesh (FR-app.3).
+        {
+            render::ViewRect rect{grid[3].x, grid[3].y, grid[3].width, grid[3].height};
+            render::View view(rect, glm::vec4(0.10f, 0.10f, 0.14f, 1.0f));
+            view.setCamera(boxCamera_);
+            view.addItem(boxScene_, &boxRenderer_);
+            core::DrawContext ctx;
+            auto r = view.renderWithEnsure(ctx);
+            if (r.failed()) return r;
+            auto b = view.blitTo(nullptr);
+            if (b.failed()) return b;
+            views.push_back(std::move(view));
+        }
+        return data::Result<void>(data::value);
     }
 
     const char* title() const override {
@@ -317,11 +315,6 @@ class MPRView final : public app::ISample {
 
     render::PlaneGeometry quad_;
     render::PlaneRenderer sliceRenderer_;
-
-    // The engine multi-view compositor (SPEC §9 V2.4): owns the four per-view
-    // 640x480 FBOs and performs the render-into-FBO + blit-into-window-rect
-    // composition (core::blit).
-    render::ViewRenderer composer_;
 };
 
 } // namespace

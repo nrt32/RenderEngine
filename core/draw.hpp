@@ -283,7 +283,7 @@ class DrawContext {
 /// (glBlitFramebuffer with GL_COLOR_BUFFER_BIT and GL_NEAREST). Coordinates are
 /// in GL pixel convention (y = 0 is the bottom scanline), matching
 /// core::setViewport and the ViewRect convention of the multi-view compositor
-/// (render/view_renderer.hpp, SPEC §9 V2.4).
+/// (render/view.hpp, SPEC §3.2).
 ///
 /// v1 framebuffers are color-only (docs/core.md), so only the color buffer is
 /// blitted. With equal source and destination sizes the copy is exact —

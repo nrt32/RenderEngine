@@ -25,6 +25,8 @@ class Texture2D {
     /// context is current.
     static data::Result<Texture2D> create();
 
+    Texture2D() noexcept = default;
+
     Texture2D(const Texture2D&) = delete;
     Texture2D& operator=(const Texture2D&) = delete;
 

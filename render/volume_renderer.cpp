@@ -245,8 +245,8 @@ data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
 }
 
 data::Result<void> VolumeRenderer::render(const Scene& scene,
-                                          const Camera& camera,
-                                          const RenderTarget& target) {
+                                           const Camera& camera,
+                                           const RenderTarget& target) {
     const VolumeScene* const* volumeScene =
         std::get_if<const VolumeScene*>(&scene);
     if (volumeScene == nullptr || *volumeScene == nullptr) {
@@ -257,6 +257,53 @@ data::Result<void> VolumeRenderer::render(const Scene& scene,
             2, "VolumeRenderer: scene does not hold a VolumeScene");
     }
     return render(**volumeScene, camera, target);
+}
+
+data::Result<void> VolumeRenderer::drawLayer(const VolumeScene& scene, const Camera& camera,
+                                             core::DrawContext& ctx) {
+    // ReView already bind+viewport+clear via ctx; does not clear between layers.
+    (void)ctx;
+    auto programResult = rayCastProgram();
+    if (programResult.failed()) {
+        return data::makeError<void>(programResult.error().code, programResult.error().message);
+    }
+    core::ShaderProgram* program = *programResult;
+    auto quadResult = screenQuad();
+    if (quadResult.failed()) {
+        return data::makeError<void>(quadResult.error().code, quadResult.error().message);
+    }
+    core::VertexArray* quadVao = *quadResult;
+    program->use();
+    program->setUniformMat4("uViewProj", camera.proj * camera.view);
+    program->setUniformInt("uVolume", 0);
+    for (const VolumeInstance& instance : scene.volumes) {
+        if (instance.dataset == nullptr || instance.transferFunction == nullptr) {
+            continue;
+        }
+        if (instance.transferFunction->size() > kMaxTfPoints) {
+            return data::makeError<void>(1, "VolumeRenderer: transfer function has more than " + std::to_string(kMaxTfPoints) + " control points");
+        }
+        auto texture = textureFor(*instance.dataset);
+        if (texture.failed()) {
+            return data::makeError<void>(texture.error().code, texture.error().message);
+        }
+        core::Texture3D* texPtr = *texture;
+        texPtr->bind(0u);
+        const auto [boxMin, boxMax] = worldAabb(instance);
+        const glm::mat4 invModel = glm::inverse(instance.model);
+        const glm::vec3 size(static_cast<float>(instance.dataset->sizeX()), static_cast<float>(instance.dataset->sizeY()), static_cast<float>(instance.dataset->sizeZ()));
+        program->setUniformVec3("uBoxMin", boxMin);
+        program->setUniformVec3("uBoxMax", boxMax);
+        program->setUniformMat4("uInvModel", invModel);
+        program->setUniformVec3("uSize", size);
+        program->setUniformFloat("uStepLength", kDefaultStepLength);
+        uploadTransferFunction(*instance.transferFunction);
+        auto draw = core::drawElements(*quadVao, screenQuadIndexCount_);
+        if (draw.failed()) {
+            return draw;
+        }
+    }
+    return data::Result<void>(data::value);
 }
 
 } // namespace re::render

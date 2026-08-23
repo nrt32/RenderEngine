@@ -27,6 +27,8 @@ class Framebuffer {
     /// current.
     static data::Result<Framebuffer> create();
 
+    Framebuffer() noexcept = default;
+
     Framebuffer(const Framebuffer&) = delete;
     Framebuffer& operator=(const Framebuffer&) = delete;
 

@@ -307,8 +307,8 @@ data::Result<void> PlaneRenderer::render(const PlaneScene& scene,
 }
 
 data::Result<void> PlaneRenderer::render(const Scene& scene,
-                                         const Camera& camera,
-                                         const RenderTarget& target) {
+                                          const Camera& camera,
+                                          const RenderTarget& target) {
     const PlaneScene* const* planeScene = std::get_if<const PlaneScene*>(&scene);
     if (planeScene == nullptr || *planeScene == nullptr) {
         // The dispatch contract (SPEC §9 V2.3) rejects a scene of a different
@@ -318,6 +318,53 @@ data::Result<void> PlaneRenderer::render(const Scene& scene,
             2, "PlaneRenderer: scene does not hold a PlaneScene");
     }
     return render(**planeScene, camera, target);
+}
+
+data::Result<void> PlaneRenderer::drawLayer(const PlaneScene& scene, const Camera& camera,
+                                            core::DrawContext& ctx) {
+    // ReView already bind+viewport+clear via ctx; does not clear between layers.
+    (void)ctx;
+    auto programResult = planeProgram();
+    if (programResult.failed()) {
+        return data::makeError<void>(programResult.error().code, programResult.error().message);
+    }
+    core::ShaderProgram* program = *programResult;
+    auto quadResult = quadGeometry();
+    if (quadResult.failed()) {
+        return data::makeError<void>(quadResult.error().code, quadResult.error().message);
+    }
+    core::VertexArray* quadVao = *quadResult;
+    program->use();
+    program->setUniformMat4("uView", camera.view);
+    program->setUniformMat4("uProj", camera.proj);
+    program->setUniformInt("uTex", 0);
+    for (const PlaneInstance& instance : scene.planes) {
+        if (instance.geometry == nullptr || instance.image == nullptr) {
+            continue;
+        }
+        auto texture = textureFor(*instance.image);
+        if (texture.failed()) {
+            return data::makeError<void>(texture.error().code, texture.error().message);
+        }
+        core::Texture2D* texPtr = *texture;
+        texPtr->bind(0u);
+        const glm::vec3 uScale = 0.5f * (instance.geometry->corners[1] - instance.geometry->corners[0]);
+        const glm::vec3 vScale = 0.5f * (instance.geometry->corners[3] - instance.geometry->corners[0]);
+        const glm::vec3 normal = glm::normalize(glm::cross(uScale, vScale));
+        const glm::vec3 translation = instance.geometry->corners[0] + uScale + vScale;
+        glm::mat4 basis(1.0f);
+        basis[0] = glm::vec4(uScale, 0.0f);
+        basis[1] = glm::vec4(vScale, 0.0f);
+        basis[2] = glm::vec4(normal, 0.0f);
+        basis[3] = glm::vec4(translation, 1.0f);
+        const glm::mat4 model = instance.model * basis;
+        program->setUniformMat4("uModel", model);
+        auto draw = core::drawElements(*quadVao, quadIndexCount_);
+        if (draw.failed()) {
+            return draw;
+        }
+    }
+    return data::Result<void>(data::value);
 }
 
 } // namespace re::render

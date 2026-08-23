@@ -29,6 +29,7 @@
 #include <optional>
 #include <vector>
 
+#include "core/draw.hpp"
 #include "core/framebuffer.hpp"
 #include "core/shader_program.hpp"
 #include "core/transform_feedback.hpp"
@@ -40,15 +41,6 @@
 #include "render/types.hpp" // IRenderer / render::Scene
 
 namespace re::render {
-
-/// A plane used to clip a mesh, defined in world space by a unit normal and a
-/// point on the plane. The kept side is the half-space `dot(normal, p - point)
-/// >= 0`; the cross-section is the set of surface points where the plane cuts
-/// the mesh (all lying on the plane, FR-render.4).
-struct ClipPlane {
-    glm::vec3 normal{0.0f, 0.0f, 1.0f}; ///< Unit plane normal (world space).
-    glm::vec3 point{0.0f, 0.0f, 0.0f};  ///< A point on the plane (world space).
-};
 
 /// A scene of mesh instances to clip and slice (reuses MeshInstance from
 /// MeshRenderer; CPU-side, app/ builds these).
@@ -98,7 +90,19 @@ class SliceRenderer : public IRenderer {
     /// (`scene.plane`); returns a typed error when it holds a different
     /// technique (SPEC §5, no exceptions).
     data::Result<void> render(const Scene& scene, const Camera& camera,
-                              const RenderTarget& target) override;
+                               const RenderTarget& target) override;
+
+    /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
+    /// assuming ReView already performed bind+viewport+clear via the same
+    /// DrawContext. Does not clear — second layer must not clear away the first.
+    /// Clips against the plane carried by the scene (slice.plane) for the
+    /// IRenderer path; the explicit-plane overload uses the passed plane.
+    data::Result<void> drawLayer(const SliceScene& scene, const Camera& camera,
+                                 core::DrawContext& ctx);
+    /// Explicit-plane layer variant (used when View's ClipPlane supplies the
+    /// plane, not the scene).
+    data::Result<void> drawLayer(const SliceScene& scene, const Camera& camera,
+                                 const ClipPlane& plane, core::DrawContext& ctx);
 
     /// Capture the on-plane cross-section vertices emitted by the geometry
     /// shader for `scene` clipped against `plane` into `out` (world-space
