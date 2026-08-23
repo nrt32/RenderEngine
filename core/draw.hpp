@@ -20,6 +20,8 @@
 #include "core/vertex_array.hpp"
 #include "data/result.hpp"
 
+#include <glad/gl.h>
+
 namespace re::core {
 
 /// Set the viewport rectangle (glViewport). Coordinates are in pixels.
@@ -129,6 +131,150 @@ void resetDrawSpyCounts() noexcept;
 /// tests — call `resetDrawSpyCounts` separately if you want to keep the
 /// cache).
 void invalidateDrawCache() noexcept;
+
+/// ---------------------------------------------------------------------------
+/// DrawContext — instance per FrameContext (SPEC §11.6 EOL-5, Q43:B SRP via
+/// instance, V3.2a). Replaces the global static cache in `core/draw.cpp`
+/// (`invalidateDrawCache()`) with a value-type instance that owns its own
+/// dirty-flag cache + spy. One DrawContext per FrameContext — no global
+/// `static Cache g_cache`; SRP via instance (one reason to change per frame),
+/// test determinism via spy per context (not global).
+///
+/// Intended use: `core::DrawContext ctx; ctx.setViewport(...);` per frame;
+/// duplicate `setViewport` on the SAME instance is a cache hit (exactly 1
+/// glViewport), but a fresh `DrawContext` starts cold (no cross-frame bleed).
+/// Header-only value type, no behavior change yet for the global free-function
+/// API (which remains for V2 regression lock); new code migrates to instance.
+/// ---------------------------------------------------------------------------
+
+/// Instance draw-state cache + spy (header-only value type).
+class DrawContext {
+   public:
+    /// Per-wrapper raw-GL call counts observed by the per-instance spy.
+    using SpyCounts = DrawSpyCounts;
+
+    DrawContext() noexcept = default;
+
+    /// Set viewport — caches last rect, duplicate is no-op (no glViewport).
+    void setViewport(int x, int y, int width, int height) noexcept {
+        if (cache_.hasViewport && cache_.vpX == x && cache_.vpY == y &&
+            cache_.vpW == width && cache_.vpH == height) {
+            return;
+        }
+        cache_.hasViewport = true;
+        cache_.vpX = x;
+        cache_.vpY = y;
+        cache_.vpW = width;
+        cache_.vpH = height;
+        ++spy_.viewport;
+        glViewport(x, y, width, height);
+    }
+
+    /// Set clear color — exact float equality cache.
+    void setClearColor(float r, float g, float b, float a) noexcept {
+        if (cache_.hasClearColor && cache_.ccR == r && cache_.ccG == g &&
+            cache_.ccB == b && cache_.ccA == a) {
+            return;
+        }
+        cache_.hasClearColor = true;
+        cache_.ccR = r;
+        cache_.ccG = g;
+        cache_.ccB = b;
+        cache_.ccA = a;
+        ++spy_.clearColor;
+        glClearColor(r, g, b, a);
+    }
+
+    /// Clear color buffer to the last clear color.
+    void clearColor() noexcept { glClear(GL_COLOR_BUFFER_BIT); }
+
+    /// Depth test toggle — cached per capability.
+    void enableDepthTest() noexcept {
+        if (cache_.hasDepthTest && cache_.depthEnabled) return;
+        cache_.hasDepthTest = true;
+        cache_.depthEnabled = true;
+        ++spy_.enableDepthTest;
+        glEnable(GL_DEPTH_TEST);
+    }
+    void disableDepthTest() noexcept {
+        if (cache_.hasDepthTest && !cache_.depthEnabled) return;
+        cache_.hasDepthTest = true;
+        cache_.depthEnabled = false;
+        ++spy_.disableDepthTest;
+        glDisable(GL_DEPTH_TEST);
+    }
+
+    /// Blend toggle — cached.
+    void enableBlend() noexcept {
+        if (cache_.hasBlend && cache_.blendEnabled) return;
+        cache_.hasBlend = true;
+        cache_.blendEnabled = true;
+        ++spy_.enableBlend;
+        glEnable(GL_BLEND);
+    }
+    void disableBlend() noexcept {
+        if (cache_.hasBlend && !cache_.blendEnabled) return;
+        cache_.hasBlend = true;
+        cache_.blendEnabled = false;
+        ++spy_.disableBlend;
+        glDisable(GL_BLEND);
+    }
+
+    /// Premultiplied-over blend — caches both GL_BLEND enable and glBlendFunc(GL_ONE,GL_ONE_MINUS_SRC_ALPHA).
+    void enablePremultipliedOverBlend() noexcept {
+        const bool needEnable = !(cache_.hasBlend && cache_.blendEnabled);
+        const bool needFunc = !(cache_.hasBlendFunc &&
+                                cache_.blendSrc == GL_ONE &&
+                                cache_.blendDst == GL_ONE_MINUS_SRC_ALPHA);
+        if (!needEnable && !needFunc) return;
+        if (needEnable) {
+            cache_.hasBlend = true;
+            cache_.blendEnabled = true;
+            ++spy_.enableBlend;
+            glEnable(GL_BLEND);
+        }
+        if (needFunc) {
+            cache_.hasBlendFunc = true;
+            cache_.blendSrc = GL_ONE;
+            cache_.blendDst = GL_ONE_MINUS_SRC_ALPHA;
+            ++spy_.blendFunc;
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        }
+    }
+
+    /// Snapshot of per-instance spy counts.
+    SpyCounts getSpyCounts() const noexcept { return spy_; }
+    /// Reset spy counters to zero (cache intact).
+    void resetSpyCounts() noexcept { spy_ = SpyCounts{}; }
+    /// Invalidate per-instance cache (also resets spy) — instance analogue of global invalidateDrawCache().
+    void invalidate() noexcept {
+        cache_ = Cache{};
+        spy_ = SpyCounts{};
+    }
+
+   private:
+    struct Cache {
+        bool hasViewport = false;
+        int vpX = 0;
+        int vpY = 0;
+        int vpW = 0;
+        int vpH = 0;
+        bool hasClearColor = false;
+        float ccR = 0.0f;
+        float ccG = 0.0f;
+        float ccB = 0.0f;
+        float ccA = 0.0f;
+        bool hasDepthTest = false;
+        bool depthEnabled = false;
+        bool hasBlend = false;
+        bool blendEnabled = false;
+        bool hasBlendFunc = false;
+        unsigned int blendSrc = 0;
+        unsigned int blendDst = 0;
+    };
+    Cache cache_{};
+    SpyCounts spy_{};
+};
 
 /// Copy a `srcWidth` x `srcHeight` color pixel rectangle from the bottom-left
 /// corner `(srcX, srcY)` of the `source` framebuffer into the `destination`

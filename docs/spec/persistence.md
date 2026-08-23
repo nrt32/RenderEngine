@@ -18,11 +18,12 @@
   where `scope` is the owning **layout/page** and `generation`/`version` is
   bumped by every mutator.
 - **Content-addressed with scope + schema version (EOL).** The canonical key in `broker/` (SPEC §3/§11) is
-  `CompositeKey{ Version, LayoutId, ViewId or ObjectId, TypeIndex, Generation, ContentHash }`.
+  `CompositeKey{ Version, LayoutId, ViewId or ObjectId, TypeIndex, Generation, ContentHash }`
+  (skeleton `CompositeKey{Version,LayoutId,Id,Gen,Hash}` in `scene/composite_key.hpp` header-only value type — T2 V3.2a lands the skeleton before any cached mapper).
   `Version` is the persistence schema version (uint32, bumped when `Re*` field inventory or hash algorithm changes) — without it a V3.7 `ReView` cache would alias a V3.8 cache with different fields (EOL cache-coherence bug; see Software Patterns Lexicon cache-key-design: omitting version/tenant/locale causes wrong-value-to-wrong-caller). A generation-bumped mutation (`Camera::rotate(Δ)`, `MaterialDesc::baseColor.a
   1→0.5`) keeps the same `Id` but changes `Generation`+`ContentHash`; the
   broker's `translateCached` overwrites the `Re*` object **in place** without
-  recreating its `ReView`/`FBO`. `ContentHash` is SHA-256 of the stable field bytes (like content-hash cache pattern — SHA-256 path-independent invalidation), not of pointers.
+  recreating its `ReView`/`FBO`. `ContentHash` is SHA-256 (skeleton FNV-1a 64-bit truncate for deterministic tests) of the stable field bytes (like content-hash cache pattern — SHA-256 path-independent invalidation), **hash of stable bytes, not pointer** (`CompositeKey::hashStableBytes` hashes canonical bytes; two heap allocations with identical bytes produce identical hash, distinct pointer addresses do not affect the hash).
 - **Phase-type is disallowed.** No code path does `if (rect.w != last.w) dump()`
   alone. Size, pose, and layout are orthogonal signals (SPEC §10.3).
 - **RE long-lived, app long-lived, broker caches both (SRP).** `render::View` (`ReView`)

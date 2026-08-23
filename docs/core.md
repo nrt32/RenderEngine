@@ -94,7 +94,7 @@ portable level that compiles on both llvmpipe and the native d3d12 driver. GLSL
 460 remains the target for hardware-driven sample shaders on the native d3d12
 path.
 
-### Draw-state cache (SPEC §9 V2.10)
+### Draw-state cache (SPEC §9 V2.10) & DrawContext instance (V3.2a Q43:B)
 
 `core/draw.cpp` keeps an **internal dirty-flag cache** for the draw-state
 wrappers (`setViewport`, `setClearColor`, `enableDepthTest`/`disableDepthTest`,
@@ -128,6 +128,27 @@ For testing, `core/draw.hpp` exposes a **test-injectable spy**:
 Example gate assertion: `setClearColor(red); setClearColor(red)` issues exactly
 **1** `glClearColor`; the same holds for `setViewport` and each
 `enable*`/`disable*`.
+
+#### DrawContext — instance per FrameContext (V3.2a, Q43:B SRP via instance)
+
+`core::DrawContext` (`core/draw.hpp`, header-only value type) **replaces** the
+global `static Cache g_cache` / `invalidateDrawCache()` with an **instance per
+`FrameContext`** — SRP via instance (one reason to change per frame, not one
+global mutable). The instance owns its own dirty-flag cache + spy:
+
+- `DrawContext{Viewport,ClearColor,Depth,Blend,spy}` — value type, one per frame;
+  duplicate `ctx.setViewport(0,0,640,480); ctx.setViewport(0,0,640,480)` issues
+  exactly **1** `glViewport` (cache hit on the same instance), while a fresh
+  `DrawContext` starts cold (no cross-frame bleed — instance isolation).
+- Spy is per-instance (`ctx.getSpyCounts()`, `ctx.resetSpyCounts()`, `ctx.invalidate()`),
+  not global — test determinism via spy per context (not global `getDrawSpyCounts()`).
+- Future `FrameContext{ DrawContext draw; Viewport viewport; ClearColor clearCol; }`
+  (see `modules.md` RHI) will thread `DrawContext&` through `renderAll`/`drawLayer`
+  so `core::Draw` façade delegates to `FrameContext::draw` (DIP). The global free-function
+  API remains for V2 regression lock; new code migrates to `DrawContext` instance.
+
+Gate: `DrawContext` duplicate `setViewport` → exactly 1 `glViewport` (`t2_skeletons_test.cpp`);
+`invalidate()` resets cache+spy; two instances are independent (N>=1 consecutive green).
 
 ### Logging
 
