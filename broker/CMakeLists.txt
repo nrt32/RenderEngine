@@ -5,12 +5,20 @@ add_library(re_broker STATIC
     broker.cpp
     asset_store.cpp
     camera_mapper.cpp
+    material_mapper.cpp
     mesh_object_mapper.cpp
+    mesh_slice_object_mapper.cpp
     contour_mapper.cpp
     plane_mapper.cpp
+    plane_object_mapper.cpp
+    volume_object_mapper.cpp
+    volume_slice_object_mapper.cpp
+    render_stack.cpp
+    slice_display.cpp
     view_synchronizer.cpp
     view_compositor.cpp
     view_bridge.cpp
+    app_context.cpp
 )
 target_link_libraries(re_broker PUBLIC re_scene re_render re_core)
 target_include_directories(re_broker PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)

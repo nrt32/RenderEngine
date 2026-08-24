@@ -76,7 +76,7 @@
 #include <utility>
 #include <vector>
 
-#include "app/mpr_camera.hpp"
+#include "broker/slice_display.hpp"
 #include "app/mpr_slice.hpp"
 #include "core/framebuffer.hpp"
 #include "core/gl_error.hpp"
@@ -92,6 +92,7 @@ namespace re::tests {
 namespace {
 
 namespace app = re::app;
+namespace broker = re::broker;
 namespace core = re::core;
 namespace data = re::data;
 namespace render = re::render;
@@ -309,7 +310,7 @@ TEST(T16VolumeSlice, MidplaneMatchesCpuOracleWithinOneByte) {
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     render::VolumeSliceRenderer renderer;
-    auto result = renderer.render(scene, app::makeSliceCamera(2.0f, 2.0f), rt);
+    auto result = renderer.render(scene, broker::toRenderCamera(broker::makeSliceCamera(2.0f, 2.0f)), rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
 
@@ -401,7 +402,7 @@ TEST(T16VolumeSlice, StateChangeReextractsNewLayerWithoutCpuImage) {
     instance.plane.point = glm::vec3(0.0f, 0.0f, 0.5f);
     scene.slices.clear();
     scene.slices.push_back(instance);
-    auto first = renderer.render(scene, app::makeSliceCamera(2.0f, 2.0f), rt);
+    auto first = renderer.render(scene, broker::toRenderCamera(broker::makeSliceCamera(2.0f, 2.0f)), rt);
     ASSERT_TRUE(first.ok()) << first.error().message;
     const std::vector<std::uint8_t> layer0 = readBoundFramebuffer(2u, 2u);
 
@@ -411,7 +412,7 @@ TEST(T16VolumeSlice, StateChangeReextractsNewLayerWithoutCpuImage) {
     instance.plane.point = glm::vec3(0.0f, 0.0f, 1.5f);
     scene.slices.clear();
     scene.slices.push_back(instance);
-    auto second = renderer.render(scene, app::makeSliceCamera(2.0f, 2.0f), rt);
+    auto second = renderer.render(scene, broker::toRenderCamera(broker::makeSliceCamera(2.0f, 2.0f)), rt);
     ASSERT_TRUE(second.ok()) << second.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
     const std::vector<std::uint8_t> layer1 = readBoundFramebuffer(2u, 2u);
@@ -510,7 +511,7 @@ TEST(T16VolumeSlice, FullFrameMatchesOracleOnMiddleLayer) {
 
     render::VolumeSliceRenderer renderer;
     auto result =
-        renderer.render(scene, app::makeSliceCamera(16.0f, 16.0f), rt);
+        renderer.render(scene, broker::toRenderCamera(broker::makeSliceCamera(16.0f, 16.0f)), rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
 
@@ -711,8 +712,8 @@ TEST(T16VolumeSlice, MprAxisConventionPreservedOnGpuPath) {
         render::View view(render::ViewRect{0, 0, static_cast<int>(targetW),
                                            static_cast<int>(targetH)},
                           glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        view.setCamera(app::makeSliceCamera(static_cast<float>(freeW),
-                                            static_cast<float>(freeH)));
+        view.setCamera(broker::toRenderCamera(broker::makeSliceCamera(
+            static_cast<float>(freeW), static_cast<float>(freeH))));
         view.addItem(gpuScene, sliceRenderer);
         core::DrawContext ctx;
         auto rendered = view.renderWithEnsure(ctx);
@@ -768,7 +769,8 @@ TEST(T16VolumeSlice, TypedErrorsOnBadInput) {
     rt.width = 8u;
     rt.height = 8u;
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-    render::Camera camera = app::makeSliceCamera(2.0f, 2.0f);
+    render::Camera camera =
+        broker::toRenderCamera(broker::makeSliceCamera(2.0f, 2.0f));
 
     // Null dataset reference: typed error code 1 naming the cause — never a
     // crash, never a silently empty layer.
@@ -846,11 +848,24 @@ TEST(T16VolumeSlice, SamplesUseExtractionPathMechanicalFloor) {
     ASSERT_GE(loaderHits, 0) << "plane_sample.cpp must be readable";
     EXPECT_GE(loaderHits, 1)
         << "plane sample must load a volume via loadNrrdVolume";
+    // Since T20 (broker-only app path) the sample expresses the extraction
+    // as scene values translated through the broker mapper inventory, so the
+    // renderer name lives at the WIRING site: the sample must carry
+    // VolumeSliceObjectMapper values AND broker/render_stack.cpp must wire
+    // the actual GPU extraction renderer onto every bridge stack. Together
+    // these prove the same property the pre-T20 grep proved directly.
     const int extractorHits =
-        countInFile(appDir / "plane_sample.cpp", "VolumeSliceRenderer");
+        countInFile(appDir / "plane_sample.cpp", "addVolumeSliceObject");
     ASSERT_GE(extractorHits, 0) << "plane_sample.cpp must be readable";
     EXPECT_GE(extractorHits, 1)
-        << "plane sample must render through VolumeSliceRenderer";
+        << "plane sample must express its planes as scene "
+           "VolumeSliceObjects (broker-mapped by the bridge)";
+    const int stackWiring = countInFile(
+        std::filesystem::path(TEST_SOURCE_DIR) / "broker" / "render_stack.cpp",
+        "VolumeSliceRenderer");
+    ASSERT_GE(stackWiring, 0) << "render_stack.cpp must be readable";
+    EXPECT_GE(stackWiring, 1)
+        << "every bridge stack must wire the GPU extraction renderer";
     // ...and must NOT contain the old procedural gradient quad builder.
     const int gradientHits =
         countInFile(appDir / "plane_sample.cpp", "makeGradientImage");
@@ -865,10 +880,11 @@ TEST(T16VolumeSlice, SamplesUseExtractionPathMechanicalFloor) {
     EXPECT_EQ(frozenHits, 0)
         << "MPR sample must not build CPU slice images anymore";
     const int mprExtractorHits =
-        countInFile(appDir / "mpr_sample.cpp", "VolumeSliceRenderer");
+        countInFile(appDir / "mpr_sample.cpp", "addVolumeSliceObject");
     ASSERT_GE(mprExtractorHits, 0) << "mpr_sample.cpp must be readable";
     EXPECT_GE(mprExtractorHits, 1)
-        << "MPR 2D views must render through VolumeSliceRenderer";
+        << "MPR 2D views must be scene VolumeSliceObjects (broker-mapped, "
+           "drawn by the stack-wired GPU extraction renderer)";
 
     // The CPU oracle stays defined for the gates (this file's reference).
     const int oracleHits =

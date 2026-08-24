@@ -1,10 +1,14 @@
-// app/mesh_sample.cpp — mesh rendering sample (T12, FR-app.1).
+// app/mesh_sample.cpp — mesh rendering sample (T12, FR-app.1; T20 routed
+// through the broker façade).
 //
 // Demonstrates the mesh capability: loads the Stanford bunny (data/meshes,
-// SPEC §7), shades it with an opaque Phong material, and drives it through the
-// shared app::SampleHarness (visible window + ImGui overlay + run loop). The
-// scene renders into the window's default framebuffer via render::MeshRenderer
-// (a null RenderTarget::framebuffer binds the default framebuffer, T12).
+// SPEC §7), shades it with an opaque Phong material from its scene
+// presentation value, and drives it through the shared app::SampleHarness
+// (visible window + ImGui overlay + run loop). The scene is expressed ENTIRELY
+// as scene/ values (MeshObject + View) in a broker::AppContext composition
+// root and rendered through IViewBridge (sync → renderAll → presentAll) —
+// per the SPEC §11 ACL the sample never includes render/ and never holds a
+// mapper or renderer handle.
 //
 // The sample exits cleanly (code 0) after RE_SAMPLE_MAX_FRAMES frames (default
 // 300), so the automated gate can run it headlessly under Xvfb within a timeout
@@ -23,13 +27,11 @@
 #include <utility>
 
 #include "app/sample_harness.hpp"
+#include "broker/app_context.hpp"
 #include "core/window.hpp"
 #include "data/mesh.hpp"
 #include "data/result.hpp"
 #include "io/mesh/obj_mesh_loader.hpp"
-#include "render/asset_registry.hpp"
-#include "render/mesh_renderer.hpp"
-#include "render/phong_material.hpp"
 
 #ifndef RE_SOURCE_DIR
 #define RE_SOURCE_DIR "."
@@ -37,68 +39,75 @@
 
 namespace {
 
+namespace app = re::app;
+namespace broker = re::broker;
+namespace core = re::core;
+namespace data = re::data;
+namespace scene = re::scene;
+
 // The harness window size.
 constexpr int kWindowWidth = 800;
 constexpr int kWindowHeight = 600;
 // Default number of frames before the sample exits cleanly (gate overrides via
 // RE_SAMPLE_MAX_FRAMES).
 constexpr int kDefaultFrames = 300;
-// Perspective vertical field of view in radians (~60 deg).
-constexpr float kFovY = 1.0471975511965976f;
+// Perspective vertical field of view in degrees (~60 deg — glm::radians(60)
+// reproduces the previous 1.0471975511965976 rad constant).
+constexpr float kFovYDeg = 60.0f;
 
-/// Build a perspective camera framing `mesh`: eye pulled back along +Z from the
-/// mesh's AABB center by `radius / tan(fov/2)`, looking at the center.
-re::render::Camera makeFramingCamera(const re::data::Mesh& mesh) {
-    const re::data::Aabb& b = mesh.bounds();
-    const glm::vec3 center = 0.5f * (b.min + b.max);
-    const glm::vec3 extent = b.max - b.min;
-    const float radius = 0.5f * glm::length(extent);
-    const float dist = radius / std::tan(0.5f * kFovY);
-
-    re::render::Camera camera;
-    camera.position = center + glm::vec3(0.0f, 0.0f, dist);
-    camera.view =
-        glm::lookAt(camera.position, center, glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::perspective(
-        kFovY,
-        static_cast<float>(kWindowWidth) / static_cast<float>(kWindowHeight),
-        0.1f, 2.0f * (dist + radius));
-    return camera;
-}
-
-/// The mesh sample: owns the loaded bunny + material and renders one frame.
-class MeshSample final : public re::app::ISample {
+/// The mesh sample: owns the loaded bunny + the AppContext and renders one
+/// bridged frame per renderFrame call.
+class MeshSample final : public app::ISample {
    public:
-    explicit MeshSample(re::data::Mesh mesh)
-        : mesh_(std::move(mesh)),
-          material_(std::make_shared<re::render::PhongMaterial>(
-              glm::vec4(0.85f, 0.45f, 0.15f, 1.0f))),
-          camera_(makeFramingCamera(mesh_)) {
-        // Register the mesh once with the shared registry (SPEC §9 V2.5): the
-        // scene carries its AssetHandle, resolved by the renderer. The window
-        // (and thus a GL context) exists before the sample is constructed, so
-        // the upload succeeds; on the impossible failure the scene stays empty
-        // and the sample degrades gracefully (logged, never silent).
-        const auto handle = registry_->registerAsset(mesh_);
-        if (handle.failed()) {
-            spdlog::error("mesh sample: failed to register mesh: {}",
-                          handle.error().message);
-            return;
-        }
-        scene_.meshes.push_back(
-            re::render::MeshInstance{*handle, material_, glm::mat4(1.0f)});
+    explicit MeshSample(data::Mesh mesh)
+        : mesh_(std::make_shared<const data::Mesh>(std::move(mesh))),
+          ctx_(broker::AppContext::Params{}) {
+        // Scene values only: one MeshObject carrying the shared asset ref +
+        // the Phong presentation (base color identical to the previous direct
+        // render path), added to the store for a stable id.
+        scene::MeshObject mo;
+        mo.mesh = mesh_;
+        mo.transform = glm::mat4(1.0f);
+        mo.presentation.phong.baseColor = glm::vec4(0.85f, 0.45f, 0.15f, 1.0f);
+        const uint64_t meshId = ctx_.store().addMeshObject(std::move(mo));
+
+        // One full-window view: perspective camera framing the mesh (eye
+        // pulled back along +Z from the AABB center by radius / tan(fov/2)),
+        // clear color matching the previous direct-render target.
+        const data::Aabb& b = mesh_->bounds();
+        const glm::vec3 center = 0.5f * (b.min + b.max);
+        const float radius =
+            0.5f * glm::length(b.max - b.min);
+        const float dist = radius / std::tan(0.5f * glm::radians(kFovYDeg));
+
+        view_.id = 1;
+        view_.rect = scene::Rect{0, 0, kWindowWidth, kWindowHeight};
+        view_.camera = scene::Camera(center + glm::vec3(0.0f, 0.0f, dist),
+                                     center, glm::vec3(0.0f, 1.0f, 0.0f));
+        view_.camera.setPerspective(
+            kFovYDeg,
+            static_cast<float>(kWindowWidth) /
+                static_cast<float>(kWindowHeight),
+            0.1f, 2.0f * (dist + radius));
+        view_.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
+        view_.setItemIds({meshId});
     }
 
-    re::data::Result<void> renderFrame(int width, int height) override {
-        re::render::RenderTarget target;
-        target.framebuffer = nullptr;
-        // null framebuffer = render straight into the window's on-screen
-        // default framebuffer (samples have no offscreen ViewTarget; the
-        // harness hands us its pixel size each frame).
-        target.width = static_cast<unsigned>(width);
-        target.height = static_cast<unsigned>(height);
-        target.clearColor = glm::vec4(0.10f, 0.10f, 0.12f, 1.0f);
-        return renderer_.render(scene_, camera_, target);
+    data::Result<void> renderFrame(int /*width*/, int /*height*/) override {
+        // The bridge path: sync translates dirty fields into cached Re state,
+        // renderAll draws every ReView into its own target, presentAll blits
+        // each target 1:1 into its window rect (null destination = the
+        // window's default framebuffer).
+        views_ = {view_};
+        auto s = ctx_.bridge().sync(views_, ctx_.store());
+        if (s.failed()) {
+            return s;
+        }
+        auto r = ctx_.bridge().renderAll();
+        if (r.failed()) {
+            return r;
+        }
+        return ctx_.bridge().presentAll(nullptr);
     }
 
     const char* title() const override {
@@ -107,23 +116,18 @@ class MeshSample final : public re::app::ISample {
 
     const char* instructions() const noexcept override {
         return "Capability: shaded triangle mesh (SPEC FR-render.1).\n"
-               "A Phong (opaque) mesh is drawn through render::MeshRenderer.\n"
+               "A Phong (opaque) mesh is translated by the broker mapper "
+               "inventory (MeshObjectMapper + MaterialMapper) and drawn "
+               "through the IViewBridge façade.\n"
                "Run the sample, then close the window (or set "
                "RE_SAMPLE_MAX_FRAMES) to exit.";
     }
 
    private:
-    re::data::Mesh mesh_;
-    std::shared_ptr<re::render::PhongMaterial> material_;
-    re::render::Camera camera_;
-    // Shared asset registry (SPEC §9 V2.5, T13): self-initializing NSDMI, so
-    // the renderer group below has NO declaration-order hazard — it holds a
-    // shared reference and validates it per draw (a null registry would fail
-    // with typed error code 4, never crash).
-    std::shared_ptr<re::render::AssetRegistry> registry_{
-        std::make_shared<re::render::AssetRegistry>()};
-    re::render::MeshScene scene_;
-    re::render::MeshRenderer renderer_{registry_};
+    std::shared_ptr<const data::Mesh> mesh_;
+    broker::AppContext ctx_;
+    scene::View view_{};
+    std::vector<scene::View> views_{};
 };
 
 } // namespace
@@ -138,14 +142,14 @@ int main() {
         return 1;
     }
 
-    auto windowResult = re::core::Window::create(kWindowWidth, kWindowHeight,
-                                                 "RenderEngine - Mesh Sample");
+    auto windowResult = core::Window::create(kWindowWidth, kWindowHeight,
+                                             "RenderEngine - Mesh Sample");
     if (windowResult.failed()) {
         spdlog::error("mesh sample: {}", windowResult.error().message);
         return 1;
     }
 
     auto sample = std::make_unique<MeshSample>(std::move(*meshResult));
-    re::app::SampleHarness harness(std::move(*windowResult), std::move(sample));
-    return harness.run(re::app::sampleMaxFrames(kDefaultFrames));
+    app::SampleHarness harness(std::move(*windowResult), std::move(sample));
+    return harness.run(app::sampleMaxFrames(kDefaultFrames));
 }

@@ -1,5 +1,5 @@
 // app/oit_sample.cpp — order-independent transparency (OIT) sample (T19,
-// FR-app.1).
+// FR-app.1; T20 routed through the broker façade).
 //
 // Demonstrates the transparency / OIT capability (SPEC §1 capability 5,
 // FR-render.2/3) on a scene of REAL meshes instead of flat quads:
@@ -11,28 +11,29 @@
 //     more depths, arranged so every glass footprint covers both opaque
 //     meshes somewhere and the glasses cover each other.
 //
-// Per-frame composition (shared with the T19 gate through app/oit_scene.hpp
-// so the tested arrangement IS the shown arrangement):
+// Per-frame composition through the broker bridge (the shared analytic
+// constants live in app/oit_scene.hpp so the tested arrangement IS the shown
+// arrangement):
 //
-//   1. The opaque meshes render first through a render::View whose per-view
-//      depthTest flag is ON (render::View::setDepthTest, the T18 depth
-//      support): the view owns a DepthMode::Enabled target — a framebuffer
-//      with a real depth attachment — so overlapping opaque geometry
-//      resolves by true occlusion rather than draw order.
-//   2. render::LinkedListOIT captures each transparent mesh's fragments into
-//      its per-pixel linked list, sorts them by depth per pixel, and
-//      composites them back-to-front with premultiplied-alpha "over" onto
-//      the opaque result inside the view target (FR-render.2). The pipeline
-//      is engaged because the scene contains transparent materials; an
-//      opaque-only scene would never engage it (FR-render.3).
-//   3. core::blit presents the finished view target to the window's default
+//   1. The scene is four MeshObject values in one AppContext composition root;
+//      the single full-window view opts into depth-tested rendering
+//      (scene::View::setDepthTest — the T18 depth support): its render-side
+//      target owns a real depth attachment and its pass prologue enables +
+//      clears depth, so overlapping opaque geometry resolves by TRUE OCCLUSION
+//      rather than draw order.
+//   2. The context is constructed with enableOIT: transparent mesh instances
+//      (alpha < 1) are routed by the synchronizer OUT of the inline layers to
+//      ViewCompositor's capture stage; after each view's opaque pass it runs
+//      begin() → one drawTransparent per glass instance → end(), compositing
+//      depth-sorted premultiplied fragments back-to-front over the opaque
+//      result inside the same view target (FR-render.2). The pipeline engages
+//      because the scene contains transparent materials; an opaque-only scene
+//      would never capture (FR-render.3).
+//   3. presentAll blits the finished view target to the window's default
 //      framebuffer.
 //
-// The sample is driven through the shared app::SampleHarness (visible window
-// + ImGui overlay + run loop) exactly like the other capability samples, and
-// exits cleanly (code 0) after RE_SAMPLE_MAX_FRAMES frames (default 300), so
-// the gate can run it headlessly under Xvfb within a timeout (FR-app.1: exit
-// code 0, no sanitizer reports).
+// Exits cleanly (code 0) after RE_SAMPLE_MAX_FRAMES frames (default 300) so
+// the gate can run it headlessly under Xvfb within a timeout (FR-app.1).
 
 #include <spdlog/spdlog.h>
 
@@ -41,16 +42,16 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "app/mpr_slice.hpp" // app::makeBoxMesh
 #include "app/oit_scene.hpp"
 #include "app/sample_harness.hpp"
+#include "broker/app_context.hpp"
 #include "core/window.hpp"
 #include "data/mesh.hpp"
 #include "data/result.hpp"
 #include "io/mesh/obj_mesh_loader.hpp"
-#include "render/asset_registry.hpp"
-#include "render/linked_list_oit.hpp"
-#include "render/mesh_renderer.hpp"
 
 #ifndef RE_SOURCE_DIR
 #define RE_SOURCE_DIR "."
@@ -58,60 +59,77 @@
 
 namespace {
 
+namespace app = re::app;
+namespace broker = re::broker;
+namespace core = re::core;
+namespace data = re::data;
+namespace oit = re::app::oit_scene;
+namespace scene = re::scene;
+
 // The harness window size.
 constexpr int kWindowWidth = 800;
 constexpr int kWindowHeight = 600;
 // Default number of frames before the sample exits cleanly.
 constexpr int kDefaultFrames = 300;
 
-/// The OIT sample: owns the shared scene rig (meshes + materials + handles),
-/// the occlusion-capable view, and the injected LinkedListOIT pipeline, and
-/// composes one frame per renderFrame call.
-class OitSample final : public re::app::ISample {
+/// The OIT sample: owns the loaded bunny + the AppContext composition root and
+/// drives one bridged frame per renderFrame call.
+class OitSample final : public app::ISample {
    public:
-    explicit OitSample(re::data::Mesh bunny)
-        : registry_{std::make_shared<re::render::AssetRegistry>()},
-          rig_{registry_, std::move(bunny)},
-          renderer_{std::make_shared<re::render::MeshRenderer>(registry_)},
-          pipeline_{std::make_shared<re::render::LinkedListOIT>()},
-          view_{re::render::ViewRect{0, 0, kWindowWidth, kWindowHeight},
-                re::app::oit_scene::kClearColor} {
-        // Depth-enabled composition (T18 consumption): this view renders its
-        // opaque layer with the depth test ON into a target that physically
-        // owns a depth attachment, so the golden box and the bunny occlude
-        // each other correctly regardless of draw order.
-        view_.setDepthTest(true);
-        // One opaque layer item, added once (View items persist across
-        // frames; only rect/camera are refreshed per frame). The item
-        // co-owns the renderer (shared_ptr), so it can never outlive it.
-        view_.addItem(rig_.opaqueScene(), renderer_);
+    explicit OitSample(data::Mesh bunny)
+        : bunny_(std::make_shared<const data::Mesh>(std::move(bunny))),
+          // enableOIT wires the linked-list pipeline into the stack: the
+          // synchronizer routes alpha<1 mesh instances to the compositor's
+          // capture stage instead of inline layers. registerCameraMapper is
+          // OFF because this view's pixel contract is an ORTHOGRAPHIC 3D
+          // framing (no clip plane); CameraMapper's T4 validation would reject
+          // that pairing with a typed error even though the matrices are the
+          // pinned analytic ones.
+          ctx_(broker::AppContext::Params{.enableOIT = true,
+                                          .registerCameraMapper = false}) {
+        const data::Aabb& bunnyBounds = bunny_->bounds();
 
-        if (!rig_.handlesRegistered()) {
-            // Impossible in practice (registration fails only without a GL
-            // context); degrade gracefully with a loud log instead of
-            // crashing — the renderer skips unresolvable instances (SPEC §5).
-            spdlog::error("oit sample: failed to register scene meshes");
-        }
+        // Opaque layer values first (draw order within the pass), then the
+        // transparent set — the compositor captures them out-of-band anyway,
+        // but keeping store order aligned with the documented arrangement
+        // makes the scene readable.
+        ctx_.store().addMeshObject(makeBoxObject(oit::kGoldMin, oit::kGoldMax,
+                                                 oit::kGoldColor));
+        ctx_.store().addMeshObject(
+            makeBunnyObject(bunnyBounds));
+        ctx_.store().addMeshObject(makeBoxObject(oit::kNearGlassMin,
+                                                 oit::kNearGlassMax,
+                                                 oit::kNearGlassColor));
+        ctx_.store().addMeshObject(makeBoxObject(oit::kFarGlassMin,
+                                                 oit::kFarGlassMax,
+                                                 oit::kFarGlassColor));
+
+        view_.id = 1;
+        view_.rect = scene::Rect{0, 0, kWindowWidth, kWindowHeight};
+        view_.setClearColor(oit::kClearColor);
+        view_.setDepthTest(true);
+        // All four object ids (1..4): addMeshObject assigns sequential ids.
+        view_.setItemIds({1u, 2u, 3u, 4u});
     }
 
-    re::data::Result<void> renderFrame(int width, int height) override {
-        // A fresh draw-state context per frame: the context owns the
-        // dirty-flag cache + spy for the pass prologue and depth/blend
-        // transitions of THIS frame only, so no state decision can bleed
-        // from the previous frame (per-frame ownership beats a process-
-        // global cache — the 2026-08-23 architecture decision recorded as
-        // SPEC §11.6 EOL-5).
-        re::core::DrawContext ctx;
-        auto composed = re::app::oit_scene::composeFrame(
-            view_, *pipeline_, rig_, static_cast<std::uint32_t>(width),
-            static_cast<std::uint32_t>(height), ctx);
-        if (composed.failed()) {
-            return composed;
+    data::Result<void> renderFrame(int width, int height) override {
+        // Live aspect from the harness pixel size (the arrangement camera is
+        // aspect-corrected so no window shape stretches the scene).
+        const float aspect =
+            static_cast<float>(width) / static_cast<float>(height);
+        view_.mutateCamera(
+            [&](scene::Camera& c) { c = oit::cameraFor(aspect); });
+
+        views_ = {view_};
+        auto s = ctx_.bridge().sync(views_, ctx_.store());
+        if (s.failed()) {
+            return s;
         }
-        // Present the composed view target to the window's default
-        // framebuffer (1:1 GL_NEAREST blit — the view rect equals the window
-        // pixel size handed to us by the harness).
-        return view_.blitTo(nullptr);
+        auto r = ctx_.bridge().renderAll();
+        if (r.failed()) {
+            return r;
+        }
+        return ctx_.bridge().presentAll(nullptr);
     }
 
     const char* title() const override {
@@ -133,11 +151,32 @@ class OitSample final : public re::app::ISample {
     }
 
    private:
-    std::shared_ptr<re::render::AssetRegistry> registry_;
-    re::app::oit_scene::Rig rig_;
-    std::shared_ptr<re::render::MeshRenderer> renderer_;
-    std::shared_ptr<re::render::LinkedListOIT> pipeline_;
-    re::render::View view_;
+    /// A flat-shaded axis-aligned box MeshObject value (identity transform —
+    /// extents are baked into the mesh geometry).
+    static scene::MeshObject makeBoxObject(const glm::vec3& minCorner,
+                                           const glm::vec3& maxCorner,
+                                           const glm::vec4& color) {
+        scene::MeshObject obj;
+        obj.mesh = std::make_shared<const data::Mesh>(
+            app::makeBoxMesh(minCorner, maxCorner));
+        obj.transform = glm::mat4(1.0f);
+        obj.presentation.phong.baseColor = color;
+        return obj;
+    }
+
+    /// The bunny MeshObject value at its scaled/centered transform.
+    scene::MeshObject makeBunnyObject(const data::Aabb& bounds) {
+        scene::MeshObject obj;
+        obj.mesh = bunny_;
+        obj.transform = oit::bunnyModel(bounds);
+        obj.presentation.phong.baseColor = oit::kBunnyColor;
+        return obj;
+    }
+
+    std::shared_ptr<const data::Mesh> bunny_;
+    broker::AppContext ctx_;
+    scene::View view_{};
+    std::vector<scene::View> views_{};
 };
 
 } // namespace
@@ -152,15 +191,14 @@ int main() {
         return 1;
     }
 
-    auto windowResult = re::core::Window::create(kWindowWidth, kWindowHeight,
-                                                 "RenderEngine - OIT Sample");
+    auto windowResult = core::Window::create(kWindowWidth, kWindowHeight,
+                                             "RenderEngine - OIT Sample");
     if (windowResult.failed()) {
         spdlog::error("oit sample: {}", windowResult.error().message);
         return 1;
     }
 
-    auto sample =
-        std::make_unique<OitSample>(std::move(*meshResult));
-    re::app::SampleHarness harness(std::move(*windowResult), std::move(sample));
-    return harness.run(re::app::sampleMaxFrames(kDefaultFrames));
+    auto sample = std::make_unique<OitSample>(std::move(*meshResult));
+    app::SampleHarness harness(std::move(*windowResult), std::move(sample));
+    return harness.run(app::sampleMaxFrames(kDefaultFrames));
 }

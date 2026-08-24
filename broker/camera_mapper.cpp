@@ -1,29 +1,44 @@
 // broker/camera_mapper.cpp — CameraMapper implementation: map the app-side
-// scene::Camera onto render::Camera (view/proj/eye), with a generation-keyed
-// cache so an unchanged camera skips recomputation. The mapper also VALIDATES
+// scene::Camera onto render::Camera (view/proj/eye). The mapper also VALIDATES
 // the 2D/3D pairing: when the context carries a slice plane the projection
 // must be orthographic; with no plane it must be perspective — a mismatch is
-// a typed error, not silently wrong geometry.
+// a typed error, not silently wrong geometry. There is deliberately no
+// memoization behind mapCached right now (see the header comment: the old
+// single-slot gen-keyed entry collided across views).
 
 #include "broker/camera_mapper.hpp"
 
 #include "data/result.hpp"
 
 namespace re::broker {
+namespace {
+
+/// The shared 2D/3D pairing validation (plane present -> ortho). Returns the
+/// typed error for a mismatch, or success.
+data::Result<void> validateProjectionPairing(const scene::Camera& app,
+                                             const scene::TranslateContext& ctx) {
+    const bool hasPlane = ctx.hasPlane();
+    if (hasPlane && app.isPerspective()) {
+        return data::makeError<void>(
+            4, "2D view with plane requires orthographic camera (plane "
+               "present -> ortho)");
+    }
+    if (!hasPlane && app.isOrthographic()) {
+        return data::makeError<void>(
+            4, "3D view without plane requires perspective camera (no plane "
+               "-> perspective)");
+    }
+    return data::Result<void>(data::value);
+}
+
+} // namespace
 
 data::Result<render::Camera> CameraMapper::map(
     const scene::Camera& app, const scene::TranslateContext& ctx) const {
-    // 2D (plane present) must be orthographic, 3D (no plane) must be perspective.
-    const bool hasPlane = ctx.hasPlane();
-    const bool isOrtho = app.isOrthographic();
-    const bool isPersp = app.isPerspective();
-    if (hasPlane && isPersp) {
-        return data::makeError<render::Camera>(
-            4, "2D view with plane requires orthographic camera (plane present -> ortho)");
-    }
-    if (!hasPlane && isOrtho) {
-        return data::makeError<render::Camera>(
-            4, "3D view without plane requires perspective camera (no plane -> perspective)");
+    auto valid = validateProjectionPairing(app, ctx);
+    if (valid.failed()) {
+        return data::makeError<render::Camera>(valid.error().code,
+                                               valid.error().message);
     }
     render::Camera out;
     out.view = app.viewMatrix();
@@ -34,36 +49,21 @@ data::Result<render::Camera> CameraMapper::map(
 
 data::Result<render::Camera> CameraMapper::mapCached(
     const scene::Camera& app, const scene::TranslateContext& ctx) {
-    // Validate before cache probe — a cached valid result must never be
-    // returned for a mismatched 2D/3D context (plane present → ortho).
-    const bool hasPlane = ctx.hasPlane();
-    const bool isOrtho = app.isOrthographic();
-    const bool isPersp = app.isPerspective();
-    if (hasPlane && isPersp) {
-        return data::makeError<render::Camera>(
-            4, "2D view with plane requires orthographic camera (plane present -> ortho)");
+    // Validation first — a cache hit must never bypass the 2D/3D pairing
+    // check (T4 gate). No memo today: see the header comment (the former
+    // single-slot gen-keyed entry collided across views).
+    auto valid = validateProjectionPairing(app, ctx);
+    if (valid.failed()) {
+        return data::makeError<render::Camera>(valid.error().code,
+                                               valid.error().message);
     }
-    if (!hasPlane && isOrtho) {
-        return data::makeError<render::Camera>(
-            4, "3D view without plane requires perspective camera (no plane -> perspective)");
-    }
-    if (hasCache_ && lastViewGen_ == app.viewGen() && lastProjGen_ == app.projGen()) {
-        return data::makeValue<render::Camera>(cached_);
-    }
-    auto r = map(app, ctx);
-    if (r.ok()) {
-        cached_ = *r;
-        lastViewGen_ = app.viewGen();
-        lastProjGen_ = app.projGen();
-        hasCache_ = true;
-    }
-    return r;
+    render::Camera out;
+    out.view = app.viewMatrix();
+    out.proj = app.projMatrix();
+    out.position = app.eye();
+    return data::makeValue<render::Camera>(out);
 }
 
-void CameraMapper::invalidate(uint64_t /*id*/) {
-    hasCache_ = false;
-    lastViewGen_ = ~0ULL;
-    lastProjGen_ = ~0ULL;
-}
+void CameraMapper::invalidate(uint64_t /*id*/) {}
 
 } // namespace re::broker

@@ -103,6 +103,34 @@ broker/
 
 > **T3 landed (V3.2b):** `broker/` `STATIC` now owns `IMapper<AppT,ReT>` (pure) vs `ICachedMapper:IMapper` (cached `mapCached`+`invalidate`) ISP-split (`i_mapper.hpp` + alias `i_cached_mapper.hpp`), `Broker` registry keyed by `std::type_index(typeid(AppT))` (OCP — no enum switch) with `registerMapper<T>(unique_ptr<IMapper<T>>)` / `get<T>()`, and `IViewBridge{sync,renderAll,presentAll}` façade composing `ViewSynchronizer` (cache/dirty) + `ViewCompositor` (dispatch/present) SRP-split. One file per mapper (`camera_mapper.*`, `mesh_object_mapper.*`, `view_bridge.*` etc. — `ViewBridge` is coordinator not mapper). App never holds `IMapper`; only `IViewBridge` (DIP). `MeshObjectMapper` injects `AssetHandle` via `render::AssetRegistry` (same pointer dedup) and `AssetStore` skeleton provides generational `StaleHandle` code 2 for T3 gate. See gate test `t3_broker_test.cpp`.
 
+> **T20 landed (broker = the ONLY app path; complete mapper inventory):** the
+> review findings "sync silently drops volumes" and "the broker façade has
+> zero app consumers" are fixed together. Inventory completed: `PlaneMapper :
+> IMapper<scene::PlaneDesc, render::ClipPlane>` owns THE single voxel-index →
+> world plane conversion (`world = indexPlacement · ((p + ½) · spacing)`,
+> normal passes through as declared world-space; binding semantics:
+> `VolumeContext::volumeModel` on this path is the INDEX→world placement,
+> recoverable from a canonical unit-cube model via `indexPlacementFromModel`);
+> `plane_object_mapper.*` (renamed from `plane_mapper`) keeps the textured-
+> quad translation per the §11.3 inventory naming. New cached object mappers:
+> `MaterialMapper` (Phong presentation → canonical store-resident material,
+> value-deduped through `AssetRegistry::registerMaterial` — the §12 hand-off
+> that replaced the `material = nullptr` placeholder), `VolumeObjectMapper`
+> (REAL ray-cast layer), `VolumeSliceObjectMapper` + `MeshSliceObjectMapper`
+> (contextual: view-owned plane converted per item through the PlaneMapper
+> rule, cache keyed id+generation+plane). `ViewSynchronizer` now translates
+> every item id into a REAL renderer-bound layer via a broker-owned
+> `RenderStack`; unresolvable ids are typed error code 11 — placeholders are
+> structurally impossible (`grep -c Noop broker/ == 0`). Transparent mesh
+> instances route to `ViewCompositor`'s capture stage when the stack wires
+> LinkedListOIT (FR-render.2/3). The composition root is `broker::AppContext`
+> (`SceneStore` + full default inventory + stack + bridge); every capability
+> sample drives rendering exclusively through `IViewBridge`, no `render/`
+> include remains under `app/`, and the previously review-only ACL is now the
+> mechanical audit rule `acl_app_render`. Gate test `t20_broker_path_test.cpp`
+> (voxel z=35 → world z=35.5 exact; bridged Mesh/Volume/Plane layers match
+> direct-renderer oracles within 1/255, N≥3).
+
 ### 11.5 Build / ownership / guardrail
 
 - `scene/` links to `data`, `volume`, `glm` + `data/result`.

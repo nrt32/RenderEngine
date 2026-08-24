@@ -1,44 +1,40 @@
 // app/plane_sample.cpp — plane-capability sample: GPU-extracted volume planes
-// (FR-app.1 smoke; extends FR-render.5 with the extraction path).
+// (FR-app.1 smoke; extends FR-render.5 with the extraction path; T20 routed
+// through the broker façade).
 //
 // In this engine a "plane" semantically means a slice extracted from volume
 // data, so this sample demonstrates exactly that: it loads the committed CT
-// dataset (data/volumes/sample_ct.nrrd via io::loadNrrdVolume), uploads it ONCE
-// into the shared asset store as an R32F core::Texture3D, and renders two
-// GPU-EXTRACTED planes through render::VolumeSliceRenderer — no gradient quad,
-// no mesh, no CPU voxel loop anywhere in the file:
+// dataset (data/volumes/sample_ct.nrrd via io::loadNrrdVolume) and shows two
+// GPU-EXTRACTED planes as VolumeSliceObject scene values translated through
+// broker::VolumeSliceObjectMapper into render::VolumeSliceRenderer layers —
+// no gradient quad, no mesh, no CPU voxel loop anywhere in the file:
 //
 //   - left view  (axial):    the constant-Z plane through the middle voxel
-//     layer, displayed in the shared MPR display frame (app::sliceVolumeModel
-//     + app::makeSliceCamera over the free-axis extents), i.e. the exact view
-//     an MPR Transverse viewport shows;
+//     layer, expressed as a Space::VoxelIndex PlaneDesc on the VIEW (the
+//     broker contextual rule: the view owns the plane) and lifted to world by
+//     PlaneMapper's voxel-center convention (index + 0.5) against the object's
+//     display-frame model;
 //   - right view (oblique):  the same dataset cut by the diagonal plane
-//     x + z = 1 through the cube center, viewed orthographically along its
-//     normal — demonstrating that the extraction is fully general (the
-//     fragment shader intersects every pixel ray with the plane), not limited
-//     to axis-aligned slabs.
+//     x + z = 1 through the cube center (a World-space PlaneDesc), viewed
+//     orthographically along its normal — demonstrating that the extraction
+//     is fully general.
 //
-// Both views compose through one full-window split of render::View objects
-// (ReView per screen section owning ViewTarget + IRenderable list): each View
-// renders the VolumeSliceScene layer into its own FBO via
-// VolumeSliceRenderer::drawLayer and presents it with core::blit. A slice index
-// enters only through uniforms (the clip-plane point / model matrix), which is
-// what makes slice scrolling cheap — the MPR sample drives exactly this path
-// interactively.
+// Both views are scene::View values in one broker::AppContext composition
+// root; each frame drives the IViewBridge façade (sync → renderAll →
+// presentAll): each ReView renders its extraction layer into its own FBO and
+// presents it with core::blit. A slice index enters only through uniforms (the
+// clip-plane point / model matrix), which is what makes slice scrolling cheap
+// — the MPR sample drives exactly this path interactively.
 //
 // Bounded, clean exit contract: after RE_SAMPLE_MAX_FRAMES frames (default
-// 300) or a window close, the harness stops the loop, tears down ImGui/GL
-// cleanly and returns exit code 0 — any frame error returns 1 instead. This
-// shape is what lets the gate run the sample headlessly under Xvfb inside a
-// timeout and assert "exits cleanly, no sanitizer reports, window opened"
-// without a human watching it.
+// 300) or a window close, the harness stops the loop and returns exit code 0
+// (FR-app.1).
 //
 // (Capability acceptance: FR-app.1.)
 
 #include <spdlog/spdlog.h>
 
 #include <array>
-#include <cmath>
 #include <cstdlib>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -49,17 +45,14 @@
 #include <string>
 #include <utility>
 
-#include "app/mpr_camera.hpp"
 #include "app/mpr_slice.hpp"
 #include "app/sample_harness.hpp"
-#include "core/draw.hpp"
+#include "broker/app_context.hpp"
+#include "broker/slice_display.hpp"
 #include "core/window.hpp"
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
 #include "io/volume/nrrd_volume_loader.hpp"
-#include "render/types.hpp" // render::Camera / ClipPlane
-#include "render/view.hpp"
-#include "render/volume_slice_renderer.hpp"
 #include "volume/transfer_function.hpp"
 
 #ifndef RE_SOURCE_DIR
@@ -68,9 +61,11 @@
 
 namespace {
 
+namespace app = re::app;
+namespace broker = re::broker;
 namespace core = re::core;
 namespace data = re::data;
-namespace render = re::render;
+namespace scene = re::scene;
 namespace volume = re::volume;
 
 // The harness window size, split into two side-by-side views.
@@ -83,9 +78,8 @@ constexpr int kDefaultFrames = 300;
 
 /// A CT window/level transfer function over the sample_ct value range
 /// ([-3024, 2529]): air (low densities) transparent, soft tissue opaque and
-/// bright. Deterministic control points (exact-at-breakpoint piecewise-linear
-/// ramp); mirrors the ramp the volume and MPR samples use, so all three
-/// samples display consistent tissue colors.
+/// bright. Deterministic control points; mirrors the ramp the other samples
+/// use, so all samples display consistent tissue colors.
 volume::TransferFunction makeCtTransferFunction() {
     using CP = volume::TransferFunction::ControlPoint;
     return volume::TransferFunction(
@@ -96,66 +90,82 @@ volume::TransferFunction makeCtTransferFunction() {
          CP{2500.0f, volume::RgbaColor{1.00f, 1.00f, 1.00f, 1.00f}}});
 }
 
-/// The camera looking straight down the oblique plane's normal at the cube
-/// center: eye on +n at distance 3, square ortho window ±0.75 (the diagonal
-/// cross-section rectangle of the unit cube is √2 × 1, so half-extents of
-/// 0.75 horizontally and vertically cover it with margin in both directions).
-render::Camera makeObliqueCamera(const glm::vec3& center,
-                                 const glm::vec3& planeNormal) {
-    render::Camera camera;
-    camera.position = center + planeNormal * 3.0f;
-    camera.view =
-        glm::lookAt(camera.position, center, glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::ortho(-0.75f, 0.75f, -0.75f, 0.75f, 0.1f, 10.0f);
-    return camera;
-}
-
-/// The plane sample: owns the CT dataset + transfer function and shows two
-/// GPU-extracted planes through two ReViews.
-class PlaneSample final : public re::app::ISample {
+/// The plane sample: owns the CT dataset + transfer function + AppContext and
+/// shows two GPU-extracted planes through two bridged ReViews.
+class PlaneSample final : public app::ISample {
    public:
     PlaneSample(data::VolumeDataset dataset, volume::TransferFunction tf)
-        : dataset_(std::make_shared<data::VolumeDataset>(std::move(dataset))),
-          tf_(std::move(tf)) {
+        : dataset_(std::make_shared<const data::VolumeDataset>(std::move(dataset))),
+          tf_(std::move(tf)),
+          ctx_(broker::AppContext::Params{}) {
         // --- Left view: the axial (constant-Z) extraction -----------------
-        // Shared display scaffolding: the model maps the dataset's unit cube
-        // into the Transverse display frame (voxel-center index i -> display
-        // coordinate i + 0.5 on the free axes), the clip plane cuts the
-        // middle voxel layer (index sizeZ/2 -> display z = index + 0.5), and
-        // the orthographic camera spans the free-axis rectangle — the same
-        // three values an MPR Transverse view composes with.
+        // Shared display scaffolding: the slice object's transform maps the
+        // dataset's unit cube into the Transverse display frame (voxel-center
+        // index i -> display coordinate i + 0.5 on the free axes). The VIEW
+        // carries the extraction plane in VOXEL-INDEX space (constant Z,
+        // middle voxel layer); PlaneMapper lifts it to display z =
+        // index + 0.5 through the object's own transform — the same world
+        // plane the previous direct-render composition baked in by hand.
         const auto [freeW, freeH] =
-            re::app::sliceFreeAxes(*dataset_, re::app::MprAxis::Transverse);
-        const float midZ = static_cast<float>(dataset_->sizeZ() / 2u) + 0.5f;
+            app::sliceFreeAxes(*dataset_, app::MprAxis::Transverse);
 
-        render::VolumeSliceInstance axial;
-        axial.dataset = dataset_;
+        scene::VolumeSliceObject axial;
+        axial.volume = dataset_;
         axial.transferFunction = tf_;
-        axial.model =
-            re::app::sliceVolumeModel(*dataset_, re::app::MprAxis::Transverse);
-        axial.plane.normal = glm::vec3(0.0f, 0.0f, 1.0f);
-        axial.plane.point = glm::vec3(0.0f, 0.0f, midZ);
-        axialScene_.slices.push_back(axial);
-        axialCamera_ = re::app::makeSliceCamera(static_cast<float>(freeW),
-                                                static_cast<float>(freeH));
+        axial.transform =
+            app::sliceVolumeModel(*dataset_, app::MprAxis::Transverse);
+        const uint64_t axialId = ctx_.store().addVolumeSliceObject(std::move(axial));
+
+        views_[0].id = 1;
+        views_[0].rect = scene::Rect{0, 0, kViewWidth, kViewHeight};
+        views_[0].camera =
+            broker::makeSliceCamera(static_cast<float>(freeW),
+                                    static_cast<float>(freeH));
+        views_[0].setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        views_[0].setItemIds({axialId});
+
+        scene::PlaneDesc axialPlane;
+        axialPlane.setNormal(glm::vec3(0.0f, 0.0f, 1.0f));
+        axialPlane.setPoint(glm::vec3(0.0f, 0.0f, static_cast<float>(dataset_->sizeZ() / 2u)));
+        axialPlane.setSpace(scene::Space::VoxelIndex);
+        views_[0].setPlane(axialPlane);
 
         // --- Right view: the oblique extraction ---------------------------
-        // Identity model leaves the dataset's unit cube at [0,1]^3 in world
-        // space; the extraction plane is the cube's diagonal plane
-        // x + z = 1 through the center (normal normalize(1,0,1)), proving the
-        // path handles arbitrary orientations without any special casing.
-        render::VolumeSliceInstance oblique;
-        oblique.dataset = dataset_;
+        // Identity transform leaves the dataset's unit cube at [0,1]^3 in
+        // world space; the extraction plane is the cube's diagonal plane
+        // x + z = 1 through the center (normal normalize(1,0,1)), already
+        // World-space so it passes through the mapper unchanged.
+        scene::VolumeSliceObject oblique;
+        oblique.volume = dataset_;
         oblique.transferFunction = tf_;
-        oblique.model = glm::mat4(1.0f);
-        oblique.plane.normal = glm::normalize(glm::vec3(1.0f, 0.0f, 1.0f));
-        oblique.plane.point = glm::vec3(0.5f, 0.5f, 0.5f);
-        obliqueScene_.slices.push_back(oblique);
-        obliqueCamera_ =
-            makeObliqueCamera(oblique.plane.point, oblique.plane.normal);
+        oblique.transform = glm::mat4(1.0f);
+        const uint64_t obliqueId =
+            ctx_.store().addVolumeSliceObject(std::move(oblique));
+
+        const glm::vec3 obliqueNormal = glm::normalize(glm::vec3(1.0f, 0.0f, 1.0f));
+        const glm::vec3 obliquePoint(0.5f, 0.5f, 0.5f);
+
+        views_[1].id = 2;
+        views_[1].rect = scene::Rect{kViewWidth, 0, kViewWidth, kViewHeight};
+        // Camera looking straight down the oblique plane's normal at the cube
+        // center: eye on +n at distance 3, square ortho window ±0.75 (the
+        // diagonal cross-section rectangle of the unit cube is √2 × 1, so
+        // half-extents of 0.75 cover it with margin).
+        views_[1].camera = scene::Camera(obliquePoint + obliqueNormal * 3.0f,
+                                         obliquePoint,
+                                         glm::vec3(0.0f, 1.0f, 0.0f));
+        views_[1].camera.setOrtho(-0.75f, 0.75f, -0.75f, 0.75f, 0.1f, 10.0f);
+        views_[1].setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        views_[1].setItemIds({obliqueId});
+
+        scene::PlaneDesc obliquePlane;
+        obliquePlane.setNormal(obliqueNormal);
+        obliquePlane.setPoint(obliquePoint);
+        obliquePlane.setSpace(scene::Space::World);
+        views_[1].setPlane(obliquePlane);
     }
 
-    re::data::Result<void> renderFrame(int width, int height) override {
+    data::Result<void> renderFrame(int width, int height) override {
         // Clear the window behind the two-view split (a background, not a
         // viewport blend — the views are placed by the engine blit).
         core::bindDefaultFramebuffer();
@@ -163,32 +173,19 @@ class PlaneSample final : public re::app::ISample {
         core::setClearColor(0.02f, 0.02f, 0.03f, 1.0f);
         core::clearColor();
 
-        // Left rect: axial slice; right rect: oblique slice. Each ReView owns
-        // its ViewTarget and renders its extraction layer via drawLayer, then
-        // blits 1:1 into its window rect (rect sizes match the ViewTargets).
-        const std::array<render::ViewRect, 2> rects = {
-            render::ViewRect{0, 0, kViewWidth, kViewHeight},
-            render::ViewRect{kViewWidth, 0, kViewWidth, kViewHeight}};
-        const std::array<const render::VolumeSliceScene*, 2> scenes = {
-            &axialScene_, &obliqueScene_};
-        const std::array<render::Camera, 2> cameras = {axialCamera_,
-                                                       obliqueCamera_};
-
-        for (std::size_t i = 0u; i < 2u; ++i) {
-            render::View view(rects[i], glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-            view.setCamera(cameras[i]);
-            view.addItem(*scenes[i], sliceRenderer_);
-            core::DrawContext ctx;
-            auto rendered = view.renderWithEnsure(ctx);
-            if (rendered.failed()) {
-                return rendered;
-            }
-            auto blitted = view.blitTo(nullptr);
-            if (blitted.failed()) {
-                return blitted;
-            }
+        // The bridge path for BOTH views: after the first sync the poll
+        // early-out makes sync free, and renderAll/presentAll compose and
+        // present the two targets every frame.
+        frame_.assign(views_.begin(), views_.end());
+        auto s = ctx_.bridge().sync(frame_, ctx_.store());
+        if (s.failed()) {
+            return s;
         }
-        return re::data::Result<void>(re::data::value);
+        auto r = ctx_.bridge().renderAll();
+        if (r.failed()) {
+            return r;
+        }
+        return ctx_.bridge().presentAll(nullptr);
     }
 
     const char* title() const override {
@@ -202,40 +199,27 @@ class PlaneSample final : public re::app::ISample {
                "cached 3D texture where each pixel ray crosses the plane.\n"
                "Right: the oblique diagonal plane x + z = 1 through the same "
                "volume - extraction is fully general, no CPU slicing.\n"
+               "Both layers are mediated by broker::VolumeSliceObjectMapper "
+               "(the view owns the plane).\n"
                "Run the sample, then close the window (or set "
                "RE_SAMPLE_MAX_FRAMES) to exit.";
     }
 
    private:
-    std::shared_ptr<data::VolumeDataset> dataset_;
+    std::shared_ptr<const data::VolumeDataset> dataset_;
     volume::TransferFunction tf_; // immutable value; copied into instances
-
-    render::VolumeSliceScene axialScene_;
-    render::VolumeSliceScene obliqueScene_;
-    render::Camera axialCamera_{};
-    render::Camera obliqueCamera_{};
-
-    // The shared GPU asset store (unified multi-kind asset registry): one R32F
-    // Texture3D per distinct dataset content, co-owned by every renderer that
-    // resolves through it — the extraction here and any ray-cast elsewhere
-    // share a single upload. Declared before its renderer and injected as a
-    // shared_ptr copy, so member-init order can never dangle it.
-    std::shared_ptr<render::AssetRegistry> assets_{
-        std::make_shared<render::AssetRegistry>()};
-    // Shared renderer: the Views' IRenderable items co-own it via shared_ptr,
-    // so view and renderer lifetimes can never race at teardown.
-    std::shared_ptr<render::VolumeSliceRenderer> sliceRenderer_{
-        std::make_shared<render::VolumeSliceRenderer>(assets_)};
+    broker::AppContext ctx_;
+    std::array<scene::View, 2> views_{};
+    std::vector<scene::View> frame_{};
 };
 
 } // namespace
 
 int main() {
     // Load the committed CT volume before anything else: the extracted planes
-    // come from real scan data, not from procedural stand-ins. The dataset is
-    // a committed, licensed, checksum-pinned asset under data/volumes/, and
-    // loading it first means a missing or corrupt file fails fast with a
-    // typed error and exit code 1 — never half-initialized GL state.
+    // come from real scan data, not from procedural stand-ins. Loading first
+    // means a missing or corrupt file fails fast with a typed error and exit
+    // code 1 — never half-initialized GL state.
     const std::string volumePath =
         std::string(RE_SOURCE_DIR) + "/data/volumes/sample_ct.nrrd";
     auto volumeResult = re::io::loadNrrdVolume(volumePath);
@@ -254,6 +238,6 @@ int main() {
 
     auto sample = std::make_unique<PlaneSample>(std::move(*volumeResult),
                                                 makeCtTransferFunction());
-    re::app::SampleHarness harness(std::move(*windowResult), std::move(sample));
-    return harness.run(re::app::sampleMaxFrames(kDefaultFrames));
+    app::SampleHarness harness(std::move(*windowResult), std::move(sample));
+    return harness.run(app::sampleMaxFrames(kDefaultFrames));
 }

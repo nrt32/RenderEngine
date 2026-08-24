@@ -74,10 +74,16 @@ TEST(T6Persistence, CameraRotateKeepsReViewIdentity) {
     // plane nullopt = 3D
     view.plane = std::nullopt;
 
-    auto compositor = std::make_shared<broker::ViewCompositor>(broker);
-    broker::ViewSynchronizer sync(broker, compositor);
-    broker::ViewBridge bridge(std::make_shared<broker::ViewSynchronizer>(broker, compositor),
-                              std::make_shared<broker::ViewCompositor>(broker));
+    // The view carries item layers, so the bridge wiring needs a
+    // RenderStack: since T20 a synced item becomes a real type-erased layer
+    // whose drawLayer closure is bound to the matching technique renderer in
+    // the stack — placeholders that draw nothing cannot exist on this path,
+    // and a missing stack is a typed sync error rather than an empty view.
+    auto stack = broker::RenderStack::create(registry);
+    auto compositor = std::make_shared<broker::ViewCompositor>(broker, stack);
+    broker::ViewSynchronizer sync(broker, compositor, nullptr, stack);
+    broker::ViewBridge bridge(std::make_shared<broker::ViewSynchronizer>(broker, compositor, nullptr, stack),
+                              std::make_shared<broker::ViewCompositor>(broker, stack));
     // Use our sync/compositor for identity test to keep pointer stable
     // Do initial sync
     std::vector<scene::View> views = {view};
@@ -150,8 +156,13 @@ TEST(T6Persistence, Toggle2D3DKeepsIdentityNoChurn) {
     view.itemIds = {id1};
     EXPECT_TRUE(view.plane.has_value());
 
-    auto compositor = std::make_shared<broker::ViewCompositor>(broker);
-    broker::ViewSynchronizer sync(broker, compositor);
+    // Items present -> wire a RenderStack: item ids must translate into
+    // renderer-bound layers (a sync without a stack fails with a typed error
+    // instead of producing empty views), which is exactly what the toggle
+    // below exercises through mapCached hits.
+    auto stack = broker::RenderStack::create(registry);
+    auto compositor = std::make_shared<broker::ViewCompositor>(broker, stack);
+    broker::ViewSynchronizer sync(broker, compositor, nullptr, stack);
     std::vector<scene::View> views = {view};
     ASSERT_TRUE(sync.sync(views, sceneStore, 7).ok());
     render::View* rvBefore = compositor->getView(7, 42);

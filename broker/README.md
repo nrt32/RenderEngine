@@ -25,13 +25,27 @@ peer to `scene`/`render`/`core`). Owns no GL and no app rendering logic — only
 ## Per-type inventory (one file per mapper — `broker_per_type`)
 
 - `camera_mapper.*` — `ICachedMapper<scene::Camera, render::Camera>` (per-field viewGen/projGen)
-- `mesh_object_mapper.*` — `ICachedMapper<scene::MeshObject, render::MeshInstance>` (AssetHandle via AssetRegistry dedup)
-- `asset_store.*` — generational `BrokerAssetHandle` skeleton (T3: pointer dedup, typed `StaleHandle` code 2; T7: content-hash AssetId). CPU-side identity layer only — no GL, no core/. The GPU-side multi-kind store (mesh/volume/image, ref-counted, content-hash-deduped) is `render::AssetRegistry` since T14 (SPEC §7); broker mappers resolve handles through it.
-- `view_synchronizer.*` — polls `SceneStore::storeGeneration()` early-out + bounded `dirtyFieldsSince` (SRP: cache/dirty)
-- `view_compositor.*` — owns dispatch/present (SRP: ReView map)
+- `material_mapper.*` — `IMapper<scene::MeshMaterialDesc, shared_ptr<render::IMaterial>>` (Phong values → canonical store-resident materials; value-dedup via `AssetRegistry::registerMaterial`, the SPEC §12 hand-off that replaced the old `material = nullptr` placeholder)
+- `mesh_object_mapper.*` — `ICachedMapper<scene::MeshObject, render::MeshInstance>` (AssetHandle via AssetRegistry dedup; composes MaterialMapper for its presentation field)
+- `mesh_slice_object_mapper.*` — `ICachedMapper<scene::MeshSliceObject, render::SliceScene>` (contextual: the clip plane comes from the VIEW by value, converted through the one PlaneMapper rule; cache keyed id+generation+plane)
+- `volume_object_mapper.*` — `ICachedMapper<scene::VolumeObject, render::VolumeInstance>` (a REAL ray-cast layer; the fix for the "sync silently drops volumes" review finding)
+- `volume_slice_object_mapper.*` — `ICachedMapper<scene::VolumeSliceObject, render::VolumeSliceInstance>` (GPU plane extraction; converts the view's VoxelIndex plane against the OBJECT's own display-frame transform via `indexPlacementFromModel`)
+- `plane_mapper.*` — `IMapper<scene::PlaneDesc, render::ClipPlane>`: THE single voxel-index → world conversion (`world = indexPlacement · ((p + ½) · spacing)`; normal passes through — it is declared world-space). Typed errors when VoxelIndex is requested without a usable volume role. `indexPlacementFromModel` recovers the index-space placement from a canonical unit-cube model.
+- `plane_object_mapper.*` — `IMapper<scene::PlaneObject, render::PlaneInstance>` (textured quads; named `PlaneMapper` before T20 renamed it to match this inventory and free the name for the PlaneDesc rule above)
+- `contour_mapper.*` — `IMapper<scene::ContourObject, render::ContourObject>` (AssetHandle injection; World-space object planes pass through, VoxelIndex is a typed error there because a contour's plane is post-model by contract)
+- `asset_store.*` — generational `BrokerAssetHandle` skeleton (T3: pointer dedup, typed `StaleHandle` code 2; T7: content-hash AssetId). CPU-side identity layer only — no GL, no core/. The GPU-side multi-kind store (mesh/volume/image/material, ref-counted, content-hash-deduped) is `render::AssetRegistry` since T14 (SPEC §7); broker mappers resolve handles through it.
+- `render_stack.*` — the technique-renderer set (Mesh/Slice/Volume/VolumeSlice/Plane/Contour renderers over ONE AssetRegistry, optional LinkedListOIT). Not a mapper: the layers the synchronizer builds bind their drawLayer closures to these renderers.
+- `app_context.*` — the DIP composition root `{SceneStore, Broker(full default inventory), RenderStack, ViewBridge}`; the ONLY constructor call an app needs.
+- `slice_display.*` — slice-display camera factories returning `scene::Camera` values (`makeSliceCamera`, `make3dCamera`) plus `toRenderCamera` (the CameraMapper translation without cache/validation); formerly `app/mpr_camera.*`, moved here because they build RE-side types and app must not name them.
+- `view_synchronizer.*` — polls `SceneStore::storeGeneration()` early-out + bounded `dirtyFieldsSince` (SRP: cache/dirty); item ids translate into REAL renderer-bound layers — an unresolvable id is typed error code 11, never a silently skipped item
+- `view_compositor.*` — owns dispatch/present (SRP: ReView map); runs the OIT capture/composite stage after each view pass when transparent instances are pending
 - `view_bridge.*` — `IViewBridge` façade composing `ViewSynchronizer` + `ViewCompositor` (SRP via composition)
 
-App never holds an `IMapper`; only `IViewBridge` (DIP via `AppContext` composition root).
+App never holds an `IMapper`; only `IViewBridge` (DIP via the `AppContext`
+composition root). Since T20 this ACL is mechanically enforced:
+audit rule `acl_app_render` fails any `#include <render/…>` under `app/`
+(headers included) — every capability sample drives rendering exclusively
+through `AppContext` + `IViewBridge{sync, renderAll, presentAll}`.
 
 ## Build
 
@@ -41,7 +55,7 @@ App never holds an `IMapper`; only `IViewBridge` (DIP via `AppContext` compositi
 ## Ownership / guardrail
 
 - No raw `gl*` in `broker/` (audit `gpu_api_ownership`).
-- One `class *Mapper` per file (audit `broker_per_type`); `ViewBridge`/`ViewSynchronizer`/`ViewCompositor` are coordinators, not mappers.
+- One `class *Mapper` per file (audit `broker_per_type`); `ViewBridge`/`ViewSynchronizer`/`ViewCompositor`/`RenderStack` are coordinators, not mappers.
 - `ISP`: `IMapper` must not expose `mapCached` (`isp_mapper_forbid`).
-- `app → IViewBridge` only (audit `broker_app_reach`).
+- `app → IViewBridge` only (audit `broker_app_reach`); `app ↛ render/` includes enforced by `acl_app_render`.
 

@@ -101,8 +101,14 @@ asset_indirection	forbid_grep	data::Mesh::positions|data::VolumeDataset::voxels	
 
 # --- Broker app-reach rule (SPEC §11) ---------------------------------------
 # app/ must not hold a broker mapper handle directly (must go through ViewBridge).
-# Review-only until V3.2 ViewBridge lands.
 broker_app_reach	forbid_grep	broker.*IMapper|broker.*Mapper.*translate	app must not hold a broker mapper handle directly (use ViewBridge façade)
+
+# --- ACL: app never includes render/ (SPEC §3/§11, broker/README) -----------
+# The scene→render mediation is broker's monopoly: app expresses scenes as
+# scene/ values and drives the IViewBridge façade; render/ types enter app
+# source files only through broker headers. Enforced since T20 (all samples
+# routed through AppContext + IViewBridge; previously review-only).
+acl_app_render	forbid_inside	app|#include[[:space:]]*["<]render/	app must never include render/ directly (route through the IViewBridge façade; broker owns the scene-to-render mediation)
 
 # --- Ownership discipline (T13, user mandate 2026-08-23) ----------------------
 # No raw pointers where ownership/lifetime matters. scene/, broker/ and app/

@@ -53,6 +53,15 @@ uint64_t SceneStore::addPlaneObject(PlaneObject obj) {
     dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
     return id;
 }
+uint64_t SceneStore::addContourObject(ContourObject obj) {
+    uint64_t id = allocId();
+    obj.id = id;
+    obj.generation = storeGen_ + 1;
+    contourObjects_.emplace(id, std::move(obj));
+    ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
+    return id;
+}
 
 const MeshObject* /*borrow*/ SceneStore::getMeshObject(uint64_t id) const noexcept {
     auto it = meshObjects_.find(id);
@@ -74,6 +83,10 @@ const PlaneObject* /*borrow*/ SceneStore::getPlaneObject(uint64_t id) const noex
     auto it = planeObjects_.find(id);
     return it == planeObjects_.end() ? nullptr : &it->second;
 }
+const ContourObject* /*borrow*/ SceneStore::getContourObject(uint64_t id) const noexcept {
+    auto it = contourObjects_.find(id);
+    return it == contourObjects_.end() ? nullptr : &it->second;
+}
 MeshObject* /*borrow*/ SceneStore::getMeshObjectMut(uint64_t id) noexcept {
     auto it = meshObjects_.find(id);
     return it == meshObjects_.end() ? nullptr : &it->second;
@@ -81,6 +94,10 @@ MeshObject* /*borrow*/ SceneStore::getMeshObjectMut(uint64_t id) noexcept {
 VolumeObject* /*borrow*/ SceneStore::getVolumeObjectMut(uint64_t id) noexcept {
     auto it = volumeObjects_.find(id);
     return it == volumeObjects_.end() ? nullptr : &it->second;
+}
+ContourObject* /*borrow*/ SceneStore::getContourObjectMut(uint64_t id) noexcept {
+    auto it = contourObjects_.find(id);
+    return it == contourObjects_.end() ? nullptr : &it->second;
 }
 
 bool SceneStore::removeMeshObject(uint64_t id) noexcept {
@@ -120,6 +137,15 @@ bool SceneStore::removePlaneObject(uint64_t id) noexcept {
     if (it == planeObjects_.end()) return false;
     tombstoneGen_[id] = it->second.generation + 1;
     planeObjects_.erase(it);
+    ++storeGen_;
+    dirtyLog_.emplace_back(storeGen_, FieldId::Items);
+    return true;
+}
+bool SceneStore::removeContourObject(uint64_t id) noexcept {
+    auto it = contourObjects_.find(id);
+    if (it == contourObjects_.end()) return false;
+    tombstoneGen_[id] = it->second.generation + 1;
+    contourObjects_.erase(it);
     ++storeGen_;
     dirtyLog_.emplace_back(storeGen_, FieldId::Items);
     return true;

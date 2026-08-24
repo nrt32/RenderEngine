@@ -8,6 +8,24 @@
 // bounded dirtyFieldsSince() scan, markDirty() push opt-in. Owns no ReView
 // lifetime (that's ViewCompositor); but updates ReViews in place via
 // ViewCompositor pointer (SRP split per §11.3.1).
+//
+// Item translation produces REAL layers (the "no silent drops" contract): a
+// matched scene object maps through its registered per-type mapper into an RE
+// value which is wrapped as a live type-erased drawLayer bound to the matching
+// RenderStack renderer — MeshObject→MeshRenderer, VolumeObject→
+// VolumeRenderer (a working ray-cast layer, never a no-op), VolumeSliceObject→
+// VolumeSliceRenderer (GPU extraction), MeshSliceObject→SliceRenderer,
+// PlaneObject→PlaneRenderer, ContourObject→ContourRenderer. An item id that
+// resolves to NOTHING in the store is a typed error — a silently skipped item
+// is visually indistinguishable from "renders nothing", the exact defect this
+// replaced. Transparent mesh instances ride out-of-band when the stack carries
+// an OIT pipeline: they go to the compositor's capture stage instead of inline
+// layers (FR-render.2/3), because View layers never engage the pipeline.
+//
+/// Ownership (T13): `broker`, `stack` and `executor` are SHARED references
+/// (co-owned — wiring can never dangle); the compositor back-pointer is a
+/// WEAK observer (the compositor is owned by the ViewBridge that wires both
+/// sides), locked per sync and treated as absent when expired.
 
 #include <memory>
 #include <span>
@@ -17,10 +35,15 @@
 
 #include "broker/broker.hpp"
 #include "broker/idirty_tracker.hpp"
+#include "broker/render_stack.hpp"
 #include "data/result.hpp"
 #include "scene/composite_key.hpp"
 #include "scene/store.hpp"
 #include "scene/view.hpp"
+
+namespace re::render {
+class View; // forward: item layers are attached to a render::View
+}
 
 namespace re::broker {
 
@@ -39,19 +62,16 @@ class ViewCompositor; // forward
 /// for the dirty field only (Camera::rotate dirties only CameraMapper).
 /// ReView identity by CompositeKey{Version,LayoutId,ViewId} stable — no map churn
 /// on 2D→3D toggle or camera orbit; size resize recreates only ViewTarget inner FBO.
-///
-/// Ownership (T13): `broker` and `executor` are SHARED references (co-owned —
-/// wiring can never dangle); the compositor back-pointer is a WEAK observer
-/// (the compositor is owned by the ViewBridge that wires both sides), locked
-/// per sync and treated as absent when expired.
 class ViewSynchronizer : public IDirtyTracker {
     public:
      explicit ViewSynchronizer(std::shared_ptr<Broker> broker,
                                std::shared_ptr<ViewCompositor> compositor = nullptr,
-                               std::shared_ptr<IJobExecutor> executor = nullptr)
+                               std::shared_ptr<IJobExecutor> executor = nullptr,
+                               std::shared_ptr<RenderStack> stack = nullptr)
           : broker_(std::move(broker)), compositor_(std::move(compositor)),
             executor_(executor ? std::move(executor)
-                               : std::make_shared<InlineJobExecutor>()) {}
+                               : std::make_shared<InlineJobExecutor>()),
+            stack_(std::move(stack)) {}
 
      /// Primary sync: views + sceneStore, optional layoutId (default 0 for single-layout).
      /// @note lifetime: `views`/`scene` are call-scoped borrows consumed
@@ -101,12 +121,34 @@ class ViewSynchronizer : public IDirtyTracker {
 
      bool hasPushDirty(uint64_t viewId, scene::FieldId field) const noexcept;
 
+     /// Translate ONE item id into a live layer on `rv`. Dispatches through
+     /// the registered per-type mapper + the matching RenderStack renderer;
+     /// returns a typed error for unknown ids (never a silent skip).
+     /// Transparent mesh instances are appended to `transparentOut` instead of
+     /// becoming inline layers when the stack carries an OIT pipeline.
+     /// @note lifetime: `rv` is a non-owning view over the compositor's
+     /// views_ storage (the ReView this layer attaches to); it is consumed
+     /// synchronously within this call and never retained.
+     data::Result<void> mapItemToLayer(
+         const scene::View& av, const scene::SceneStore& scene,
+         uint64_t oid, render::View* /*borrow*/ rv,
+         std::vector<render::MeshInstance>& transparentOut);
+
+     /// Shared_ptr alias used inside mapItemToLayer (reads better than the
+     /// raw member type there).
      std::shared_ptr<Broker> broker_;
      /// Weak OBSERVER of the dispatch/present side (owned by the wiring
      /// ViewBridge). Locked per sync; expired == no compositor wired.
      std::weak_ptr<ViewCompositor> compositor_;
      std::shared_ptr<IJobExecutor> executor_;
+     /// The technique-renderer set layers bind to (see header comment).
+     std::shared_ptr<RenderStack> stack_;
      uint64_t lastStoreGen_{0};
+     /// Raw scene-store generation observed at the last completed sync — the
+     /// baseline the next sync's conservative item-affecting dirty scan runs
+     /// against (object mutations bump the STORE even though the VIEW gens
+     /// stand still, so item content changes must re-translate).
+     uint64_t lastSceneStoreGen_{0};
      std::unordered_map<StableKey, ViewCache, StableKeyHash> caches_{};
      std::unordered_map<uint64_t, std::vector<scene::FieldId>> pushDirties_{};
      // Last computed scene dirty set for storeGeneration poll

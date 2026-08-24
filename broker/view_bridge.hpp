@@ -12,6 +12,7 @@
 
 #include "broker/broker.hpp"
 #include "broker/i_view_bridge.hpp"
+#include "broker/render_stack.hpp"
 #include "broker/view_compositor.hpp"
 #include "broker/view_synchronizer.hpp"
 #include "core/framebuffer.hpp"
@@ -31,7 +32,9 @@ namespace re::broker {
 /// collaborators (`shared_ptr` handles — the shared control block exists so
 /// the synchronizer can hold a real `weak_ptr` OBSERVER of its compositor,
 /// the textbook mutual-back-pointer fix). No other component may retain these
-/// handles: the bridge is the composition root.
+/// handles: the bridge is the composition root. The optional RenderStack is a
+/// SHARED co-owned wiring (both collaborators see the same renderer set —
+/// without it item layers cannot be built and sync reports a typed error).
 class ViewBridge : public IViewBridge {
    public:
     /// Construct with explicit synchronizer/compositor (SRP injection). The
@@ -50,6 +53,16 @@ class ViewBridge : public IViewBridge {
         : sync_(std::make_unique<ViewSynchronizer>(broker)),
           comp_(std::make_unique<ViewCompositor>(std::move(broker))) {
         sync_->setCompositor(comp_);
+    }
+
+    /// Full wiring: Broker + RenderStack (the composition-root form used by
+    /// AppContext). Both collaborators share the stack.
+    static std::shared_ptr<ViewBridge> create(
+        std::shared_ptr<Broker> broker, std::shared_ptr<RenderStack> stack) {
+        auto comp = std::make_shared<ViewCompositor>(broker, stack);
+        auto sync = std::make_shared<ViewSynchronizer>(broker, comp,
+                                                       nullptr, stack);
+        return std::make_shared<ViewBridge>(std::move(sync), std::move(comp));
     }
 
     data::Result<void> sync(std::span<const scene::View> views,

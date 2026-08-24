@@ -81,7 +81,9 @@
 #include <glm/glm.hpp>
 #include <glm/vec4.hpp>
 
+#include "app/mpr_slice.hpp" // app::makeBoxMesh (the flat-shaded box builder)
 #include "app/oit_scene.hpp"
+#include "broker/slice_display.hpp"
 #include "core/framebuffer.hpp"
 #include "core/gl_error.hpp"
 #include "core/texture2d.hpp"
@@ -207,6 +209,169 @@ RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
     return RenderedTarget{std::move(*color), std::move(*framebuffer)};
 }
 
+// ---------------------------------------------------------------------------
+// Test-local DIRECT-render rig — the render-typed twin of the sample's scene
+// values. Since T20 the shared app/oit_scene.hpp is pure data (app/ must not
+// name render/ types), so the gate assembles the SAME analytic constants into
+// MeshScenes here and drives the direct renderer/pipeline path; the OIT sample
+// builds the identical arrangement through the broker bridge. One registry,
+// one handle per CPU mesh, opaque + transparent layers split exactly as
+// documented in app/oit_scene.hpp.
+// ---------------------------------------------------------------------------
+struct Rig {
+    std::shared_ptr<render::AssetRegistry> registry;
+    data::Mesh gold_;
+    data::Mesh nearGlass_;
+    data::Mesh farGlass_;
+    data::Mesh bunny_;
+    std::shared_ptr<render::PhongMaterial> goldMaterial_;
+    std::shared_ptr<render::PhongMaterial> nearGlassMaterial_;
+    std::shared_ptr<render::PhongMaterial> farGlassMaterial_;
+    std::shared_ptr<render::PhongMaterial> bunnyMaterial_;
+    render::AssetHandle goldHandle_{};
+    render::AssetHandle nearGlassHandle_{};
+    render::AssetHandle farGlassHandle_{};
+    render::AssetHandle bunnyHandle_{};
+    glm::mat4 bunnyModel_{1.0f};
+    render::MeshScene opaqueScene_{};
+    render::MeshScene transparentScene_{};
+    render::MeshScene fullScene_{};
+
+    explicit Rig(std::shared_ptr<render::AssetRegistry> reg,
+                 data::Mesh bunnyMesh)
+        : registry(std::move(reg)),
+          gold_(app::makeBoxMesh(oit_scene::kGoldMin, oit_scene::kGoldMax)),
+          nearGlass_(app::makeBoxMesh(oit_scene::kNearGlassMin,
+                                      oit_scene::kNearGlassMax)),
+          farGlass_(app::makeBoxMesh(oit_scene::kFarGlassMin,
+                                     oit_scene::kFarGlassMax)),
+          bunny_(std::move(bunnyMesh)),
+          goldMaterial_(
+              std::make_shared<render::PhongMaterial>(oit_scene::kGoldColor)),
+          nearGlassMaterial_(std::make_shared<render::PhongMaterial>(
+              oit_scene::kNearGlassColor)),
+          farGlassMaterial_(std::make_shared<render::PhongMaterial>(
+              oit_scene::kFarGlassColor)),
+          bunnyMaterial_(
+              std::make_shared<render::PhongMaterial>(oit_scene::kBunnyColor)) {
+        goldHandle_ = registerOr(gold_);
+        nearGlassHandle_ = registerOr(nearGlass_);
+        farGlassHandle_ = registerOr(farGlass_);
+        bunnyHandle_ = registerOr(bunny_);
+
+        // Identical transform math to the sample side (shared pure helper).
+        bunnyModel_ = oit_scene::bunnyModel(bunny_.bounds());
+
+        opaqueScene_.meshes.push_back(
+            render::MeshInstance{goldHandle_, goldMaterial_, glm::mat4(1.0f)});
+        opaqueScene_.meshes.push_back(
+            render::MeshInstance{bunnyHandle_, bunnyMaterial_, bunnyModel_});
+
+        transparentScene_.meshes.push_back(render::MeshInstance{
+            nearGlassHandle_, nearGlassMaterial_, glm::mat4(1.0f)});
+        transparentScene_.meshes.push_back(render::MeshInstance{
+            farGlassHandle_, farGlassMaterial_, glm::mat4(1.0f)});
+
+        fullScene_.meshes = opaqueScene_.meshes;
+        fullScene_.meshes.insert(fullScene_.meshes.end(),
+                                 transparentScene_.meshes.begin(),
+                                 transparentScene_.meshes.end());
+    }
+
+    [[nodiscard]] bool handlesRegistered() const {
+        return !goldHandle_.isNull() && !nearGlassHandle_.isNull() &&
+               !farGlassHandle_.isNull() && !bunnyHandle_.isNull();
+    }
+    [[nodiscard]] const render::MeshScene& opaqueScene() const {
+        return opaqueScene_;
+    }
+    [[nodiscard]] const render::MeshScene& transparentScene() const {
+        return transparentScene_;
+    }
+    [[nodiscard]] const render::MeshScene& fullScene() const {
+        return fullScene_;
+    }
+
+    /// Ortho camera framing the arrangement (eye on +Z looking down -Z,
+    /// horizontal extent grown to the aspect ratio) — the render::Camera form
+    /// of oit_scene::cameraFor.
+    [[nodiscard]] render::Camera cameraFor(float aspect) const {
+        render::Camera camera;
+        camera.position = oit_scene::kEye;
+        camera.view = glm::lookAt(
+            oit_scene::kEye, glm::vec3(0.0f, 0.0f, 0.0f),
+            glm::vec3(0.0f, 1.0f, 0.0f));
+        camera.proj =
+            glm::ortho(-aspect, aspect, -1.0f, 1.0f, oit_scene::kNearPlane,
+                       oit_scene::kFarPlane);
+        return camera;
+    }
+
+   private:
+    render::AssetHandle registerOr(const data::Mesh& mesh) {
+        const auto registered = registry->registerAsset(mesh);
+        if (registered.failed()) {
+            return render::AssetHandle{};
+        }
+        return *registered;
+    }
+};
+
+/// The per-frame DIRECT composition both probe tests run (the direct-render
+/// oracle twin of ViewCompositor's capture stage): depth-enabled opaque pass
+/// through the view, then depth-off capture + composite through the pipeline
+/// into the same target.
+data::Result<void> composeFrame(render::View& view,
+                                render::ITransparencyPipeline& pipeline,
+                                const Rig& rig, std::uint32_t width,
+                                std::uint32_t height,
+                                core::DrawContext& ctx) {
+    const render::Camera camera =
+        rig.cameraFor(static_cast<float>(width) / static_cast<float>(height));
+    view.setRect(render::ViewRect{0, 0, static_cast<int>(width),
+                                  static_cast<int>(height)});
+    view.setCamera(camera);
+
+    // Stage 1: opaque pass into the depth-enabled target (occlusion-capable).
+    const auto rendered = view.renderWithEnsure(ctx);
+    if (rendered.failed()) {
+        return rendered;
+    }
+
+    // Stage 2: hand the depth state back to the pipeline configuration
+    // (depth OFF during capture AND composite) through the same ctx.
+    ctx.disableDepthTest();
+
+    render::RenderTarget target;
+    target.framebuffer = &view.target()->framebuffer();
+    target.width = width;
+    target.height = height;
+    target.clearColor = oit_scene::kClearColor;
+
+    // Stage 3: capture + depth-sorted composite over the opaque result.
+    const auto begun = pipeline.begin(camera, target);
+    if (begun.failed()) {
+        return begun;
+    }
+    for (const render::MeshInstance& instance :
+         rig.transparentScene().meshes) {
+        auto geometry = resolveMeshGeometry(rig.registry, instance.mesh,
+                                            "oit_scene");
+        if (geometry.failed()) {
+            return data::makeError<void>(geometry.error().code,
+                                         geometry.error().message);
+        }
+        render::MeshGeometry& geometryRef = **geometry;
+        const auto captured = pipeline.drawTransparent(
+            geometryRef, instance.material->baseColor(), instance.model,
+            camera);
+        if (captured.failed()) {
+            return captured;
+        }
+    }
+    return pipeline.end(camera, target);
+}
+
 std::string readFile(const std::filesystem::path& p) {
     std::ifstream in(p);
     if (!in) {
@@ -239,7 +404,7 @@ TEST(T19OitSample, CompositeProbesMatchAnalyticChain) {
         std::string(TEST_SOURCE_DIR) + "/data/meshes/bunny.obj");
     ASSERT_TRUE(bunnyResult.ok()) << bunnyResult.error().message;
 
-    oit_scene::Rig rig(registry, std::move(*bunnyResult));
+    Rig rig(registry, std::move(*bunnyResult));
     ASSERT_TRUE(rig.handlesRegistered());
 
     auto renderer = std::make_shared<render::MeshRenderer>(registry);
@@ -256,7 +421,7 @@ TEST(T19OitSample, CompositeProbesMatchAnalyticChain) {
 
     for (int frame = 1; frame <= 2; ++frame) {
         core::DrawContext ctx;
-        auto composed = oit_scene::composeFrame(view, *pipeline, rig,
+        auto composed = composeFrame(view, *pipeline, rig,
                                                 kTargetWidth, kTargetHeight,
                                                 ctx);
         ASSERT_TRUE(composed.ok()) << composed.error().message;
@@ -312,7 +477,7 @@ TEST(T19OitSample, PipelineSpyEngagesExactlyForTransparentSet) {
         std::string(TEST_SOURCE_DIR) + "/data/meshes/bunny.obj");
     ASSERT_TRUE(bunnyResult.ok()) << bunnyResult.error().message;
 
-    oit_scene::Rig rig(registry, std::move(*bunnyResult));
+    Rig rig(registry, std::move(*bunnyResult));
     ASSERT_TRUE(rig.handlesRegistered());
     const render::Camera camera = rig.cameraFor(1.0f);
 
@@ -364,7 +529,7 @@ TEST(T19OitSample, PipelineSpyEngagesExactlyForTransparentSet) {
 
         EXPECT_EQ(spy->beginCount(), 1) << "pipeline engaged for the frame";
         EXPECT_EQ(spy->drawTransparentCount(),
-                  static_cast<int>(oit_scene::Rig::kTransparentCount))
+                  static_cast<int>(oit_scene::kTransparentCount))
             << "one capture per transparent mesh";
         EXPECT_EQ(spy->endCount(), 1);
         EXPECT_FALSE(spy->isEngaged()) << "frame finished";

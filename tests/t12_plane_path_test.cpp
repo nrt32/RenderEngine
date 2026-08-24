@@ -52,9 +52,11 @@
 #include <utility>
 #include <vector>
 
-#include "app/mpr_camera.hpp"
+#include "app/mpr_slice.hpp" // makeSliceImage oracle + makeSliceModel display frame
+#include "broker/slice_display.hpp"
 #include "broker/broker.hpp"
 #include "broker/plane_mapper.hpp"
+#include "broker/plane_object_mapper.hpp"
 #include "core/framebuffer.hpp"
 #include "core/gl_error.hpp"
 #include "data/image.hpp"
@@ -69,6 +71,7 @@
 namespace re::tests {
 namespace {
 
+namespace app = re::app;
 namespace broker = re::broker;
 namespace core = re::core;
 namespace data = re::data;
@@ -142,7 +145,9 @@ std::string readFile(const std::filesystem::path& p) {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// (1) broker::PlaneMapper — pure translation to the shared unit quad.
+// (1) broker::PlaneObjectMapper (named PlaneMapper before T20 renamed it to
+//     match SPEC §11.3 and free the name for the PlaneDesc->ClipPlane rule) —
+//     pure translation to the shared unit quad.
 // ---------------------------------------------------------------------------
 
 TEST(T12PlanePath, PlaneMapperTranslatesSceneToRender) {
@@ -155,7 +160,7 @@ TEST(T12PlanePath, PlaneMapperTranslatesSceneToRender) {
     plane.transform = glm::translate(glm::mat4(1.0f),
                                      glm::vec3(1.0f, 2.0f, 3.0f));
 
-    broker::PlaneMapper mapper;
+    broker::PlaneObjectMapper mapper;
     auto mapped = mapper.map(plane, scene::TranslateContext{});
     ASSERT_TRUE(mapped.ok()) << mapped.error().message;
 
@@ -206,7 +211,7 @@ TEST(T12PlanePath, PlaneMapperTranslatesSceneToRender) {
 
 TEST(T12PlanePath, BrokerRegistryRoutesPlaneObjectsThroughIMapper) {
     broker::Broker broker_;
-    broker_.registerMapper(std::make_unique<broker::PlaneMapper>());
+    broker_.registerMapper(std::make_unique<broker::PlaneObjectMapper>());
 
     // Composition-root route: fetch by (AppT, ReT) as the type-erased
     // interface — app never holds a concrete mapper handle.
@@ -238,7 +243,7 @@ TEST(T12PlanePath, CenterAndCornerPixelsMatchTextureThroughReViewAndBroker) {
     auto image = std::make_shared<data::Image>(makeGradientImage());
 
     broker::Broker broker_;
-    broker_.registerMapper(std::make_unique<broker::PlaneMapper>());
+    broker_.registerMapper(std::make_unique<broker::PlaneObjectMapper>());
     auto* mapper = broker_.get<scene::PlaneObject, render::PlaneInstance>();
 
     scene::PlaneObject plane;
@@ -335,7 +340,7 @@ TEST(T12PlanePath, MprSliceLayerThroughPlaneMapperDisplaysSliceBytes) {
 
     // Scene-side object exactly as the MPR sample builds it: {asset ref,
     // transform} where the transform scales the shared quad onto the image's
-    // pixel rectangle (shared scaffolding, app/mpr_camera.hpp).
+    // pixel rectangle; camera via broker/slice_display.hpp).
     scene::PlaneObject appPlane;
     // Shared-reference ownership: the object stores its asset as a
     // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
@@ -344,7 +349,7 @@ TEST(T12PlanePath, MprSliceLayerThroughPlaneMapperDisplaysSliceBytes) {
     appPlane.transform = app::makeSliceModel(*sliceImage);
 
     broker::Broker broker_;
-    broker_.registerMapper(std::make_unique<broker::PlaneMapper>());
+    broker_.registerMapper(std::make_unique<broker::PlaneObjectMapper>());
     auto* mapper = broker_.get<scene::PlaneObject, render::PlaneInstance>();
     ASSERT_NE(mapper, nullptr);
     auto mapped = mapper->map(appPlane, scene::TranslateContext{});
@@ -357,7 +362,11 @@ TEST(T12PlanePath, MprSliceLayerThroughPlaneMapperDisplaysSliceBytes) {
                                        static_cast<int>(kTargetWidth),
                                        static_cast<int>(kTargetHeight)},
                       glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-    view.setCamera(app::makeSliceCamera(*sliceImage));
+    // The display factory now yields a scene::Camera value (broker
+    // slice_display); convert to the draw-time RE camera for the
+    // direct View call — same matrices CameraMapper produces.
+    view.setCamera(broker::toRenderCamera(
+        broker::makeSliceCamera(*sliceImage)));
     auto sliceRenderer = std::make_shared<render::PlaneRenderer>();
     view.addItem(sliceScene, sliceRenderer);
 

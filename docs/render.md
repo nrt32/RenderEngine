@@ -910,7 +910,7 @@ it is not an app-side quad path).
 
 ```
 scene::PlaneObject{shared image asset ref, transform, presentation} (app/scene)
-  └─ broker::PlaneMapper : IMapper<scene::PlaneObject, render::PlaneInstance>
+  └─ broker::PlaneObjectMapper : IMapper<scene::PlaneObject, render::PlaneInstance>
        binds its ONE program-duration shared unit quad as geometry
      = render::PlaneInstance{shared quad, shared image, model}
         └─ render::View::addItem(PlaneScene, &PlaneRenderer)
@@ -921,7 +921,7 @@ scene::PlaneObject{shared image asset ref, transform, presentation} (app/scene)
                 exact when target size == rect size)
 ```
 
-`broker::PlaneMapper` is a pure translator (ISP `IMapper`, no cache — texture
+`broker::PlaneObjectMapper` is a pure translator (ISP `IMapper`, no cache — texture
 dedup lives in the shared asset store, SPEC §7 T14): it carries image +
 transform across and binds the shared analytic unit quad; `presentation`
 deliberately has no RE counterpart because the textured-plane path is an
@@ -944,9 +944,9 @@ Public scene structs (defined in `plane_renderer.hpp`):
 
 | Type | Purpose |
 |---|---|
-| `PlaneGeometry` | four world-space corners + per-corner UVs + an analytic unit normal. `unitQuadXY()` builds the unit XY square `[-1,1]^2` at z=0 with normal `(0,0,1)` and the UV binding `(0,0)`@c0 … `(1,1)`@c2. A `render/`-internal detail since V3.4b: callers receive it only through `broker::PlaneMapper`. |
-| `PlaneInstance` | a `PlaneGeometry` (shared with the mapper's static unit quad), the `data::Image` to texture it with (shared with the scene object's asset — T13 co-ownership), and a model matrix. Produced by `broker::PlaneMapper`. |
-| `PlaneScene` | a vector of `PlaneInstance`s (CPU-side; built by mapping `scene::PlaneObject`s through `broker::PlaneMapper`). |
+| `PlaneGeometry` | four world-space corners + per-corner UVs + an analytic unit normal. `unitQuadXY()` builds the unit XY square `[-1,1]^2` at z=0 with normal `(0,0,1)` and the UV binding `(0,0)`@c0 … `(1,1)`@c2. A `render/`-internal detail since V3.4b: callers receive it only through `broker::PlaneObjectMapper`. |
+| `PlaneInstance` | a `PlaneGeometry` (shared with the mapper's static unit quad), the `data::Image` to texture it with (shared with the scene object's asset — T13 co-ownership), and a model matrix. Produced by `broker::PlaneObjectMapper`. |
+| `PlaneScene` | a vector of `PlaneInstance`s (CPU-side; built by mapping `scene::PlaneObject`s through `broker::PlaneObjectMapper`). |
 
 `PlaneRenderer::render(scene, camera, target)`:
 
@@ -1004,8 +1004,8 @@ viewport pixel `(px,py)` (py=0 is the bottom) samples image pixel
 | 90° Z rotation, bottom-left pixel | `G == 0` (±1) | `(x,y)→(-y,x)`: viewport `(-1,-1)` is local corner3 = UV `(0,1)` → image `(0,0)` = `(0,0,128)` (was `G=252` unrotated) |
 | Same image through ReView + Broker (T12 gate): center `(32,32)` | `{128,124,128,255}` (±1) | identical constants — the broker route maps to the same unit quad + model; `drawLayer` inside a `View` changes only who binds/clears the FBO, not the sampled texel |
 | T12 gate: four corners via ReView + Broker | BL `{0,252,…}`, BR `{252,252,…}`, TL `{0,0,…}`, TR `{252,0,…}` B=`128`, A=`255` (±1) | corner probes pin the row-flip orientation through the composed path |
-| MPR slice layer via PlaneMapper (`makeSliceModel`+`makeSliceCamera`) | solid bytes at center + all four corners (±1) | ortho `[0,img]²` ↔ viewport 1:1, quad covers the viewport edge-to-edge |
-| `broker::PlaneMapper` null-image map | typed error code 1 | SPEC §5: no exceptions, no silently-empty instance |
+| MPR slice layer via PlaneObjectMapper (`makeSliceModel`+`makeSliceCamera`) | solid bytes at center + all four corners (±1) | ortho `[0,img]²` ↔ viewport 1:1, quad covers the viewport edge-to-edge |
+| `broker::PlaneObjectMapper` null-image map | typed error code 1 | SPEC §5: no exceptions, no silently-empty instance |
 | Shared unit quad across mappings | one geometry pointer | mapper owns exactly one program-duration static `PlaneGeometry`; instances co-own a reference (T13 shared ownership) |
 
 ### `VolumeRenderer` (`render/volume_renderer.hpp`, `.cpp`) — T9

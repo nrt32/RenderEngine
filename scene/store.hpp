@@ -48,6 +48,7 @@ class SceneStore {
     uint64_t addVolumeObject(VolumeObject obj);
     uint64_t addVolumeSliceObject(VolumeSliceObject obj);
     uint64_t addPlaneObject(PlaneObject obj);
+    uint64_t addContourObject(ContourObject obj);
 
     /// Getters — borrow into the store's OWNED storage. Nullptr if
     /// not found or generation mismatch (stale handle is nullptr).
@@ -61,6 +62,7 @@ class SceneStore {
     const VolumeObject* /*borrow*/ getVolumeObject(uint64_t id) const noexcept;
     const VolumeSliceObject* /*borrow*/ getVolumeSliceObject(uint64_t id) const noexcept;
     const PlaneObject* /*borrow*/ getPlaneObject(uint64_t id) const noexcept;
+    const ContourObject* /*borrow*/ getContourObject(uint64_t id) const noexcept;
 
     /// Mutable getters for mutation (bump via bump()).
     ///
@@ -68,6 +70,7 @@ class SceneStore {
     /// above — valid until the next add/remove/erase on this store.
     MeshObject* /*borrow*/ getMeshObjectMut(uint64_t id) noexcept;
     VolumeObject* /*borrow*/ getVolumeObjectMut(uint64_t id) noexcept;
+    ContourObject* /*borrow*/ getContourObjectMut(uint64_t id) noexcept;
 
     /// Remove by id; bumps storeGen; retains generation tombstone for stale detection.
     /// Returns true if existed.
@@ -76,6 +79,7 @@ class SceneStore {
     bool removeVolumeObject(uint64_t id) noexcept;
     bool removeVolumeSliceObject(uint64_t id) noexcept;
     bool removePlaneObject(uint64_t id) noexcept;
+    bool removeContourObject(uint64_t id) noexcept;
 
     /// Global store generation — monotonic, bumped on every add/remove/mutate.
     uint64_t storeGeneration() const noexcept { return storeGen_; }
@@ -166,6 +170,7 @@ class SceneStore {
     std::unordered_map<uint64_t, VolumeObject> volumeObjects_;
     std::unordered_map<uint64_t, VolumeSliceObject> volumeSliceObjects_;
     std::unordered_map<uint64_t, PlaneObject> planeObjects_;
+    std::unordered_map<uint64_t, ContourObject> contourObjects_;
 
     // Tombstone generations for removed ids (to detect stale handles).
     std::unordered_map<uint64_t, uint64_t> tombstoneGen_;

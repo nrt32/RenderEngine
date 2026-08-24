@@ -8,6 +8,8 @@
 #include <optional>
 #include <vector>
 
+#include <glm/glm.hpp>
+
 #include "scene/camera.hpp"
 #include "scene/plane_desc.hpp"
 
@@ -42,6 +44,11 @@ struct View {
     uint64_t cameraGen{0};
     uint64_t itemsGen{0};
     uint64_t generation{0}; // legacy coarse — equals max of per-field.
+    /// Clear color of this screen section (consumed by the render-side pass
+    /// prologue; see setClearColor).
+    glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 0.0f};
+    /// Depth-tested rendering opt-in (see setDepthTest). Default false.
+    bool depthTest{false};
 
     /// Set rect and bump rectGen.
     void setRect(Rect r) noexcept {
@@ -75,6 +82,28 @@ struct View {
         fn(camera);
         if (camera.viewGen() != beforeView || camera.projGen() != beforeProj) {
             ++cameraGen;
+            ++generation;
+        }
+    }
+    /// Set the view's clear color (the RGBA the render-side pass prologue
+    /// clears this screen section to) and bump `generation`. Default matches
+    /// the engine's historical default (transparent black), so views that
+    /// never call this keep their previous behavior.
+    void setClearColor(glm::vec4 c) noexcept {
+        if (clearColor != c) {
+            clearColor = std::move(c);
+            ++generation;
+        }
+    }
+    /// Opt this view into depth-tested rendering: the render side recreates
+    /// its target with a real depth attachment and enables + clears the depth
+    /// test in the pass prologue, so overlapping opaque items resolve by true
+    /// occlusion instead of draw order. Bumps `generation` (the poll path sees
+    /// the flip); the default stays false — color-only painter's order, the
+    /// deterministic-gate configuration.
+    void setDepthTest(bool enabled) noexcept {
+        if (depthTest != enabled) {
+            depthTest = enabled;
             ++generation;
         }
     }

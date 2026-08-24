@@ -5,10 +5,19 @@
 // camera change or 2D→3D toggle keeps the same ReView object (and its GPU
 // targets) alive across frames; only genuinely new/removed layout entries
 // create/destroy ReViews.
+//
+// Transparency stage: after a view's own pass (opaque layers, per-view depth
+// state), any pending transparent mesh instances are captured through the
+// stack's OIT pipeline and composited back-to-front over the opaque result
+// INSIDE the same view target — begin() → one drawTransparent per instance →
+// end(). The depth test is handed back OFF through the same DrawContext the
+// pass enabled it with, matching every established LinkedListOIT flow.
 
 #include "broker/view_compositor.hpp"
 
 #include "core/draw.hpp"
+#include "render/asset_registry.hpp"
+#include "render/linked_list_oit.hpp"
 #include "render/view.hpp"
 
 namespace re::broker {
@@ -47,13 +56,86 @@ void ViewCompositor::pruneLayout(uint64_t layoutId, const std::vector<uint64_t>&
     for (auto it = views_.begin(); it != views_.end();) {
         if (it->first.layoutId == layoutId && active.find(it->first.viewId) == active.end()) {
             it = views_.erase(it);
+            continue;
+        }
+        ++it;
+    }
+    // Drop the pending transparency stages of pruned views with them.
+    for (auto pit = transparentPending_.begin(); pit != transparentPending_.end();) {
+        if (pit->first.layoutId == layoutId &&
+            active.find(pit->first.viewId) == active.end()) {
+            pit = transparentPending_.erase(pit);
         } else {
-            ++it;
+            ++pit;
         }
     }
 }
 
-void ViewCompositor::clear() noexcept { views_.clear(); }
+void ViewCompositor::clear() noexcept {
+    views_.clear();
+    transparentPending_.clear();
+}
+
+void ViewCompositor::setTransparentItems(uint64_t layoutId, uint64_t viewId,
+                                         std::vector<render::MeshInstance> items) {
+    if (items.empty()) {
+        transparentPending_.erase(StableKey{1, layoutId, viewId});
+        return;
+    }
+    transparentPending_[StableKey{1, layoutId, viewId}] = std::move(items);
+}
+
+std::size_t ViewCompositor::transparentCount(uint64_t layoutId, uint64_t viewId) const {
+    auto it = transparentPending_.find(StableKey{1, layoutId, viewId});
+    return it == transparentPending_.end() ? 0u : it->second.size();
+}
+
+data::Result<void> ViewCompositor::captureTransparents(
+    StableKey key, render::View* /*borrow*/ rv, core::DrawContext& ctx) {
+    auto pending = transparentPending_.find(key);
+    if (pending == transparentPending_.end() || pending->second.empty()) {
+        return data::Result<void>(data::value);
+    }
+    if (!stack_ || !stack_->pipeline || !stack_->assets) {
+        return data::makeError<void>(
+            14,
+            "ViewCompositor: view carries transparent instances but no OIT "
+            "pipeline is wired in its RenderStack");
+    }
+
+    // Hand the depth state back to the established pipeline configuration
+    // (depth OFF during capture AND composite) through the SAME ctx the view
+    // pass used — exact transition regardless of global draw-state caches.
+    ctx.disableDepthTest();
+
+    render::RenderTarget target;
+    target.framebuffer = &rv->target()->framebuffer();
+    target.width = static_cast<std::uint32_t>(rv->rect().width);
+    target.height = static_cast<std::uint32_t>(rv->rect().height);
+    target.clearColor = rv->clearColor();
+
+    const render::Camera camera = rv->camera();
+    auto begun = stack_->pipeline->begin(camera, target);
+    if (begun.failed()) {
+        return begun;
+    }
+    for (const render::MeshInstance& inst : pending->second) {
+        auto geometry =
+            resolveMeshGeometry(stack_->assets, inst.mesh, "view_compositor");
+        if (geometry.failed()) {
+            return data::makeError<void>(geometry.error().code,
+                                         geometry.error().message);
+        }
+        auto captured = stack_->pipeline->drawTransparent(
+            **geometry, inst.material ? inst.material->baseColor()
+                                      : glm::vec4(0.0f),
+            inst.model, camera);
+        if (captured.failed()) {
+            return captured;
+        }
+    }
+    return stack_->pipeline->end(camera, target);
+}
 
 data::Result<void> ViewCompositor::renderAll() {
     for (auto& kv : views_) {
@@ -62,6 +144,10 @@ data::Result<void> ViewCompositor::renderAll() {
         core::DrawContext ctx;
         auto r = rv->renderWithEnsure(ctx);
         if (r.failed()) return r;
+        // OIT capture/composite over this view's opaque result (no-op when
+        // nothing pending or no pipeline wired).
+        auto c = captureTransparents(kv.first, rv, ctx);
+        if (c.failed()) return c;
     }
     return data::Result<void>(data::value);
 }

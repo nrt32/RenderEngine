@@ -13,6 +13,7 @@
 #include <unordered_map>
 
 #include "broker/i_mapper.hpp"
+#include "broker/material_mapper.hpp"
 #include "render/asset_registry.hpp"
 #include "render/mesh_renderer.hpp"
 #include "scene/object.hpp"
@@ -26,6 +27,13 @@ namespace re::broker {
 /// identity in this iteration (T7 will add content-hash dedup). Cache is per-id
 /// generation so a MeshObject::setTransform bumps only its cached ReMeshInstance
 /// model without re-uploading geometry (per-field gen §10.4).
+///
+/// The presentation field translates into a REAL store-resident canonical
+/// material through the composed MaterialMapper (SPEC §12 hand-off): the
+/// former `material = nullptr` placeholder predates the unified store's
+/// material kind (T14) and existed only because there was nowhere to put a
+/// translated material; the mesh path now renders with the scene's actual
+/// Phong values.
 class MeshObjectMapper : public ICachedMapper<scene::MeshObject, render::MeshInstance> {
    public:
     using AppType = scene::MeshObject;
@@ -33,11 +41,19 @@ class MeshObjectMapper : public ICachedMapper<scene::MeshObject, render::MeshIns
     /// Construct with the shared asset registry: the mapper co-owns the
     /// registry via shared_ptr together with the renderers and the other
     /// mappers, so the pointer can never dangle mid-frame and every component
-    /// sees the same dedup pool.
-    explicit MeshObjectMapper(std::shared_ptr<render::AssetRegistry> registry)
-        : registry_(std::move(registry)) {}
+    /// sees the same dedup pool. `materials` is the composed presentation
+    /// mapper; passing null self-wires a private MaterialMapper over the SAME
+    /// registry (callers that registered a shared MaterialMapper in the
+    /// Broker pass it here so both paths dedup into one canonical set).
+    explicit MeshObjectMapper(std::shared_ptr<render::AssetRegistry> registry,
+                              std::shared_ptr<MaterialMapper> materials = nullptr)
+        : registry_(std::move(registry)),
+          materials_(materials ? std::move(materials)
+                               : registry_ ? std::make_shared<MaterialMapper>(registry_)
+                                           : nullptr) {}
 
-    /// Pure translation: registers mesh in AssetRegistry and returns MeshInstance.
+    /// Pure translation: registers mesh in AssetRegistry, resolves the
+    /// presentation into a canonical material, returns MeshInstance.
     data::Result<render::MeshInstance> map(
         const scene::MeshObject& app,
         const scene::TranslateContext& ctx) const override;
@@ -58,6 +74,7 @@ class MeshObjectMapper : public ICachedMapper<scene::MeshObject, render::MeshIns
 
    private:
     std::shared_ptr<render::AssetRegistry> registry_;
+    std::shared_ptr<MaterialMapper> materials_;
     struct Entry {
         uint64_t generation{0};
         render::MeshInstance instance{};

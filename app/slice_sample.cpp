@@ -1,20 +1,21 @@
-// app/slice_sample.cpp — mesh slice rendering sample (T13, FR-app.1).
+// app/slice_sample.cpp — mesh slice rendering sample (T13, FR-app.1; T20
+// routed through the broker façade).
 //
 // Demonstrates the mesh-slice capability (SPEC §1 capability 4, FR-render.4):
-// loads the Utah teapot (data/meshes, SPEC §7), defines a horizontal clip plane
-// through its vertical midpoint, and renders the clipped mesh (the kept
-// half-space `dot(normal, p - point) >= 0`) through render::SliceRenderer into
-// the window's default framebuffer (null RenderTarget::framebuffer binds the
-// default, T12). Slicing is geometry, not compositing (SPEC §3): the geometry
-// shader clips each triangle against the plane purely on the GPU and emits the
-// on-plane cross-section, so the sample shows the mesh cut open along the
-// plane.
+// loads the Utah teapot (data/meshes, SPEC §7), defines a horizontal clip
+// plane through its vertical midpoint, and renders the clipped mesh (the kept
+// half-space `dot(normal, p - point) >= 0`) through the IViewBridge façade.
+// The scene is a MeshSliceObject scene value whose clip plane lives on the
+// VIEW (the broker contextual rule, SPEC §11.4); the synchronizer maps it
+// through broker::MeshSliceObjectMapper into a render::SliceScene drawn by
+// render::SliceRenderer's geometry-shader clip — slicing is geometry, not
+// compositing (SPEC §3), and per the SPEC §11 ACL this sample never includes
+// render/ and never holds a mapper or renderer handle.
 //
-// The sample is driven through the shared app::SampleHarness (visible window +
-// ImGui overlay + run loop) exactly like the T12 samples, and exits cleanly
-// (code 0) after RE_SAMPLE_MAX_FRAMES frames (default 300), so the gate can run
-// it headlessly under Xvfb within a timeout (FR-app.1: exit code 0, no
-// sanitizer reports).
+// The sample is driven through the shared app::SampleHarness exactly like the
+// other capability samples, and exits cleanly (code 0) after
+// RE_SAMPLE_MAX_FRAMES frames (default 300), so the gate can run it headlessly
+// under Xvfb within a timeout (FR-app.1: exit code 0, no sanitizer reports).
 
 #include <spdlog/spdlog.h>
 
@@ -29,13 +30,11 @@
 #include <utility>
 
 #include "app/sample_harness.hpp"
+#include "broker/app_context.hpp"
 #include "core/window.hpp"
 #include "data/mesh.hpp"
 #include "data/result.hpp"
 #include "io/mesh/obj_mesh_loader.hpp"
-#include "render/asset_registry.hpp"
-#include "render/phong_material.hpp"
-#include "render/slice_renderer.hpp"
 
 #ifndef RE_SOURCE_DIR
 #define RE_SOURCE_DIR "."
@@ -43,80 +42,89 @@
 
 namespace {
 
+namespace app = re::app;
+namespace broker = re::broker;
+namespace core = re::core;
+namespace data = re::data;
+namespace scene = re::scene;
+
 // The harness window size.
 constexpr int kWindowWidth = 800;
 constexpr int kWindowHeight = 600;
 // Default number of frames before the sample exits cleanly (gate overrides via
 // RE_SAMPLE_MAX_FRAMES).
 constexpr int kDefaultFrames = 300;
-// Perspective vertical field of view in radians (~60 deg).
-constexpr float kFovY = 1.0471975511965976f;
+// Perspective vertical field of view in degrees (~60 deg).
+constexpr float kFovYDeg = 60.0f;
 
-/// Build a perspective camera framing `mesh`: eye pulled back along +Z from the
-/// mesh's AABB center by `radius / tan(fov/2)`, looking at the center.
-re::render::Camera makeFramingCamera(const re::data::Mesh& mesh) {
-    const re::data::Aabb& b = mesh.bounds();
-    const glm::vec3 center = 0.5f * (b.min + b.max);
-    const glm::vec3 extent = b.max - b.min;
-    const float radius = 0.5f * glm::length(extent);
-    const float dist = radius / std::tan(0.5f * kFovY);
-
-    re::render::Camera camera;
-    camera.position = center + glm::vec3(0.0f, 0.0f, dist);
-    camera.view =
-        glm::lookAt(camera.position, center, glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::perspective(
-        kFovY,
-        static_cast<float>(kWindowWidth) / static_cast<float>(kWindowHeight),
-        0.1f, 2.0f * (dist + radius));
-    return camera;
-}
-
-/// Build a horizontal clip plane at the mesh's vertical midpoint: normal +Y
-/// through `y = 0.5*(min.y + max.y)`. The kept side is `y >= midpoint`, so the
-/// teapot is cut open around its equator (FR-render.4: every emitted
-/// cross-section vertex lies on the plane).
-re::render::ClipPlane makeMidplane(const re::data::Mesh& mesh) {
-    const re::data::Aabb& b = mesh.bounds();
-    re::render::ClipPlane plane;
-    plane.normal = glm::vec3(0.0f, 1.0f, 0.0f);
-    plane.point = glm::vec3(0.0f, 0.5f * (b.min.y + b.max.y), 0.0f);
-    return plane;
-}
-
-/// The slice sample: owns the loaded teapot + material + clip plane and renders
-/// one clipped frame.
-class SliceSample final : public re::app::ISample {
+/// The slice sample: owns the loaded teapot + AppContext and renders one
+/// bridged clipped frame per renderFrame call.
+class SliceSample final : public app::ISample {
    public:
-    explicit SliceSample(re::data::Mesh mesh)
-        : mesh_(std::move(mesh)),
-          material_(std::make_shared<re::render::PhongMaterial>(
-              glm::vec4(0.25f, 0.55f, 0.85f, 1.0f))),
-          plane_(makeMidplane(mesh_)),
-          camera_(makeFramingCamera(mesh_)) {
-        // Register the mesh once with the shared registry (SPEC §9 V2.5): the
-        // scene carries its AssetHandle, resolved by the renderer (graceful
-        // degradation on the impossible registration failure, see mesh_sample).
-        const auto handle = registry_->registerAsset(mesh_);
-        if (handle.failed()) {
-            spdlog::error("slice sample: failed to register mesh: {}",
-                          handle.error().message);
-            return;
-        }
-        scene_.meshes.push_back(
-            re::render::MeshInstance{*handle, material_, glm::mat4(1.0f)});
+    explicit SliceSample(data::Mesh mesh)
+        : mesh_(std::make_shared<const data::Mesh>(std::move(mesh))),
+          // registerCameraMapper is OFF for this composition: the view is a
+          // PERSPECTIVE 3D view that merely CARRIES a clip plane for its
+          // mesh-slice item (the broker contextual rule), while CameraMapper's
+          // T4 validation pins "plane present -> orthographic" for true 2D
+          // slice displays. The analytic framing here is perspective, so the
+          // context skips that mapper registration and the synchronizer
+          // translates the camera directly (identical matrices, no cache).
+          ctx_(broker::AppContext::Params{.enableOIT = false,
+                                          .registerCameraMapper = false}) {
+        // Scene values only: one MeshSliceObject carrying the shared asset ref
+        // + presentation; the clip plane belongs to the VIEW (broker
+        // contextual rule), so it never rides on the object.
+        scene::MeshSliceObject ms;
+        ms.mesh = mesh_;
+        ms.transform = glm::mat4(1.0f);
+        ms.presentation.phong.baseColor = glm::vec4(0.25f, 0.55f, 0.85f, 1.0f);
+        const uint64_t sliceId = ctx_.store().addMeshSliceObject(std::move(ms));
+
+        // Horizontal clip plane at the mesh's vertical midpoint: normal +Y
+        // through `y = 0.5*(min.y + max.y)`. The kept side is `y >= midpoint`,
+        // so the teapot is cut open around its equator (FR-render.4: every
+        // emitted cross-section vertex lies on the plane). World space.
+        const data::Aabb& b = mesh_->bounds();
+        scene::PlaneDesc plane;
+        plane.setNormal(glm::vec3(0.0f, 1.0f, 0.0f));
+        plane.setPoint(glm::vec3(0.0f, 0.5f * (b.min.y + b.max.y), 0.0f));
+        plane.setSpace(scene::Space::World);
+
+        // Perspective camera framing the mesh (eye pulled back along +Z from
+        // the AABB center by radius / tan(fov/2)).
+        const glm::vec3 center = 0.5f * (b.min + b.max);
+        const float radius = 0.5f * glm::length(b.max - b.min);
+        const float dist = radius / std::tan(0.5f * glm::radians(kFovYDeg));
+
+        view_.id = 1;
+        view_.rect = scene::Rect{0, 0, kWindowWidth, kWindowHeight};
+        view_.camera = scene::Camera(center + glm::vec3(0.0f, 0.0f, dist),
+                                     center, glm::vec3(0.0f, 1.0f, 0.0f));
+        view_.camera.setPerspective(
+            kFovYDeg,
+            static_cast<float>(kWindowWidth) /
+                static_cast<float>(kWindowHeight),
+            0.1f, 2.0f * (dist + radius));
+        view_.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
+        view_.setItemIds({sliceId});
+        view_.setPlane(plane);
     }
 
-    re::data::Result<void> renderFrame(int width, int height) override {
-        re::render::RenderTarget target;
-        target.framebuffer = nullptr;
-        // null framebuffer = render straight into the window's on-screen
-        // default framebuffer (samples have no offscreen ViewTarget; the
-        // harness hands us its pixel size each frame).
-        target.width = static_cast<unsigned>(width);
-        target.height = static_cast<unsigned>(height);
-        target.clearColor = glm::vec4(0.10f, 0.10f, 0.12f, 1.0f);
-        return renderer_.render(scene_, camera_, plane_, target);
+    data::Result<void> renderFrame(int /*width*/, int /*height*/) override {
+        // The bridge path: sync → renderAll → presentAll(null destination =
+        // window default framebuffer). The ReView target rect equals the
+        // harness pixel size, so the blit is 1:1.
+        views_ = {view_};
+        auto s = ctx_.bridge().sync(views_, ctx_.store());
+        if (s.failed()) {
+            return s;
+        }
+        auto r = ctx_.bridge().renderAll();
+        if (r.failed()) {
+            return r;
+        }
+        return ctx_.bridge().presentAll(nullptr);
     }
 
     const char* title() const override {
@@ -129,23 +137,18 @@ class SliceSample final : public re::app::ISample {
                "The teapot is clipped by a horizontal plane at its vertical "
                "midpoint; the geometry shader keeps the upper half and emits "
                "the on-plane cross-section (slicing is geometry, not "
-               "compositing, SPEC §3).\n"
+               "compositing). The MeshSliceObject translates through "
+               "broker::MeshSliceObjectMapper with the plane supplied by its "
+               "View.\n"
                "Run the sample, then close the window (or set "
                "RE_SAMPLE_MAX_FRAMES) to exit.";
     }
 
    private:
-    re::data::Mesh mesh_;
-    std::shared_ptr<re::render::PhongMaterial> material_;
-    re::render::ClipPlane plane_;
-    re::render::Camera camera_;
-    // Shared asset registry (SPEC §9 V2.5, T13): self-initializing NSDMI — no
-    // declaration-order hazard; the renderer holds a shared reference and
-    // validates it per draw (typed error code 4, never a crash).
-    std::shared_ptr<re::render::AssetRegistry> registry_{
-        std::make_shared<re::render::AssetRegistry>()};
-    re::render::SliceScene scene_;
-    re::render::SliceRenderer renderer_{registry_};
+    std::shared_ptr<const data::Mesh> mesh_;
+    broker::AppContext ctx_;
+    scene::View view_{};
+    std::vector<scene::View> views_{};
 };
 
 } // namespace
@@ -160,7 +163,7 @@ int main() {
         return 1;
     }
 
-    auto windowResult = re::core::Window::create(
+    auto windowResult = core::Window::create(
         kWindowWidth, kWindowHeight, "RenderEngine - Slice Sample");
     if (windowResult.failed()) {
         spdlog::error("slice sample: {}", windowResult.error().message);
@@ -168,6 +171,6 @@ int main() {
     }
 
     auto sample = std::make_unique<SliceSample>(std::move(*meshResult));
-    re::app::SampleHarness harness(std::move(*windowResult), std::move(sample));
-    return harness.run(re::app::sampleMaxFrames(kDefaultFrames));
+    app::SampleHarness harness(std::move(*windowResult), std::move(sample));
+    return harness.run(app::sampleMaxFrames(kDefaultFrames));
 }

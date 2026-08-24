@@ -109,8 +109,9 @@
 #include <utility>
 #include <vector>
 
-#include "app/mpr_camera.hpp"
+#include "broker/slice_display.hpp"
 #include "app/mpr_slice.hpp"
+#include "broker/plane_object_mapper.hpp"
 #include "broker/broker.hpp"
 #include "broker/contour_mapper.hpp"
 #include "broker/plane_mapper.hpp"
@@ -196,7 +197,7 @@ constexpr std::uint8_t kExpectedR = 51u;
 constexpr std::uint8_t kExpectedG = 102u;
 constexpr std::uint8_t kExpectedB = 204u;
 
-// The camera framing constants (make3dCamera, app/mpr_camera.hpp):
+// The camera framing constants (make3dCamera, broker/slice_display.hpp):
 // eye = crosshair + normalize(1,1,1) * (1.5 * bounding diagonal).
 constexpr float kCameraDistanceFactor = 1.5f;
 // The camera's eye direction (the (1,1,1) diagonal, normalized).
@@ -515,7 +516,7 @@ TEST(T15Mpr, GpuContourMatchesAnalyticCurveForEachSliceView) {
 // Every geometry-shader quad was clipped away silently (no GL error, no
 // failed Result). This test drives the EXACT functions and objects the
 // sample composes — app::makeSliceCamera / app::makeSliceModel (moved to
-// app/mpr_camera.hpp so the gate can call them), render::View +
+// broker/slice_display.hpp since T20 so the gate can call them), render::View +
 // addItem(...)->drawLayer(...) layering, ViewTarget readback — so a
 // sample-vs-test wiring divergence can never reintroduce itself:
 // any camera that clips the contour away fails HERE too.
@@ -546,11 +547,12 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
     const float planeCoordinate =
         static_cast<float>(kSliceIndex) + 0.5f; // 32.5
 
-    // CAMERA ENCLOSURE CONTRACT (app/mpr_camera.hpp): makeSliceCamera's clip
+    // CAMERA ENCLOSURE CONTRACT (broker/slice_display.hpp): makeSliceCamera's clip
     // volume must enclose BOTH the slice quad (display z = 0) AND the contour
     // crossings' display z (= the held coordinate + 0.5 = 32.5). Asserted
     // analytically on the projected NDC z of both points.
-    const render::Camera camera = app::makeSliceCamera(*sliceImage);
+    const render::Camera camera =
+        broker::toRenderCamera(broker::makeSliceCamera(*sliceImage));
     for (const float enclosedZ : {0.0f, planeCoordinate}) {
         const glm::vec4 clip =
             camera.proj * camera.view * glm::vec4(32.5f, 32.5f, enclosedZ, 1.0f);
@@ -571,7 +573,8 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
     auto registry = std::make_shared<render::AssetRegistry>();
     broker::Broker broker_;
     broker_.registerMapper(std::make_unique<broker::ContourMapper>(registry));
-    broker_.registerMapper(std::make_unique<broker::PlaneMapper>());
+    broker_.registerMapper(
+        std::make_unique<broker::PlaneObjectMapper>());
     auto* contourMapper =
         broker_.get<scene::ContourObject, render::ContourObject>();
     auto* planeMapper =
@@ -597,7 +600,7 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
 
     // The textured slice layer is ALSO broker-mediated (V3.4b T12): the
     // scene-side PlaneObject carries {image asset ref, transform} and the
-    // PlaneMapper binds the shared unit quad — no hand-assembled
+    // PlaneObjectMapper binds the shared unit quad — no hand-assembled
     // render::PlaneInstance anywhere.
     scene::PlaneObject appSlicePlane;
     // Shared-reference ownership: the object stores its asset as a
@@ -809,8 +812,9 @@ TEST(T15Mpr, CameraTracksSliceStateCrosshair) {
                               static_cast<float>(kCoronalY) + 0.5f,
                               static_cast<float>(kTransverseZ) + 0.5f);
 
-    const render::Camera camera =
-        app::make3dCamera(state, box.bounds(), kAspect);
+    const render::Camera camera = broker::toRenderCamera(
+        broker::make3dCamera(app::sliceCrosshair(state), box.bounds(),
+                             kAspect));
 
     // The camera eye: crosshair + normalize(1,1,1) * (1.5 * bounding diagonal).
     const float diagonal = glm::length(box.bounds().max - box.bounds().min);
@@ -858,8 +862,9 @@ TEST(T15Mpr, ThreeDViewDrawsMesh) {
     state.transverseZ = kTransverseZ;
     state.coronalY = kCoronalY;
     state.sagittalX = kSagittalX;
-    const render::Camera camera =
-        app::make3dCamera(state, boxValue.bounds(), kAspect);
+    const render::Camera camera = broker::toRenderCamera(
+        broker::make3dCamera(app::sliceCrosshair(state), boxValue.bounds(),
+                             kAspect));
 
     render::MeshScene scene;
     scene.meshes.push_back(

@@ -1,48 +1,37 @@
 // app/mpr_sample.cpp — Multi-Planar Reconstruction (MPR) sample (T14/T15,
-// FR-app.2/3; T5 V3.4 drives its composition through
-// ReView/ViewTarget/IRenderable, SPEC §3.2; V3.8b T11 moved the contour overlay
-// to the GPU ContourRenderer).
+// FR-app.2/3; T20 routed fully through the broker façade).
 //
 // Demonstrates the MPR capability (SPEC §1 goal 6): a single 1280x960 window
 // with a 2x2 viewport grid (four 640x480 viewports; T top-left, C top-right,
 // S bottom-left, 3D bottom-right, per SPEC FR-app.2). The Transverse (constant
 // Z), Coronal (constant Y) and Sagittal (constant X) views show a slice of the
-// volume EXTRACTED ON THE GPU: render::VolumeSliceRenderer samples the cached
-// R32F 3D texture exactly where each pixel ray crosses that view's clip plane
-// (texel mapping (idx+0.5)/dim, the same mapping the ray-cast uses), so there
-// is NO frozen CPU slice image anywhere on this path and scrolling is a pure
-// uniform/state change. The sample scrolls deterministically: every
-// kFramesPerStep frames the round-robin next axis advances one voxel layer,
-// and all three 2D views plus the 3D camera track the shared slice state —
-// demonstrating interactive slice navigation without any CPU re-looping
-// (the CPU oracle app::makeSliceImage is retained ONLY as the gate tests'
-// reference implementation, never called here).
+// volume EXTRACTED ON THE GPU (the broker stack wires render::VolumeSliceRenderer,
+// which samples the cached R32F 3D texture exactly where each pixel ray crosses
+// that view's clip plane, texel mapping (idx+0.5)/dim), plus the plane∩mesh
+// contour overlay computed on the GPU by the geometry-shader contour renderer.
 //
-// Rendering architecture (app-level composition, SPEC §3):
-//   - the 2x2 viewport layout comes from the shared app/mpr_slice scaffolding
-//     (mprViewports); each slice view's display frame comes from the shared
-//     sliceVolumeModel + makeSliceCamera(free-axis extents) pair — the exact
-//     functions the gate tests drive, so a sample-vs-test wiring divergence
-//     cannot reintroduce itself (the T11 defect lesson);
-//   - each slice view layers TWO ReView items: the GPU-extracted volume plane
-//     (VolumeSliceRenderer::drawLayer) and the plane∩mesh contour overlay
-//     translated scene→render through broker::ContourMapper (SPEC §11) and
-//     drawn by render::ContourRenderer's geometry shader (FR-app.3) — both
-//     rebuilt from the CURRENT slice state each frame, so outlines stay glued
-//     to the displayed layer while scrolling;
-//   - the 3D-view camera comes from app::make3dCamera (app/mpr_camera.hpp),
-//     which looks at the intersection point of the three CURRENT slice planes
-//     (the crosshair) — the slice-state ↔ 3D-view camera interplay;
-//   - each ReView renders into its OWN 640×480 ViewTarget via DrawContext and
-//     presents it with core::blit (T5 V3.4 engine present): no app-side
-//     viewport blending, no ViewRenderer;
-//   - the only app-side window state is the clear of the window's default
-//     framebuffer behind the viewport grid (a background, not a viewport
-//     blend).
+// Rendering architecture (T20, SPEC §11 ACL): the ENTIRE scene is scene/ values
+// in ONE broker::AppContext composition root — three VolumeSliceObjects (one
+// per axis display frame), three ContourObjects (the golden box outline in
+// each display frame), one MeshObject (the golden box for the 3D view) — and
+// four scene::View values. Each 2D view carries its extraction plane in
+// VOXEL-INDEX space (the broker contextual rule: the View owns the plane);
+// broker::VolumeSliceObjectMapper converts it to world through the PlaneMapper
+// voxel-center rule against the object's OWN display-frame transform, so the
+// mapped plane is exactly the display-z = heldIndex + 0.5 plane the previous
+// direct composition baked in by hand. Every frame drives the IViewBridge
+// façade (sync → renderAll → presentAll); the sample never includes render/
+// and never holds a mapper or renderer handle.
 //
-// The sample exits cleanly (code 0) after RE_SAMPLE_MAX_FRAMES frames (default
-// 300) so the gate can run it headlessly under Xvfb within a timeout
-// (FR-app.1: exit code 0, no sanitizer reports).
+// Scrolling: every kFramesPerStep frames the round-robin next axis advances
+// one voxel layer. The scroll mutates only scene values (view planes +
+// contour planes + the 3D crosshair camera); the poll path sees the bumped
+// generations and re-translates exactly the dirty fields — scrolling touches
+// no pixels on the CPU (the CPU oracle app::makeSliceImage is retained ONLY
+// as the gate tests' reference implementation, never called here).
+//
+// Exits cleanly (code 0) after RE_SAMPLE_MAX_FRAMES frames (default 300) so
+// the gate can run it headlessly under Xvfb within a timeout (FR-app.1).
 
 #include <spdlog/spdlog.h>
 
@@ -59,24 +48,15 @@
 #include <utility>
 #include <vector>
 
-#include "app/mpr_camera.hpp"
 #include "app/mpr_slice.hpp"
 #include "app/sample_harness.hpp"
-#include "broker/broker.hpp"
-#include "broker/contour_mapper.hpp"
+#include "broker/app_context.hpp"
+#include "broker/slice_display.hpp"
 #include "core/draw.hpp"
 #include "core/window.hpp"
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
 #include "io/volume/nrrd_volume_loader.hpp"
-#include "render/asset_registry.hpp"
-#include "render/contour_renderer.hpp"
-#include "render/mesh_renderer.hpp" // render::MeshScene / render::Camera
-#include "render/phong_material.hpp"
-#include "render/view.hpp"
-#include "render/volume_slice_renderer.hpp"
-#include "scene/object.hpp"
-#include "scene/plane_desc.hpp"
 #include "utils/pixel_reader.hpp"
 #include "volume/transfer_function.hpp"
 
@@ -86,15 +66,14 @@
 
 namespace {
 
-// Convenience namespace aliases for the sample's own .cpp (NAMING_CONVENTIONS
-// §7: `using`/aliases are allowed inside a .cpp translation unit).
+namespace app = re::app;
 namespace broker = re::broker;
 namespace core = re::core;
 namespace data = re::data;
-namespace volume = re::volume;
-namespace render = re::render;
 namespace scene = re::scene;
-namespace app = re::app;
+namespace volume = re::volume;
+
+using MprAxis = app::MprAxis;
 
 // The harness window size (SPEC FR-app.2: 1280x960).
 constexpr int kWindowWidth = 1280;
@@ -120,16 +99,14 @@ constexpr glm::vec3 kGoldenBoxMin(32.0f, 32.0f, 10.0f);
 constexpr glm::vec3 kGoldenBoxMax(96.0f, 96.0f, 60.0f);
 
 // The 3D-view box material: a clean solid color mapping to exact RGBA8 bytes
-// (0.2*255=51, 0.4*255=102, 0.8*255=204). Opaque (alpha 1.0), so the v1 opaque
-// forward pass draws the box with no OIT engaged. Under the v1 flat +Z
-// lighting the +Z face of the box shades to exactly this color; faces with
-// normals not aligned to +Z shade to black (docs/render.md / docs/mpr.md).
+// (0.2*255=51, 0.4*255=102, 0.8*255=204). Opaque (alpha 1.0). Under the v1
+// flat +Z lighting the +Z face of the box shades to exactly this color; faces
+// with normals not aligned to +Z shade to black (docs/render.md / docs/mpr.md).
 constexpr glm::vec4 kBoxMaterialColor(0.2f, 0.4f, 0.8f, 1.0f);
 
 /// A CT window/level transfer function over the sample_ct value range
 /// ([-3024, 2529], SPEC §7): air (low) transparent, soft tissue opaque/bright.
-/// Deterministic control points (FR-vol.1); monotonic alpha ramp. Mirrors the
-/// other samples' TF.
+/// Deterministic control points (FR-vol.1); monotonic alpha ramp.
 volume::TransferFunction makeCtTransferFunction() {
     using CP = volume::TransferFunction::ControlPoint;
     return volume::TransferFunction(
@@ -151,13 +128,14 @@ app::MprSliceState makeInitialSliceState(const data::VolumeDataset& dataset) {
     return state;
 }
 
-/// The axis-permutation display models shared with the MPR gates: they map
-/// voxel-index space into each view's display space so the displayed free
-/// axes are always display (x, y) — Transverse identity, Coronal swaps Y/Z,
-/// Sagittal maps (x,y,z)->(y,z,x). glm::mat4's constructor takes COLUMNS, so
-/// each initializer list is read DOWN the matrix (a transposed permutation
-/// silently misplaces the Sagittal geometry — the T11 review finding these
-/// literal matrices were pinned against).
+/// The axis-permutation display models shared with the MPR gates: they place
+/// the CONTOUR geometry (already in voxel-index units) into each view's
+/// display frame so the displayed free axes are always display (x, y) —
+/// Transverse identity, Coronal swaps Y/Z, Sagittal maps (x,y,z)->(y,z,x).
+/// glm::mat4's constructor takes COLUMNS, so each initializer list is read
+/// DOWN the matrix (a transposed permutation silently misplaces the Sagittal
+/// geometry — the T11 review finding these literal matrices were pinned
+/// against).
 std::array<glm::mat4, 3> axisDisplayModels() {
     return {glm::mat4(1.0f),
             // Coronal: rows (x'|y'|z') = (x|z|y).
@@ -169,44 +147,93 @@ std::array<glm::mat4, 3> axisDisplayModels() {
                       1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f)};
 }
 
-/// The MPR sample: owns the volume + transfer function + the slice-view
-/// scaffold and renders one frame of the 2x2 grid into the window's default
-/// framebuffer, composed by the engine multi-view present (T5 V3.4).
+/// The held coordinate of each view's slice plane (voxel-index units, through
+/// the sliced voxel layer's centers) under `state`, in axis order
+/// {Transverse, Coronal, Sagittal}.
+std::array<float, 3> heldCoords(const app::MprSliceState& state) {
+    return {static_cast<float>(state.transverseZ) + 0.5f,
+            static_cast<float>(state.coronalY) + 0.5f,
+            static_cast<float>(state.sagittalX) + 0.5f};
+}
+
+/// The RAW voxel-layer index each 2D view holds under `state` (no +0.5 center
+/// offset — the PlaneMapper conversion adds it).
+std::array<float, 3> rawIndices(const app::MprSliceState& state) {
+    return {static_cast<float>(state.transverseZ),
+            static_cast<float>(state.coronalY),
+            static_cast<float>(state.sagittalX)};
+}
+
+/// The MPR sample: owns the volume + transfer function + AppContext and
+/// renders the 2x2 grid through the bridge every frame.
 class MPRView final : public app::ISample {
    public:
     MPRView(data::VolumeDataset dataset, volume::TransferFunction tf)
         : dataset_(std::make_shared<data::VolumeDataset>(std::move(dataset))),
           tf_(std::move(tf)),
           sliceState_(makeInitialSliceState(*dataset_)),
-          box_(std::make_shared<data::Mesh>(
+          box_(std::make_shared<const data::Mesh>(
               app::makeBoxMesh(kGoldenBoxMin, kGoldenBoxMax))),
-          boxMaterial_(
-              std::make_shared<render::PhongMaterial>(kBoxMaterialColor)) {
-        // The golden box mesh (FR-app.3) with an opaque material, for the 3D
-        // view. The box is registered ONCE with the shared registry — the 3D
-        // scene carries its AssetHandle, resolved by MeshRenderer through the
-        // same registry (graceful degradation on the impossible registration
-        // failure). The registry is ALSO where the CT dataset's single R32F
-        // Texture3D lives once the first extraction draws resolve it, so the
-        // whole sample shares one GPU asset store instance.
-        const auto boxHandle = registry_->registerAsset(*box_);
-        if (boxHandle.failed()) {
-            spdlog::error("mpr sample: failed to register box mesh: {}",
-                          boxHandle.error().message);
-        } else {
-            boxScene_.meshes.push_back(render::MeshInstance{
-                *boxHandle, boxMaterial_, glm::mat4(1.0f)});
+          ctx_(broker::AppContext::Params{}) {
+        // --- Scene values ---------------------------------------------------
+        // Three volume-slice objects: each carries the shared dataset ref +
+        // TF and ITS axis display-frame transform (voxel-center index i ->
+        // display coordinate i + 0.5 on the free axes). Store ids start at 1
+        // and are sequential in add order.
+        const std::array<MprAxis, 3> axes = {MprAxis::Transverse,
+                                             MprAxis::Coronal,
+                                             MprAxis::Sagittal};
+        for (std::size_t i = 0; i < 3u; ++i) {
+            scene::VolumeSliceObject vs;
+            vs.volume = dataset_;
+            vs.transferFunction = tf_;
+            vs.transform = app::sliceVolumeModel(*dataset_, axes[i]);
+            sliceIds_[i] = ctx_.store().addVolumeSliceObject(std::move(vs));
         }
 
-        // Composition root: register the contour mapper ONCE (one mapper per
-        // AppT, OCP via type_index — SPEC §11); afterwards translation goes
-        // only through the type-erased IMapper interface fetched from the
-        // Broker — app never holds a concrete mapper handle. The slice layers
-        // need no mapper on THIS path: the extraction consumes the dataset +
-        // TF + plane values directly, and the full scene→render mediation for
-        // volume slices is the broker inventory follow-up task's charter.
-        broker_.registerMapper(
-            std::make_unique<broker::ContourMapper>(registry_));
+        // The golden box mesh (FR-app.3) for the 3D view, opaque material.
+        scene::MeshObject box;
+        box.mesh = box_;
+        box.transform = glm::mat4(1.0f);
+        box.presentation.phong.baseColor = kBoxMaterialColor;
+        boxId_ = ctx_.store().addMeshObject(std::move(box));
+
+        // Three contour objects: the box outline in each display frame, red
+        // stroke (FR-app.3 exact bytes 255,0,0,255). Their planes live ON the
+        // object (a contour is meaningless without its own plane) and are
+        // updated per frame from the slice state.
+        for (std::size_t i = 0; i < 3u; ++i) {
+            scene::ContourObject co;
+            co.mesh = box_;
+            co.transform = axisDisplayModels()[i];
+            co.plane.setNormal(glm::vec3(0.0f, 0.0f, 1.0f));
+            co.plane.setPoint(glm::vec3(0.0f, 0.0f, heldCoords(sliceState_)[i]));
+            co.plane.setSpace(scene::Space::World);
+            co.color = app::kContourColor;
+            contourIds_[i] = ctx_.store().addContourObject(std::move(co));
+        }
+
+        // --- Views ----------------------------------------------------------
+        const std::array<app::MprViewport, 4> grid =
+            app::mprViewports(kWindowWidth, kWindowHeight);
+        for (std::size_t i = 0; i < 3u; ++i) {
+            const auto [freeW, freeH] =
+                app::sliceFreeAxes(*dataset_, axes[i]);
+            views_[i].id = 10u + static_cast<uint64_t>(i);
+            views_[i].rect = scene::Rect{grid[i].x, grid[i].y, grid[i].width,
+                                         grid[i].height};
+            views_[i].camera = broker::makeSliceCamera(
+                static_cast<float>(freeW), static_cast<float>(freeH));
+            views_[i].setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            views_[i].setItemIds({sliceIds_[i], contourIds_[i]});
+        }
+        views_[3].id = 13u;
+        views_[3].rect = scene::Rect{grid[3].x, grid[3].y, grid[3].width,
+                                     grid[3].height};
+        views_[3].setClearColor(glm::vec4(0.10f, 0.10f, 0.14f, 1.0f));
+        views_[3].setItemIds({boxId_});
+
+        applySliceState();
     }
 
     data::Result<void> renderFrame(int width, int height) override {
@@ -218,132 +245,36 @@ class MPRView final : public app::ISample {
         core::setClearColor(0.02f, 0.02f, 0.03f, 1.0f);
         core::clearColor();
 
-        // Advance the deterministic auto-scroll: this mutates ONLY the slice
-        // state (three integers). Every downstream consumer below derives
-        // from it per frame — extraction uniforms, contour planes, 3D camera
-        // — so scrolling touches no pixels on the CPU.
+        // Advance the deterministic auto-scroll: mutates ONLY the slice state
+        // (three integers). Everything downstream derives from it below.
         advanceSliceState();
 
-        // Build the four views: per-view window-section handles (ViewRects
-        // from app::mprViewports, SPEC FR-app.2) + ReView per screen section.
-        const std::array<app::MprViewport, 4> grid =
-            app::mprViewports(width, height);
-        auto* contourMapper =
-            broker_.get<scene::ContourObject, render::ContourObject>();
+        // Push the CURRENT slice state into the scene values: view planes
+        // (voxel-index, converted by the broker), contour planes (world,
+        // display-frame), cameras (slice extents + crosshair interplay).
+        applySliceState();
 
-        const std::array<app::MprAxis, 3> axes = {app::MprAxis::Transverse,
-                                                  app::MprAxis::Coronal,
-                                                  app::MprAxis::Sagittal};
-        const std::array<const char*, 3> kAxisNames = {"Transverse", "Coronal",
-                                                       "Sagittal"};
-        // The held coordinate of each view's slice plane (voxel-index units,
-        // through the sliced voxel layer's centers) under the CURRENT state.
-        const std::array<float, 3> heldCoord = {
-            static_cast<float>(sliceState_.transverseZ) + 0.5f,
-            static_cast<float>(sliceState_.coronalY) + 0.5f,
-            static_cast<float>(sliceState_.sagittalX) + 0.5f};
-        const std::array<glm::mat4, 3> displayModels = axisDisplayModels();
-
-        for (std::size_t i = 0u; i < 3u; ++i) {
-            // --- Layer 1: the GPU-extracted slice -------------------------
-            // The instance carries the dataset ref, the TF value, the
-            // display-frame model (voxel-center index -> display coord) and
-            // the constant-Z plane at the CURRENT held coordinate. A slice
-            // change therefore reaches the GPU exclusively through uniforms.
-            render::VolumeSliceInstance slice;
-            slice.dataset = dataset_;
-            slice.transferFunction = tf_;
-            slice.model = app::sliceVolumeModel(*dataset_, axes[i]);
-            slice.plane.normal = glm::vec3(0.0f, 0.0f, 1.0f);
-            slice.plane.point = glm::vec3(0.0f, 0.0f, heldCoord[i]);
-            render::VolumeSliceScene sliceScene;
-            sliceScene.slices.push_back(slice);
-
-            // --- Layer 2: the GPU contour of the SAME plane ---------------
-            // Translated scene→render through the Broker-mediated ContourMapper
-            // each frame (a pure translation; the box's GPU geometry is deduped
-            // by the shared registry, so repeated translations upload nothing).
-            // The clip plane lives in the object's local (= display) frame —
-            // constant Z at the held coordinate — matching render::ClipPlane's
-            // post-model evaluation, exactly like the extraction plane above,
-            // so outline and slice stay pixel-glued while scrolling.
-            render::ContourScene contourScene;
-            if (contourMapper != nullptr) {
-                scene::ContourObject appContour;
-                appContour.mesh = box_;
-                appContour.transform = displayModels[i];
-                appContour.plane.setNormal(glm::vec3(0.0f, 0.0f, 1.0f));
-                appContour.plane.setPoint(glm::vec3(0.0f, 0.0f, heldCoord[i]));
-                appContour.color = app::kContourColor;
-
-                auto mapped =
-                    contourMapper->map(appContour, scene::TranslateContext{});
-                if (mapped.failed()) {
-                    // Typed errors are surfaced, never swallowed: a skipped
-                    // contour layer is visually indistinguishable from "no
-                    // contour", so the log names the view axis and code.
-                    spdlog::error(
-                        "mpr sample: {} contour translation failed "
-                        "(code {}): {}",
-                        kAxisNames[i], mapped.error().code,
-                        mapped.error().message);
-                } else {
-                    contourScene.contours.push_back(*mapped);
-                }
-            }
-
-            // --- Compose the view ------------------------------------------
-            const auto [freeW, freeH] = app::sliceFreeAxes(*dataset_, axes[i]);
-            render::ViewRect rect{grid[i].x, grid[i].y, grid[i].width,
-                                  grid[i].height};
-            render::View view(rect, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-            view.setCamera(app::makeSliceCamera(static_cast<float>(freeW),
-                                                static_cast<float>(freeH)));
-            view.addItem(sliceScene, sliceRenderer_);
-            if (!contourScene.contours.empty()) {
-                // Second layer: drawn WITHOUT clearing, so the contour strokes
-                // overwrite exactly their own pixels of the extracted slice.
-                view.addItem(contourScene, contourRenderer_);
-            }
-            core::DrawContext ctx;
-            auto r = view.renderWithEnsure(ctx);
-            if (r.failed())
-                return r;
-            auto b = view.blitTo(nullptr);
-            if (b.failed())
-                return b;
+        // The bridge path: sync → renderAll → presentAll blits each target
+        // 1:1 into its pinned window rect.
+        frame_.assign(views_.begin(), views_.end());
+        auto s = ctx_.bridge().sync(frame_, ctx_.store());
+        if (s.failed()) {
+            return s;
         }
-
-        // 3D view (bottom-right): the golden box mesh (FR-app.3), viewed from
-        // a camera derived from the CURRENT slice state — moving any slice
-        // moves the crosshair and refocuses the 3D view (the interplay).
-        {
-            boxCamera_ =
-                app::make3dCamera(sliceState_, box_->bounds(),
-                                  static_cast<float>(kViewportWidth) /
-                                      static_cast<float>(kViewportHeight));
-            render::ViewRect rect{grid[3].x, grid[3].y, grid[3].width,
-                                  grid[3].height};
-            render::View view(rect, glm::vec4(0.10f, 0.10f, 0.14f, 1.0f));
-            view.setCamera(boxCamera_);
-            view.addItem(boxScene_, boxRenderer_);
-            core::DrawContext ctx;
-            auto r = view.renderWithEnsure(ctx);
-            if (r.failed())
-                return r;
-            auto b = view.blitTo(nullptr);
-            if (b.failed())
-                return b;
+        auto r = ctx_.bridge().renderAll();
+        if (r.failed()) {
+            return r;
         }
-
+        auto p = ctx_.bridge().presentAll(nullptr);
+        if (p.failed()) {
+            return p;
+        }
         // Optional single-frame capture of the composed window content
         // (defect-verification aid): with RE_SAMPLE_DUMP_FRAME=<path> set,
         // the FIRST frame is written as a binary PPM (P6) so the live window
-        // path — the exact composition the interactive sample shows — can be
-        // verified pixel-wise without a display-side screenshot tool. Off by
-        // default and free when unset (pixels are read through
-        // utils::PixelReader, which delegates to the core/ readback anchor;
-        // no raw readback call lives in app/).
+        // path can be verified pixel-wise. Off by default and free when unset
+        // (pixels are read through utils::PixelReader, which delegates to the
+        // core/ readback anchor; no raw readback call lives in app/).
         if (!frameDumped_) {
             frameDumped_ = true;
             const char* dumpPath = std::getenv("RE_SAMPLE_DUMP_FRAME");
@@ -352,10 +283,9 @@ class MPRView final : public app::ISample {
                     dumpPath, static_cast<std::uint32_t>(width),
                     static_cast<std::uint32_t>(height));
                 if (dumped.ok()) {
-                    spdlog::info(
-                        "mpr sample: first-frame window capture "
-                        "written to {}",
-                        dumpPath);
+                    spdlog::info("mpr sample: first-frame window capture "
+                                 "written to {}",
+                                 dumpPath);
                 } else {
                     spdlog::error("mpr sample: frame capture failed: {}",
                                   dumped.error().message);
@@ -382,9 +312,10 @@ class MPRView final : public app::ISample {
                "contour,\n"
                "3D (bottom-right) = the golden box mesh, viewed from the "
                "slice-state crosshair.\n"
-               "The slices are EXTRACTED ON THE GPU from the cached 3D "
-               "texture (no CPU slicing): every few frames the next axis "
-               "advances one voxel layer and all views track it.\n"
+               "The whole scene is mediated by the broker (AppContext + "
+               "IViewBridge); the slices are EXTRACTED ON THE GPU from the "
+               "cached 3D texture: every few frames the next axis advances "
+               "one voxel layer and all views track it.\n"
                "Run the sample, then close the window (or set "
                "RE_SAMPLE_MAX_FRAMES) to exit.";
     }
@@ -392,8 +323,7 @@ class MPRView final : public app::ISample {
    private:
     /// One deterministic auto-scroll step every kFramesPerStep frames: the
     /// round-robin next axis advances +1, wrapping at its dimension (valid
-    /// voxel-layer indices are 0..dim-1). Pure integer state mutation — the
-    /// pixels move because the GPU re-extracts from the new plane uniform.
+    /// voxel-layer indices are 0..dim-1). Pure integer state mutation.
     void advanceSliceState() {
         ++frameCounter_;
         if (frameCounter_ % kFramesPerStep != 0u) {
@@ -419,12 +349,80 @@ class MPRView final : public app::ISample {
         }
     }
 
+    /// Push the CURRENT slice state into the scene values: each 2D view's
+    /// plane moves to its new voxel-index layer (setPlane bumps planeGen, so
+    /// the poll path re-translates exactly those fields), each contour
+    /// object's world-space plane tracks its display-frame coordinate (the
+    /// store push-dirty marks the change), and both cameras derive from the
+    /// current state.
+    void applySliceState() {
+        const std::array<MprAxis, 3> axes = {MprAxis::Transverse,
+                                             MprAxis::Coronal,
+                                             MprAxis::Sagittal};
+        const std::array<float, 3> raw = rawIndices(sliceState_);
+        const std::array<float, 3> held = heldCoords(sliceState_);
+
+        for (std::size_t i = 0; i < 3u; ++i) {
+            // View plane in VOXEL-INDEX space: the held axis coordinate is
+            // the raw layer index (PlaneMapper's center rule adds the +0.5).
+            // The normal is already world-space (display +Z) per the
+            // PlaneDesc contract; under the axis permutation the held dataset
+            // axis maps to display Z, so the world plane is exactly display
+            // z = heldIndex + 0.5.
+            glm::vec3 voxelPoint(0.0f);
+            voxelPoint[axisComponent(axes[i])] = raw[i];
+            scene::PlaneDesc plane;
+            plane.setNormal(glm::vec3(0.0f, 0.0f, 1.0f));
+            plane.setPoint(voxelPoint);
+            plane.setSpace(scene::Space::VoxelIndex);
+            views_[i].setPlane(plane);
+
+            // Contour plane in the object's LOCAL (= display) frame at the
+            // held coordinate — matching the post-model evaluation, exactly
+            // like the extraction plane's world result.
+            scene::ContourObject* /*borrow*/ co =
+                ctx_.store().getContourObjectMut(contourIds_[i]);
+            if (co != nullptr) {
+                scene::PlaneDesc contourPlane;
+                contourPlane.setNormal(glm::vec3(0.0f, 0.0f, 1.0f));
+                contourPlane.setPoint(glm::vec3(0.0f, 0.0f, held[i]));
+                contourPlane.setSpace(scene::Space::World);
+                if (!(co->plane == contourPlane)) {
+                    co->setPlane(contourPlane);
+                    ctx_.store().markDirty(contourIds_[i],
+                                           scene::FieldId::Plane);
+                }
+            }
+        }
+
+        // Cameras: the 2D slice cameras are static per axis extents; the 3D
+        // camera tracks the crosshair (the slice-state ↔ 3D-view interplay).
+        const float aspect3d = static_cast<float>(kViewportWidth) /
+                               static_cast<float>(kViewportHeight);
+        views_[3].mutateCamera([&](scene::Camera& c) {
+            c = broker::make3dCamera(app::sliceCrosshair(sliceState_),
+                                     box_->bounds(), aspect3d);
+        });
+    }
+
+    /// The dataset axis a slice view holds constant: Transverse → Z,
+    /// Coronal → Y, Sagittal → X (SPEC FR-app.2 pinned convention).
+    static constexpr int axisComponent(MprAxis axis) noexcept {
+        switch (axis) {
+            case MprAxis::Transverse:
+                return 2; // z
+            case MprAxis::Coronal:
+                return 1; // y
+            case MprAxis::Sagittal:
+                return 0; // x
+        }
+        return 2;
+    }
+
     /// Read the composed window content back (default framebuffer, via
     /// utils::PixelReader -> core::readRgba8) and write it as a binary PPM
     /// (P6, top-down rows). Diagnostic only: used to verify the LIVE sample
-    /// path pixel-wise (the readback tests render into offscreen FBOs and
-    /// cannot see a window-path regression like the camera-enclosure defect
-    /// that hid every contour quad).
+    /// path pixel-wise.
     data::Result<void> dumpWindowFramePpm(const std::string& path,
                                           std::uint32_t width,
                                           std::uint32_t height) {
@@ -464,49 +462,25 @@ class MPRView final : public app::ISample {
         return data::Result<void>(data::value);
     }
 
-    // Shared asset + renderer handles (ownership discipline): every member
-    // below that participates in a shared-ownership graph is a shared_ptr
-    // with a self-initializing NSDMI. Reordering these declarations can
-    // therefore never dangle or silently break init — a not-yet-initialized
-    // shared handle degrades to a typed per-draw error (e.g. registry code
-    // 4), surfaced via spdlog, never to undefined behavior.
     std::shared_ptr<data::VolumeDataset> dataset_;
     volume::TransferFunction tf_;   // immutable value; copied into instances
     app::MprSliceState sliceState_; // the live slice state (auto-scrolled)
     std::uint32_t frameCounter_{0}; // auto-scroll clock (frames rendered)
 
-    // The golden box mesh + material for the 3D view (FR-app.3); both shared:
-    // the mesh is co-owned by scene-side contour objects, the material by the
-    // render::MeshInstance.
-    std::shared_ptr<data::Mesh> box_;
-    std::shared_ptr<render::PhongMaterial> boxMaterial_;
+    // The golden box mesh (FR-app.3): co-owned with the scene objects that
+    // reference it (shared asset ref — no borrow, nothing to dangle).
+    std::shared_ptr<const data::Mesh> box_;
 
-    // The shared GPU asset store (unified multi-kind registry): ONE GL object
-    // per distinct CPU asset content, co-owned by every renderer here — the
-    // box geometry uploaded for the 3D view and the CT dataset's single R32F
-    // Texture3D resolved by the extraction renderer share one store instance.
-    std::shared_ptr<render::AssetRegistry> registry_{
-        std::make_shared<render::AssetRegistry>()};
-    render::MeshScene boxScene_;
-    render::Camera boxCamera_;
-    std::shared_ptr<render::MeshRenderer> boxRenderer_{
-        std::make_shared<render::MeshRenderer>(registry_)};
+    // The composition root (store + Broker + full mapper inventory + bridge).
+    broker::AppContext ctx_;
 
-    // Per-slice-view GPU extraction layers (FR-app.2): each frame builds the
-    // three VolumeSliceInstances fresh from the CURRENT slice state and draws
-    // them through one shared VolumeSliceRenderer as the first ReView layer.
-    // There is no CPU slice image anywhere on this path — a slice-index change
-    // is a uniform change, which is what makes scrolling interactive.
-    broker::Broker broker_;
-    std::shared_ptr<render::VolumeSliceRenderer> sliceRenderer_{
-        std::make_shared<render::VolumeSliceRenderer>(registry_)};
+    // Stable ids assigned by the store (add order: slices, box, contours).
+    std::array<uint64_t, 3> sliceIds_{};
+    uint64_t boxId_{0};
+    std::array<uint64_t, 3> contourIds_{};
 
-    // Per-slice-view GPU contour layers (FR-app.3): rebuilt per frame from the
-    // current planes through the Broker-mediated ContourMapper and drawn by
-    // the ContourRenderer as the second ReView layer. The Broker owns the
-    // mapper; app only fetches the type-erased IMapper interface from it.
-    std::shared_ptr<render::ContourRenderer> contourRenderer_{
-        std::make_shared<render::ContourRenderer>(registry_)};
+    std::array<scene::View, 4> views_{};
+    std::vector<scene::View> frame_{};
 
     /// One-shot guard for the RE_SAMPLE_DUMP_FRAME diagnostic capture.
     bool frameDumped_{false};
@@ -533,6 +507,6 @@ int main() {
 
     auto sample = std::make_unique<MPRView>(std::move(*volumeResult),
                                             makeCtTransferFunction());
-    re::app::SampleHarness harness(std::move(*windowResult), std::move(sample));
-    return harness.run(re::app::sampleMaxFrames(kDefaultFrames));
+    app::SampleHarness harness(std::move(*windowResult), std::move(sample));
+    return harness.run(app::sampleMaxFrames(kDefaultFrames));
 }

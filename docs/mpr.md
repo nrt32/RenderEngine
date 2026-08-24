@@ -172,7 +172,7 @@ The pure scaffolding types:
   (RGBA8 255,0,0,255); the GPU contour layer draws its opaque strokes in
   exactly this color.
 
-### `app::make3dCamera(state, meshBounds, aspect)` (`app/mpr_camera.hpp`)
+### `broker::make3dCamera(crosshairCenter, meshBounds, aspect)` (`broker/slice_display.hpp`; formerly `app::make3dCamera` in the deleted `app/mpr_camera.hpp`)
 
 The 3D-view camera helper (moved from the deleted `app/mpr_contour.*` in
 V3.8b): returns the plain `render::Camera` struct (no GL calls) — see the
@@ -209,7 +209,7 @@ sample-vs-test wiring divergence cannot reintroduce itself.
 
 ### `app::slicePlane`, `app::makeBoxMesh` (`app/mpr_slice.cpp`),
 ### `app::make3dCamera`, `app::makeSliceCamera`, `app::makeSliceModel`
-### (`app/mpr_camera.cpp`)
+### (`broker/slice_display.cpp`)
 
 The MPR scaffolding (see the sections above): the layout/slice/box helpers are
 pure CPU math (headless-testable, `app/mpr_slice.*` stays data/+-volume-only
@@ -342,7 +342,7 @@ smoke test spawns the sample subprocess.
 - **GL ownership**: raw `glXxx` calls live only under `core/`. The MPR sample
   renders through `render::VolumeSliceRenderer`, `render::ContourRenderer`,
   `render::MeshRenderer` and `core/` wrappers only (guardrail
-  `gpu_api_ownership`); `app/mpr_slice.*` and `app/mpr_camera.*` are GL-free.
+  `gpu_api_ownership`); `app/mpr_slice.*` is GL-free, and the display-camera factories now live in `broker/slice_display.*` (RE-side types may not be named under `app/`, enforced by the `acl_app_render` audit rule).
 - **Typed diagnostics**: frame/GL failures surface as typed `data::Result`
   errors (SPEC §5); never silent.
 - **Deterministic / single-threaded**: one window, one GL context, one render

@@ -35,7 +35,6 @@ target_link_libraries(re_imgui PUBLIC
 add_library(re_app STATIC
     sample_harness.cpp
     mpr_slice.cpp
-    mpr_camera.cpp
 )
 
 target_include_directories(re_app PUBLIC
@@ -43,14 +42,16 @@ target_include_directories(re_app PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../>
 )
 
-# re_render is linked for the render::Camera struct that mpr_camera.hpp
-# exposes (the 3D-view camera) and for the GPU contour layer types
-# (render/contour_renderer.hpp, V3.8b T11). No cycle: re_render never depends
-# on app/.
+# re_app is the shared sample harness + pure CPU scaffolding (data/+volume/
+# only — no render/ include anywhere in app/, enforced by the acl_app_render
+# audit rule). Samples resolve GL-adjacent needs through re_broker (the only
+# scene+render library): the bridge façade, the AppContext composition root,
+# and the slice-display camera factories (broker/slice_display.hpp).
 target_link_libraries(re_app PUBLIC
     re_core
     re_imgui
-    re_render
+    re_scene
+    re_broker
     spdlog::spdlog
     re_project_warnings
 )
@@ -74,19 +75,17 @@ if(RE_BUILD_SAMPLES OR RE_BUILD_TESTS)
             re_sample_slice re_sample_oit re_sample_mpr)
         target_link_libraries(${sample_target} PRIVATE
             re_app
-            re_render
+            re_broker
             re_io
             glm::glm
             spdlog::spdlog
             re_project_warnings
         )
-        # The MPR sample drives its contour layer through the broker
-        # mediation registry (ContourMapper, V3.8b T11), so it links the
-        # broker library directly. Its 2D views render GPU-extracted volume
-        # planes (render::VolumeSliceRenderer), and the RE_SAMPLE_DUMP_FRAME
-        # diagnostic frame capture reads pixels through utils::PixelReader,
-        # so MPR links utils too.
-        target_link_libraries(re_sample_mpr PRIVATE re_broker re_utils)
+        # All samples drive rendering through the broker façade (AppContext +
+        # IViewBridge, SPEC §11 ACL: app never includes render/). MPR also
+        # reads pixels for its RE_SAMPLE_DUMP_FRAME diagnostic through
+        # utils::PixelReader (core/ readback anchor), so MPR links utils.
+        target_link_libraries(re_sample_mpr PRIVATE re_utils)
         # Repo root, so samples locate the committed assets under data/ (SPEC
         # §7). Pointed at the SOURCE tree, not the build tree.
         target_compile_definitions(${sample_target} PRIVATE

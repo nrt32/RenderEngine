@@ -36,6 +36,8 @@
 
 #include <array>
 #include <cstdint>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
@@ -72,7 +74,8 @@ struct MprViewport {
 /// v1 holds each view on a fixed (constructor-chosen) index. The slice state
 /// DRIVES the MPR composition: each slice view's contour plane (`slicePlane`)
 /// and the 3D view's camera look-at target (app::make3dCamera,
-/// app/mpr_camera.hpp) are both derived from it — the slice-state ↔ 3D-view
+/// broker/slice_display.hpp) are both derived from it — the slice-state ↔
+/// 3D-view
 /// camera interplay (FR-app.3).
 struct MprSliceState {
     std::uint32_t transverseZ{0}; ///< Transverse slice index (constant Z).
@@ -189,5 +192,29 @@ glm::mat4 sliceVolumeModel(const data::VolumeDataset& dataset, MprAxis axis);
 /// (-Z, -X, -Y) first, near faces (+X, +Y) next, +Z last — with depth test off
 /// the near +Z face overdraws the far ones at the viewport center.
 data::Mesh makeBoxMesh(const glm::vec3& min, const glm::vec3& max);
+
+/// The model matrix scaling the shared unit quad [-1,1]^2 onto `image`'s pixel
+/// rectangle `[0,imgW]x[0,imgH]` at z = 0, so a textured slice image fills the
+/// viewport when viewed through the matching display camera. Pure math
+/// (formerly declared in the deleted app/mpr_camera.hpp — it builds no camera,
+/// only a transform): shared by the plane-path gate tests and the samples so
+/// the quad and any overlay layer share one display frame.
+inline glm::mat4 makeSliceModel(const data::Image& image) {
+    const float halfW = static_cast<float>(image.width()) * 0.5f;
+    const float halfH = static_cast<float>(image.height()) * 0.5f;
+    return glm::translate(glm::mat4(1.0f), glm::vec3(halfW, halfH, 0.0f)) *
+           glm::scale(glm::mat4(1.0f), glm::vec3(halfW, halfH, 1.0f));
+}
+
+/// The slice-state crosshair: the intersection point of the three slice planes
+/// in voxel-index units through the voxel centers — `(sagittalX + 0.5,
+/// coronalY + 0.5, transverseZ + 0.5)`. This is the look-at center the MPR 3D
+/// view's camera is built from (broker/slice_display.hpp `make3dCamera`), so
+/// changing the slice state moves the 3D view's focus.
+inline glm::vec3 sliceCrosshair(const MprSliceState& state) {
+    return glm::vec3(static_cast<float>(state.sagittalX) + 0.5f,
+                     static_cast<float>(state.coronalY) + 0.5f,
+                     static_cast<float>(state.transverseZ) + 0.5f);
+}
 
 } // namespace re::app
