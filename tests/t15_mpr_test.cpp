@@ -212,7 +212,8 @@ constexpr std::uint32_t kCenterX = kTargetWidth / 2u;  // 32
 constexpr std::uint32_t kCenterY = kTargetHeight / 2u; // 32
 constexpr float kAspect = 4.0f / 3.0f;
 
-// The color tolerance: 1/255 per FR-render.1 (SPEC §4 tolerances).
+// The color tolerance: 1/255, the finest difference an 8-bit readback can
+// resolve at all — one unit of the least significant byte per channel.
 constexpr int kColorTolerance = 1;
 
 // ---------------------------------------------------------------------------
@@ -397,7 +398,10 @@ TEST(T15Mpr, GpuContourMatchesAnalyticCurveForEachSliceView) {
         // model + the clip plane already expressed in that display frame
         // (constant Z at the sliced layer's coordinate).
         scene::ContourObject appContour;
-        appContour.mesh = box; // shared asset reference (T13)
+        // Shared-reference ownership: the object stores its asset as a
+        // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+        // while any scene object, store, or renderer still refers to them (T13).
+        appContour.mesh = box;
         appContour.transform = displayModels[view];
         appContour.plane.setNormal(glm::vec3(0.0f, 0.0f, 1.0f));
         appContour.plane.setPoint(glm::vec3(0.0f, 0.0f, plane.coordinate));
@@ -492,7 +496,9 @@ TEST(T15Mpr, GpuContourMatchesAnalyticCurveForEachSliceView) {
     }
 
     // Registry dedup across all three views' translations: the same CPU box
-    // registered three times leaves exactly ONE live GPU object (SPEC §9 V2.5).
+    // registered through three separate mapper calls must leave exactly ONE
+    // live GPU object — the store's whole reason to exist is that per-view
+    // translation never duplicates geometry.
     EXPECT_EQ(registry->slotCount(), 1u)
         << "one GPU object per individual CPU mesh, shared across views";
 }
@@ -575,7 +581,10 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
     render::ContourRenderer renderer(registry);
 
     scene::ContourObject appContour;
-    appContour.mesh = box; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    appContour.mesh = box;
     appContour.transform = axisDisplayModels()[0]; // Transverse: identity
     appContour.plane.setNormal(glm::vec3(0.0f, 0.0f, 1.0f));
     appContour.plane.setPoint(glm::vec3(0.0f, 0.0f, planeCoordinate));
@@ -591,7 +600,10 @@ TEST(T15Mpr, GpuContourVisibleThroughSampleViewComposition) {
     // PlaneMapper binds the shared unit quad — no hand-assembled
     // render::PlaneInstance anywhere.
     scene::PlaneObject appSlicePlane;
-    appSlicePlane.image = sliceImage; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    appSlicePlane.image = sliceImage;
     appSlicePlane.transform = app::makeSliceModel(*sliceImage);
     auto mappedPlane = planeMapper->map(appSlicePlane,
                                         scene::TranslateContext{});
@@ -722,7 +734,10 @@ TEST(T15Mpr, ContourMapperTranslatesSceneToRender) {
     ASSERT_EQ(registry->slotCount(), 0u);
 
     scene::ContourObject appContour;
-    appContour.mesh = box; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    appContour.mesh = box;
     appContour.transform = glm::translate(glm::mat4(1.0f),
                                           glm::vec3(1.0f, 2.0f, 3.0f));
     appContour.plane.setNormal(glm::vec3(0.0f, 1.0f, 0.0f));
@@ -742,8 +757,9 @@ TEST(T15Mpr, ContourMapperTranslatesSceneToRender) {
     EXPECT_NEAR(first->model[3][0], 1.0f, 1e-6f) << "model translation x";
     EXPECT_NEAR(first->model[3][2], 3.0f, 1e-6f) << "model translation z";
 
-    // Mapping the SAME CPU mesh again dedups to the existing GPU object
-    // (registry identity dedup, SPEC §9 V2.5).
+    // Mapping the SAME CPU mesh again must dedup to the existing GPU object:
+    // registry identity is content, not call count, so a second translate of
+    // one mesh aliases the first slot (slotCount stays 1, same handle).
     auto second = mapper.map(appContour, scene::TranslateContext{});
     ASSERT_TRUE(second.ok()) << second.error().message;
     EXPECT_EQ(registry->slotCount(), 1u)
@@ -751,15 +767,17 @@ TEST(T15Mpr, ContourMapperTranslatesSceneToRender) {
     EXPECT_EQ(first->mesh.index, second->mesh.index);
     EXPECT_EQ(first->mesh.generation, second->mesh.generation);
 
-    // Typed error (code 1): null mesh reference — never a crash (SPEC §5).
+    // Typed error (code 1): a null mesh reference must come back as a typed
+    // failure — never a crash and never a silently empty contour layer.
     scene::ContourObject nullMesh;
     auto errNullMesh = mapper.map(nullMesh, scene::TranslateContext{});
     ASSERT_TRUE(errNullMesh.failed());
     EXPECT_EQ(errNullMesh.error().code, 1);
 
     // Typed error (code 3): Space::VoxelIndex planes need the volume-context
-    // conversion ContourMapper deliberately does not perform — never a silent
-    // identity map (SPEC §5).
+    // conversion that ContourMapper deliberately does not perform, so the
+    // request is rejected instead of being silently mis-mapped into world
+    // space with wrong units.
     scene::ContourObject voxelContour = appContour;
     voxelContour.plane.setSpace(scene::Space::VoxelIndex);
     auto errVoxel = mapper.map(voxelContour, scene::TranslateContext{});
@@ -829,8 +847,9 @@ TEST(T15Mpr, ThreeDViewDrawsMesh) {
         std::make_shared<render::PhongMaterial>(k3dBaseColor);
     ASSERT_FALSE(material->isTransparent());
 
-    // The scene carries the box's AssetHandle (SPEC §9 V2.5), resolved by the
-    // renderer through the shared registry.
+    // The scene carries the box's AssetHandle, not mesh bytes: the renderer
+    // resolves it through the shared registry at draw time (RE-minimal
+    // hand-off — the render side never stores CPU geometry).
     auto registry = std::make_shared<render::AssetRegistry>();
     const auto handle = registry->registerAsset(boxValue);
     ASSERT_TRUE(handle.ok()) << handle.error().message;

@@ -1,5 +1,7 @@
 # scene/ — app-side scene value library (SPEC §3.1, V3.1) — GL/RE-free.
-# Links only to data/volume/glm per guardrail disposition_scene.
+# Links only to data/volume/glm: the layer disposition requires that scene/
+# never depends on render/ or GL (broker/ is the only library that may see
+# both sides), so the app-side scene stays portable and RE-agnostic.
 add_library(re_scene STATIC
     camera.cpp
     store.cpp

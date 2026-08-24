@@ -1,6 +1,6 @@
 #pragma once
 
-// core/logging.hpp — centralized spdlog initialization (SPEC S5, "Logging").
+// core/logging.hpp — centralized spdlog initialization (SPEC §5, "Logging").
 //
 // RenderEngine uses spdlog exclusively for diagnostics (no raw printf/cout).
 // This component configures a console sink with a deterministic,

@@ -57,7 +57,10 @@ class ViewBridge : public IViewBridge {
         return sync_->sync(views, scene);
     }
 
-    /// Extended sync with explicit layoutId persistence (SPEC §10.2 composite key).
+    /// Layout-scoped sync: same contract as `sync`, plus an explicit layoutId
+    /// so two layouts can hold different views under the same view ids without
+    /// colliding — the persistence key becomes (layout, view) instead of the
+    /// bare view id (composite-key identity).
     data::Result<void> syncWithLayout(std::span<const scene::View> views,
                                       const scene::SceneStore& scene, uint64_t layoutId) {
         return sync_->sync(views, scene, layoutId);

@@ -1,4 +1,4 @@
-# data/ — CPU containers, no GL (SPEC S3). Mesh + Image (T4) + VolumeDataset
+# data/ — CPU containers, no GL (SPEC §3). Mesh + Image (T4) + VolumeDataset
 # (T5) containers.
 
 add_library(re_data STATIC

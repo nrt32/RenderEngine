@@ -45,8 +45,11 @@ void bindDefaultFramebuffer() noexcept;
 void enableDepthTest() noexcept;
 void disableDepthTest() noexcept;
 
-/// Enable/disable blending (glEnable/glDisable GL_BLEND). v1 uses standard
-/// premultiplied-alpha compositing (SPEC §3 OIT); see docs/render.md.
+/// Enable/disable blending (glEnable/glDisable GL_BLEND). The engine's one
+/// blend mode is standard premultiplied-alpha compositing: transparent
+/// fragments are captured with colors already multiplied by alpha, so the
+/// final composite is a plain over-operator and draw order cannot change the
+/// result (see docs/render.md for the OIT composite math).
 void enableBlend() noexcept;
 void disableBlend() noexcept;
 
@@ -133,20 +136,21 @@ void resetDrawSpyCounts() noexcept;
 void invalidateDrawCache() noexcept;
 
 /// ---------------------------------------------------------------------------
-/// DrawContext — instance per FrameContext (SPEC §11.6 EOL-5, Q43:B SRP via
-/// instance, V3.2a). Replaces the global static cache in `core/draw.cpp`
-/// (`invalidateDrawCache()`) with a value-type instance that owns its own
-/// dirty-flag cache + spy. One DrawContext per FrameContext — no global
-/// `static Cache g_cache`; SRP via instance (one reason to change per frame),
-/// test determinism via spy per context (not global).
+/// DrawContext — one instance per FrameContext (2026-08-23 architecture
+/// review decision: per-frame state ownership beats a process-global cache;
+/// SPEC §11.6 EOL-5, V3.2a). Replaces the global static cache in
+/// `core/draw.cpp` (`invalidateDrawCache()`) with a value-type instance that
+/// owns its own dirty-flag cache + spy. One DrawContext per FrameContext —
+/// no global `static Cache g_cache`; single responsibility via instance (one
+/// reason to change per frame), test determinism via spy per context (not
+/// global).
 ///
 /// Intended use: `core::DrawContext ctx; ctx.setViewport(...);` per frame;
 /// duplicate `setViewport` on the SAME instance is a cache hit (exactly 1
 /// glViewport), but a fresh `DrawContext` starts cold (no cross-frame bleed).
-/// Header-only value type, no behavior change yet for the global free-function
-/// API (which remains for V2 regression lock); new code migrates to instance.
-/// ---------------------------------------------------------------------------
-
+/// Header-only value type; the global free-function API below remains for
+/// regression lock, and new code migrates to the instance.
+///
 /// Instance draw-state cache + spy (header-only value type).
 class DrawContext {
    public:

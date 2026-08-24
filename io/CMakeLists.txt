@@ -1,4 +1,4 @@
-# io/ — loaders ONLY, no GL (SPEC S3). Mesh + image (T4) and volume NRRD (T5)
+# io/ — loaders ONLY, no GL (SPEC §3). Mesh + image (T4) and volume NRRD (T5)
 # loaders. io/ consumes data/ containers (CPU, GL-free) and stb_image for
 # decoding.
 

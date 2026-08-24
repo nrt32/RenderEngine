@@ -30,8 +30,10 @@ class MeshObjectMapper : public ICachedMapper<scene::MeshObject, render::MeshIns
    public:
     using AppType = scene::MeshObject;
     using ReType = render::MeshInstance;
-    /// Construct with the shared asset registry (SHARED ownership, T13 —
-    /// co-owned with the renderers and other mappers; can never dangle).
+    /// Construct with the shared asset registry: the mapper co-owns the
+    /// registry via shared_ptr together with the renderers and the other
+    /// mappers, so the pointer can never dangle mid-frame and every component
+    /// sees the same dedup pool.
     explicit MeshObjectMapper(std::shared_ptr<render::AssetRegistry> registry)
         : registry_(std::move(registry)) {}
 

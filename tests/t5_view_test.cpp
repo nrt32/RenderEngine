@@ -160,8 +160,9 @@ void expectViewBColor(const std::vector<std::uint8_t>& pixel, const char* where)
 }
 
 struct TwoViewReViewFixture {
-    // T13 ownership: shared handles (registry/material/geometry/image) so the
-    // renderer and scene instances co-own what they reference.
+    // Shared handles (registry/material/geometry/image): the renderer and the
+    // scene instances CO-OWN everything they reference, so teardown order
+    // between renderer, scene, and fixture members cannot dangle anything.
     std::shared_ptr<render::AssetRegistry> registry{
         std::make_shared<render::AssetRegistry>()};
     std::shared_ptr<render::PhongMaterial> materialA{

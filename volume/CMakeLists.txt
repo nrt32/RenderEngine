@@ -1,4 +1,4 @@
-# volume/ — pure math, no GL (SPEC S3). T6: TransferFunction (FR-vol.1),
+# volume/ — pure math, no GL (SPEC §3). T6: TransferFunction (FR-vol.1),
 # ray/AABB sampling steps (FR-vol.3) and front-to-back ray-cast compositing
 # (FR-vol.2). Headless-testable; consumed by render/ (VolumeRenderer) in T9.
 

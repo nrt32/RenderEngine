@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RenderEngine loop environment (SPEC S8). Source before launching the loop:
+# RenderEngine loop environment (SPEC §8). Source before launching the loop:
 #   source tools/env.sh && tools/run_task.sh <N>
 # Kept project-local; nothing is written to the user's shell profile.
 

@@ -119,7 +119,9 @@ TEST(T4CameraMapper, TwoDPlaneComboProducesOrthoDeterministic) {
         << "makeOrthoForSlice view must be lookAt((0,0,-5),(0,0,0),(0,1,0)) within 1e-6";
 
     scene::TranslateContext ctx2d;
-    ctx2d.view.viewPlane = plane; // by-value plane snapshot (T13)
+    // By-value plane snapshot: the context is a self-contained copy, so
+    // the mapper never borrows live view state.
+    ctx2d.view.viewPlane = plane;
     ctx2d.view.viewMatrix = orthoCam.viewMatrix();
     ctx2d.view.projMatrix = orthoCam.projMatrix();
 
@@ -179,7 +181,9 @@ TEST(T4CameraMapper, ValidationErrorsOnMismatch) {
                                                              glm::vec3{0, 0, 1}, 5.0f);
 
     scene::TranslateContext ctx2d;
-    ctx2d.view.viewPlane = plane; // by-value plane snapshot (T13)
+    // By-value plane snapshot: the context is a self-contained copy, so
+    // the mapper never borrows live view state.
+    ctx2d.view.viewPlane = plane;
     scene::TranslateContext ctx3d; // nullptr
 
     broker::CameraMapper mapper;

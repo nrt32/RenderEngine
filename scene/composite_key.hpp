@@ -3,8 +3,9 @@
 // scene/composite_key.hpp — CompositeKey skeleton for persistence (SPEC §10.1, V3.2a T2).
 //
 // Content-addressed persistence key: persistence is by CompositeKey{Version,LayoutId,Id,Gen,Hash},
-// not by id alone or size. Version prevents aliasing across schema evolution (EOL cache-key
-// versioning per Software Patterns Lexicon + Dev Genius version-your-cache-keys 2025-12-25).
+// not by id alone or size. Version prevents aliasing across schema evolution: bump it whenever
+// the persisted field inventory or hash layout changes, and every key minted under the old
+// schema stops matching (old cache entries become unreachable instead of mis-decoded).
 // Hash is SHA-256-of-stable-bytes truncated to 64-bit (FNV-1a canonicalization here as
 // skeleton; stable bytes, not pointer). Two identical byte arrays produce identical hash
 // regardless of allocation address — hash of stable bytes, not pointer.
@@ -40,10 +41,16 @@ struct CompositeKey {
     uint64_t gen{0};
     /// Content hash of canonical stable bytes (FNV-1a 64-bit of canonicalized field bytes).
     uint64_t hash{0};
-    /// Stable type hash (hash of std::type_index name; 0 = unspecified for backwards-compat with T2).
+    /// Stable type hash (std::type_index hash; 0 = "unspecified", the value
+    /// early skeleton users wrote before the field existed — keeping 0 valid
+    /// means their persisted keys still compare equal after the field was
+    /// added).
     uint64_t typeHash{0};
 
-    /// Equality — all fields must match (explainable invariant: key is composite).
+    /// Equality requires EVERY field to match: a key is a composite identity,
+    /// and two keys differing in any single component (schema version, layout
+    /// scope, handle, generation, content, or type) denote different cached
+    /// state by definition.
     bool operator==(const CompositeKey& o) const noexcept {
         return version == o.version && layoutId == o.layoutId && id == o.id &&
                gen == o.gen && hash == o.hash && typeHash == o.typeHash;

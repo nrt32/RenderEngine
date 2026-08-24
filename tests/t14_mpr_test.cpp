@@ -83,7 +83,9 @@ constexpr std::array<app::MprViewport, 4> kExpectedViewports = {
     app::MprViewport{640, 0, 640, 480},    // 3D (bottom-right)
 };
 
-// The synthetic volume is 2x2x2 (SPEC §5 memory budget trivially met).
+// The synthetic volume is 2x2x2 voxels: the smallest volume that still
+// exercises trilinear sampling and voxel-index plane math, at 32 bytes of
+// voxel data — effectively free for any test environment.
 constexpr std::uint32_t kVolSize = 2u;
 
 /// value(x, y, z) = x + 2*y + 4*z  (x-fastest), the closed-form voxel field.
@@ -180,7 +182,9 @@ TEST(T14Mpr, ViewportLayoutMatchesSpecConstants) {
         EXPECT_EQ(views[i].y, kExpectedViewports[i].y);
         EXPECT_EQ(views[i].width, kExpectedViewports[i].width);
         EXPECT_EQ(views[i].height, kExpectedViewports[i].height);
-        // Each viewport is exactly the SPEC 640x480 size.
+        // Each viewport must be exactly the standard section size (640x480):
+        // the MPR grid is defined as four equal quadrants of a 1280x960
+        // window, and the analytic probe coordinates assume these constants.
         EXPECT_EQ(views[i].width, kViewportWidth);
         EXPECT_EQ(views[i].height, kViewportHeight);
     }

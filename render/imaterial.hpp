@@ -14,13 +14,16 @@
 namespace re::render {
 
 /// Abstraction over a surface material. Renderers depend on this interface,
-/// never on a concrete material class (dependency inversion, SPEC §3).
+/// never on a concrete material class (dependency inversion): a new lighting
+/// model plugs in behind IMaterial without MeshRenderer/View changes.
 class IMaterial {
    public:
     virtual ~IMaterial() = default;
 
-    /// True if the material has transparency (alpha < 1) and therefore must
-    /// be composited order-independently (SPEC §3 "OIT is a characteristic").
+    /// True when the surface must blend over what is behind it. OIT is
+    /// decided PER SCENE from this predicate: only scenes containing at least
+    /// one transparent-material instance pay for the order-independent
+    /// pipeline; fully opaque scenes stay on the plain forward path.
     virtual bool isTransparent() const noexcept = 0;
 
     /// The material's straight (non-premultiplied) RGBA base/diffuse color.

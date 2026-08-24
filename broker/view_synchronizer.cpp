@@ -1,4 +1,9 @@
-// broker/view_synchronizer.cpp — ViewSynchronizer full persistence (T6).
+// broker/view_synchronizer.cpp — ViewSynchronizer: diff app-side view state
+// against the cached render-side state and re-translate only what changed.
+// Persistence contract (SPEC §10.3/§10.4, landed by the V3.5 persistence
+// task): a camera rotation must NOT rebuild the ReView map or re-upload
+// assets — only the dirty field's mapper runs; views keep their identity and
+// GPU objects across sync() calls.
 
 #include "broker/view_synchronizer.hpp"
 
@@ -98,18 +103,24 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         return data::Result<void>(data::value);
     }
 
-    // Bounded scan: exercise dirtyFieldsSince for coverage (hybrid scan)
-    // We call scene dirty set (bounded) and our own push set.
+    // Poll path of the hybrid poll+push dirty contract: ask both stores what
+    // changed since our last generation and fold the answers into per-field
+    // decisions below. The sets are conservative (they may over-report), so a
+    // returned field only means "re-translate allowed", never "mandatory".
     auto sceneDirty = scene.dirtyFieldsSince(lastStoreGen_);
     (void)sceneDirty;
     auto selfDirty = dirtyFieldsSince(lastStoreGen_);
     (void)selfDirty;
 
-    // Lock the weak compositor back-pointer (T13): expired == not wired.
+    // Lock the weak compositor back-pointer: the synchronizer does not own
+    // the compositor, it co-exists with it inside ViewBridge; an expired
+    // pointer means the bridge was never wired (or already torn down).
     std::shared_ptr<ViewCompositor> compositor = compositor_.lock();
 
     if (!compositor) {
-        // T3 skeleton: just update lastStoreGen and return (no ReView yet)
+        // Not wired to a compositor yet (early skeleton wiring): consume the
+        // generations so stale dirt is not re-reported once a compositor is
+        // attached, then return without touching any render state.
         lastStoreGen_ = curGen;
         pushDirties_.clear();
         return data::Result<void>(data::value);
@@ -164,7 +175,10 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
                         hasPushDirty(av.id, scene::FieldId::CameraProj);
         if (camDirty) {
             scene::TranslateContext ctx;
-            ctx.view.viewPlane = av.plane; // by-value snapshot (T13: no borrow)
+            // The context carries the plane BY VALUE: a self-contained
+            // snapshot the mapper can hold without borrowing live view state,
+            // so translation cannot dangle if the app mutates the view later.
+            ctx.view.viewPlane = av.plane;
             ctx.view.viewMatrix = av.camera.viewMatrix();
             ctx.view.projMatrix = av.camera.projMatrix();
             auto* camMapper = broker_ ? broker_->get<broker::CameraMapper>() : nullptr;
@@ -194,7 +208,10 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
                     auto* meshMapper = broker_ ? broker_->get<broker::MeshObjectMapper>() : nullptr;
                     if (meshMapper) {
                         scene::TranslateContext ctx2;
-                        ctx2.view.viewPlane = av.plane; // by-value snapshot (T13)
+                        // By-value plane snapshot again: same self-contained
+                        // context contract as the camera path above — mappers
+                        // never borrow live view state.
+                        ctx2.view.viewPlane = av.plane;
                         ctx2.view.viewMatrix = av.camera.viewMatrix();
                         ctx2.view.projMatrix = av.camera.projMatrix();
                         auto r = meshMapper->mapCached(*mo, ctx2);

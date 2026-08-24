@@ -15,6 +15,10 @@
 #                                  (the FIRST '|' splits dir from regex, so the
 #                                  regex may itself contain '|' alternations)
 #   require_only   dir|regex        fail if regex matches outside dir AND has a match inside dir
+#   comment_context regex           fail if any comment block matching regex has
+#                                  <120 chars of explanatory prose in the block
+#                                  (citations excluded from the count); waivers
+#                                  via tools/comment_context.allow ERE lines
 # '#' lines are comments. Source-scanning rules scan ONLY the directories in
 # AUDIT_SOURCE_DIRS (default: src include lib engine tests app). If your
 # owning-module rule must cover dirs outside the defaults, override
@@ -129,3 +133,20 @@ ownership_raw_ptr_app	forbid_inside	app|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*
 
 # --- Build hygiene (generic, reinforce here) -----------------------------------
 # (built-in checks already cover warning-suppression flags/pragmas)
+
+# --- Comment hygiene: self-contained rationale beside every tag (T15) ----------
+# Every comment block that cites a spec/task tag must be understandable WITHOUT
+# opening SPEC.md or TASKS.md: it must carry at least 120 characters of
+# explanatory prose (counted as non-whitespace chars AFTER removing the tag
+# citations themselves, so repeating tags cannot pad the count). The citation
+# stays only as trailing provenance. Covered bare-tag shapes:
+#   T[0-9]+            task ids (T5, T14)          — word-boundary guarded
+#   V[0-9]+\.[0-9a-z]+ iteration/spec aliases (V3.4) — word-boundary guarded
+#   SPEC <n>           section citations in both house styles ("SPEC §3" and
+#                      the legacy "SPEC S3"; the sweep normalized legacy forms)
+# The engine extracts comment blocks (consecutive // lines; a comment after
+# code starts its own block; /* */ spans join) from *.h *.hpp *.c *.cpp *.cc
+# *.cxx *.glsl under AUDIT_SOURCE_DIRS. Waivers go in
+# tools/comment_context.allow, one ERE per line matched against the reported
+# `<path>` or `<path>:<line>` — keep it empty; prefer fixing the comment.
+comment_tag_context	comment_context	(^|[^[:alnum:]_])(T[0-9]+|V[0-9]+\.[0-9a-z]+)($|[^[:alnum:]_])|SPEC[[:space:]]+(§|S)?[0-9]+	every SPEC/task-tag citation needs >=120 chars of self-contained explanatory prose in its own comment block (state the constraint/design and why; keep the id only as trailing provenance)

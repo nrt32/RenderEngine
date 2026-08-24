@@ -598,8 +598,13 @@ class AssetRegistry {
 
     std::vector<Slot> slots_;
     std::vector<std::size_t> freeIndices_;
-    std::unordered_map<const data::Mesh*, AssetHandle> byObject_; // dual-key shim
-    std::unordered_map<uint64_t, AssetHandle> byHash_;           // content-hash key (T7)
+    // Dual-key mesh lookup: byObject_ maps the caller's CPU pointer to its
+    // slot for O(1) re-registration of the SAME object (a diagnostic shim,
+    // not the dedup key); byHash_ is the real identity map — content hash of
+    // stable bytes, so two distinct allocations with identical bytes alias
+    // one slot.
+    std::unordered_map<const data::Mesh*, AssetHandle> byObject_;
+    std::unordered_map<uint64_t, AssetHandle> byHash_;
     std::size_t liveCount_{0u};
 
     GpuSlotTable<data::VolumeDataset, core::Texture3D> volumes_;

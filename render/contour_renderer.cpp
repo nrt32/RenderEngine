@@ -1,5 +1,8 @@
-// render/contour_renderer.cpp — ContourRenderer implementation (FR-app.3,
-// V3.8b T11).
+// render/contour_renderer.cpp — ContourRenderer implementation: draw the
+// plane∩mesh OUTLINE as GPU line geometry. A geometry shader clips the mesh's
+// triangles against the cut plane and emits a screen-space-expanded line
+// strip for each intersection edge, so the contour is exact at any window
+// size and no CPU triangle/plane tests exist anywhere in the app path.
 
 #include "render/contour_renderer.hpp"
 

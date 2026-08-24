@@ -25,7 +25,9 @@
 namespace re::tests {
 namespace {
 
-// Explainable constants (FR-render.3 / SPEC §12.5).
+// Explainable constants: the alpha values probe every branch of the
+// isTransparent predicate (==1 opaque, <1 transparent, clamping at the [0,1]
+// boundaries) and the TF-vs-material boundary contract.
 constexpr float kOpaqueAlpha = 1.0f;       // isTransparent == false
 constexpr float kTransparentAlpha = 0.5f;  // isTransparent == true
 constexpr float kZeroAlpha = 0.0f;         // fully transparent

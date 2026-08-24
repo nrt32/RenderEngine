@@ -1,6 +1,6 @@
 #pragma once
 
-// data/mesh.hpp — CPU triangle mesh container (SPEC S3, FR-data.1/FR-data.2).
+// data/mesh.hpp — CPU triangle mesh container (SPEC §3, FR-data.1/FR-data.2).
 //
 // data/ is GL-free: this container stores positions and triangle indices on
 // the CPU and derives two analytically-computed properties at construction:
@@ -25,7 +25,7 @@ struct Aabb {
 };
 
 /// CPU triangle mesh: positions + triangle indices + derived face normals and
-/// AABB (SPEC S3 "data/ CPU containers, no GL").
+/// AABB (SPEC §3 "data/ CPU containers, no GL").
 ///
 /// Built through `fromTriangles` from pre-validated data: the io/ loaders
 /// validate index ranges before constructing a Mesh, so a malformed file can

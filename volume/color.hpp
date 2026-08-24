@@ -1,6 +1,6 @@
 #pragma once
 
-// volume/color.hpp — RGBA color for the volume/ pure-math module (SPEC S3,
+// volume/color.hpp — RGBA color for the volume/ pure-math module (SPEC §3,
 // FR-vol.1/2).
 //
 // volume/ is GL-free: a color is four plain floats, not a GL type. RgbaColor

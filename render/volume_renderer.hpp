@@ -63,13 +63,15 @@ namespace re::render {
 /// box of the 8 transformed corners of [0,1]^3 (exact for axis-aligned
 /// scaling/translation, which is the v1 case).
 struct VolumeInstance {
-    /// Shared reference to the immutable volume dataset (T13: co-owned with
-    /// the scene object / store — no raw borrow to track).
+    /// Shared reference to the immutable volume dataset: the instance
+    /// CO-OWNS the voxels together with the scene object/store, so a stored
+    /// scene can never outlive (or dangle) the bytes it ray-casts.
     std::shared_ptr<const data::VolumeDataset> dataset = nullptr;
-    /// Transfer function carried BY VALUE (T13: a TF is a small immutable
-    /// control-point ramp — copying it into the per-frame instance removes
-    /// the last borrow from this path; null-pointer hazards are impossible).
-    /// Default ramp = grayscale black→white (the identity display ramp).
+    /// Transfer function carried BY VALUE on purpose: a TF is a small,
+    /// immutable control-point ramp, and copying it into the per-frame
+    /// instance removes the last raw borrow from this path — there is no
+    /// pointer that could dangle or be nulled mid-frame. Default ramp =
+    /// grayscale black→white (the identity display ramp).
     volume::TransferFunction transferFunction{
         {{0.0f, {0, 0, 0, 0}}, {1.0f, {1, 1, 1, 1}}}};
     glm::mat4 model{1.0f};
@@ -115,9 +117,10 @@ class VolumeRenderer : public IRenderer {
     data::Result<void> render(const VolumeScene& scene, const Camera& camera,
                               const RenderTarget& target);
 
-    /// IRenderer dispatch (SPEC §9 V2.3): renders when `scene` holds a
-    /// VolumeScene; returns a typed error when it holds a different technique
-    /// (SPEC §5, no exceptions).
+    /// Type-erased dispatch entry (the IRenderer contract): renders when
+    /// `scene` holds a VolumeScene; a scene of any OTHER technique is rejected
+    /// with a typed error rather than thrown or silently ignored, so a wrong
+    /// renderer/scene pairing surfaces at the call site.
     data::Result<void> render(const Scene& scene, const Camera& camera,
                                const RenderTarget& target) override;
 

@@ -1,4 +1,8 @@
-// render/mesh_geometry.cpp — MeshGeometry implementation (SPEC §3).
+// render/mesh_geometry.cpp — GPU-resident mesh geometry: upload CPU vertex/
+// index bytes once into GL buffers and draw them by handle. Uploads go through
+// the core/ RAII wrappers (render/ never issues raw GL calls), so buffer
+// lifetime is tied to this object and GL state errors surface as typed
+// results instead of silent no-ops.
 
 #include "render/mesh_geometry.hpp"
 

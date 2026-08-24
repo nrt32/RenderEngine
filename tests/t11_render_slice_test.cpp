@@ -79,7 +79,8 @@ constexpr glm::vec3 kPlaneNormal(0.0f, 0.0f, 1.0f);
 constexpr glm::vec3 kPlanePoint(0.0f, 0.0f, 0.0f);
 
 // Characteristic extent of the cube (max dimension of `[-1,1]^3` is 2): used
-// to express the 1e-4 RELATIVE plane-distance tolerance (SPEC §4).
+// to express the plane-distance tolerance as a RELATIVE 1e-4 of the geometry,
+// so the tolerance stays meaningful if the cube is ever rescaled.
 constexpr float kMeshExtent = 2.0f;
 constexpr float kRelativeTolerance = 1e-4f;
 constexpr float kPlaneDistanceTolerance = kRelativeTolerance * kMeshExtent;

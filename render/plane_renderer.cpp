@@ -1,5 +1,9 @@
-// render/plane_renderer.cpp — PlaneRenderer implementation (SPEC §3,
-// FR-render.5).
+// render/plane_renderer.cpp — PlaneRenderer implementation: draw an image-
+// backed quad (textured plane) with a dedicated shader program. The renderer
+// owns the GPU path end-to-end — texture upload from the CPU image, the unit
+// quad geometry, and the draw call all live here — so app code never parses
+// plane corners or builds vertex buffers by hand; it only supplies the
+// PlaneInstance values.
 
 #include "render/plane_renderer.hpp"
 

@@ -48,8 +48,10 @@ namespace re::render {
 
 /// One GPU contour layer: the plane∩mesh outline of one mesh asset.
 struct ContourObject {
-    /// Handle of the contoured mesh's GPU geometry in the shared registry
-    /// (RE-minimal: AssetHandle only, SPEC §12.4).
+    /// Handle of the contoured mesh's GPU geometry in the shared registry —
+    /// RE-minimal by design: this render-side object references geometry
+    /// through a handle and never stores mesh bytes, positions, or app-side
+    /// description values.
     AssetHandle mesh{};
     /// World-space clip plane whose intersection with the mesh is outlined.
     ClipPlane plane{};

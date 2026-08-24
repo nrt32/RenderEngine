@@ -157,8 +157,9 @@ TEST(T7RenderMesh, OpaqueQuadCenterPixelMatchesBaseColor) {
     ASSERT_FALSE(material->isTransparent());
 
     data::Mesh quad = makeQuadMesh();
-    // The scene carries the mesh's AssetHandle (SPEC §9 V2.5), resolved by the
-    // renderer through the shared asset registry (shared handle, T13).
+    // The scene carries the mesh's AssetHandle, not mesh bytes: the renderer
+    // resolves it through the shared asset registry at draw time (RE-minimal
+    // hand-off; the shared handle means registry and scene co-own the slot).
     auto registry = std::make_shared<render::AssetRegistry>();
     const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;

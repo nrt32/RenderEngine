@@ -2,16 +2,20 @@
 
 // scene/translate_context.hpp — TranslateContext skeleton (SPEC §11.4, V3.2a T2).
 //
-// ISP-segregated context for mapper translation (Q40:B — not flat viewPlane+view+volumeModel
-// fat, not God ReView*). Segregated into ViewContext (needed by every mapper) and
-// optional VolumeContext (only where Space::VoxelIndex→world conversion is needed:
-// PlaneMapper, VolumeSliceObjectMapper). Mappers take const TranslateContext& but touch
-// only their role; CameraMapper touches only view, PlaneMapper touches volume for
-// voxel→world math but not viewPlane when hasPlane()==false (LSP — null viewPlane valid
-// for 3D). Uniform map(AppT,Ctx) keeps substitutability (LSP).
+// Role-segregated context for mapper translation: instead of one flat fat
+// struct {viewPlane, view, volumeModel, dims} that every mapper must accept,
+// or a live back-reference to the whole render-side view (which would couple
+// scene/ to render/), the context is split into ViewContext (needed by every
+// mapper) and an optional VolumeContext (only where Space::VoxelIndex→world
+// conversion is needed: PlaneMapper, VolumeSliceObjectMapper). Mappers take
+// const TranslateContext& but touch only their role; CameraMapper touches only
+// view, PlaneMapper touches volume for voxel→world math but not viewPlane when
+// hasPlane()==false. Keeping the absent plane VALID for 3D keeps mappers
+// substitutable across 2D and 3D views (no strengthened preconditions).
 //
-// Pure value type, header-only, GL-free, RE-free (scene/ owns the type; broker/ will
-// re-export via alias in T3). No behavior change yet — unblocks T3/T5/T6.
+// Pure value type, header-only, GL-free, RE-free (scene/ owns the type;
+// broker/ re-exports it via alias so consumers include broker only).
+// No behavior change yet — unblocks T3/T5/T6.
 
 #include <optional>
 
@@ -70,8 +74,11 @@ struct VolumeContext {
 /// Segregated translate context — value type, header-only.
 ///
 /// Composition: ViewContext (always) + optional<VolumeContext> (only for voxel→world).
-/// ISP fix over flat {viewPlane,view,volumeModel,dims} fat struct; not God ReView*.
-/// Follows SPEC §11.4.1 ISP/LSP binding (Q40:B 2026-08-23).
+/// Design decision (2026-08-23 architecture review): mappers receive this
+/// role-segregated snapshot rather than a flat fat struct {viewPlane, view,
+/// volumeModel, dims} or a live back-reference to the whole ReView — a mapper
+/// then depends only on the data its translation actually reads, and the null
+/// plane stays a first-class "3D view" state instead of an edge case.
 struct TranslateContext {
     /// View role — present for every mapper.
     ViewContext view{};

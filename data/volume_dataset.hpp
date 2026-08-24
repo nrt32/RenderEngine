@@ -1,6 +1,6 @@
 #pragma once
 
-// data/volume_dataset.hpp — CPU volumetric dataset container (SPEC S3,
+// data/volume_dataset.hpp — CPU volumetric dataset container (SPEC §3,
 // FR-data.3).
 //
 // data/ is GL-free: this container stores a 3D grid of scalar voxel values in
@@ -39,7 +39,7 @@ class VolumeDataset {
     ///   - every size is >= 1;
     ///   - `voxels.size() == sizeX * sizeY * sizeZ` (x-fastest order:
     ///     index = x + sizeX*y + sizeX*sizeY*z);
-    ///   - the product of the sizes fits in the memory budget (SPEC S5:
+    ///   - the product of the sizes fits in the memory budget (SPEC §5:
     ///     <= 128^3 for v1 sample data).
     VolumeDataset(std::uint32_t sizeX, std::uint32_t sizeY, std::uint32_t sizeZ,
                   std::vector<float> voxels);

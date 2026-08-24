@@ -1,4 +1,4 @@
-// tests/t3_core_gl_test.cpp — T3 gate tests (FR-core.1/2, SPEC S4).
+// tests/t3_core_gl_test.cpp — T3 gate tests (FR-core.1/2, SPEC §4).
 //
 // Asserts:
 //   (1) create -> bind -> destroy of each RAII GL object (VAO, VBO, EBO,
@@ -10,7 +10,7 @@
 //       substring "ERROR: 0:7", with no crash;
 //   (4) destructor order frees the GL objects (no GL errors on teardown).
 //
-// Shaders are written in GLSL 450, not 460 (SPEC S8): the headless gate runs
+// Shaders are written in GLSL 450, not 460 (SPEC §8): the headless gate runs
 // on llvmpipe, whose GLSL compiler caps at 4.50; a GL 4.6 core context
 // accepts 4.50 shaders.
 //
@@ -78,7 +78,7 @@ std::vector<std::uint8_t> fillGradient(std::size_t byteCount) {
 }
 
 // ---------------------------------------------------------------------------
-// GLSL 450 shader sources (SPEC S8: gate/test shaders are GLSL 450, not 460).
+// GLSL 450 shader sources (SPEC §8: gate/test shaders are GLSL 450, not 460).
 // Line numbers are part of the FR-core.2 golden diagnostics: in
 // kMalformedVertexShader the known-bad token `glibberish` sits on line 7.
 // ---------------------------------------------------------------------------

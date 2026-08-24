@@ -1,4 +1,4 @@
-# core/ — GL foundation (SPEC S3). This is the SOLE owner of raw GL calls;
+# core/ — GL foundation (SPEC §3). This is the SOLE owner of raw GL calls;
 # render/, app/, tests/ use core/ wrappers. io/, data/, volume/ are GL-free.
 
 add_library(re_core STATIC

@@ -30,7 +30,12 @@ struct Aabb {
 /// - `mesh` is the GPU handle (never raw mesh bytes)
 /// - `model` is the world model matrix (uniform-ready)
 /// - `bounds` is the world-space AABB `worldBounds` (derived: `model * localBounds`)
-/// - `material` is the deduped RE material handle (never verbatim desc)
+/// - `material` is a SHARED pointer to a canonical store-owned IMaterial
+///   (never a verbatim app-side desc). NOTE: the scene→RE material hand-off
+///   that would populate this from the registry's value-dedup pool is NOT
+///   wired yet (§12.2 MaterialMapper work) — mappers currently leave it null
+///   and renderers fall back to their fixed Phong path; do not rely on it
+///   being non-null.
 struct ReMeshObject {
     AssetHandle mesh{};              ///< GPU handle (AssetRegistry) — handle
     glm::mat4 model{1.0f};           ///< world model matrix — uniform-ready

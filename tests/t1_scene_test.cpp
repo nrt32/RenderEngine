@@ -2,7 +2,8 @@
 //
 // Asserts: re::scene target builds; scene/Camera pan/rotate/zoom/orbit produce
 // analytic viewMatrix (lookAt) within 1e-6; SceneStore/ViewStore add/remove
-// preserves generation bump; disposition_scene (no render/ include) is audit-green.
+// preserves generation bump; the layer disposition holds (no scene/ source
+// includes render/ — the audit rule checks this mechanically).
 
 #include <gtest/gtest.h>
 
@@ -144,7 +145,10 @@ TEST(T1SceneStore, AddRemovePreservesGenerationBump) {
 
     auto mesh = std::make_shared<data::Mesh>(makeDummyMesh());
     scene::MeshObject obj;
-    obj.mesh = mesh; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    obj.mesh = mesh;
     obj.transform = glm::mat4{1.0f};
 
     uint64_t id1 = store.addMeshObject(obj);
@@ -180,7 +184,10 @@ TEST(T1SceneStore, VolumeAndPlaneAddRemove) {
     scene::SceneStore store;
     auto vol = std::make_shared<data::VolumeDataset>(makeDummyVolume());
     scene::VolumeObject vobj;
-    vobj.volume = vol; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    vobj.volume = vol;
     uint64_t vid = store.addVolumeObject(vobj);
     EXPECT_EQ(store.storeGeneration(), 1u);
     EXPECT_NE(store.getVolumeObject(vid), nullptr);
@@ -195,7 +202,10 @@ TEST(T1SceneStore, DirtyFieldsSince) {
     EXPECT_TRUE(store.dirtyFieldsSince(0).empty()) << "no dirty when storeGen==lastGen (0==0)";
     auto mesh = std::make_shared<data::Mesh>(makeDummyMesh());
     scene::MeshObject obj;
-    obj.mesh = mesh; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    obj.mesh = mesh;
     store.addMeshObject(obj);
     auto dirty = store.dirtyFieldsSince(0);
     // Bounded set: implementation returns exactly 4 fields (Transform, Material, TransferFunction, Items) when storeGen != lastGen.
@@ -299,7 +309,10 @@ TEST(T1ScenePlaneDesc, SpaceAndGeneration) {
 TEST(T1SceneObject, PureValueCopyable) {
     auto mesh = std::make_shared<data::Mesh>(makeDummyMesh());
     scene::MeshObject a;
-    a.mesh = mesh; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    a.mesh = mesh;
     a.transform = glm::translate(glm::mat4{1.0f}, glm::vec3{1, 2, 3});
     scene::MeshObject b = a; // copyable
     EXPECT_EQ(b.mesh, a.mesh);

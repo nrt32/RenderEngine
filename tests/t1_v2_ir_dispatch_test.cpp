@@ -88,11 +88,13 @@ constexpr std::uint32_t kTargetHeight = 64u;
 constexpr std::uint32_t kCenterX = kTargetWidth / 2u;  // 32
 constexpr std::uint32_t kCenterY = kTargetHeight / 2u; // 32
 
-// The color tolerance: 1/255 per FR-render.1/4/5/6.
+// The color tolerance: 1/255, the finest difference an 8-bit readback can
+// resolve at all — one unit of the least significant byte per channel.
 constexpr int kColorTolerance = 1;
 
 // The typed error code the IRenderer dispatch uses for a scene of the wrong
-// technique (SPEC §5; distinct from code 1 used for invalid target sizes).
+// technique. Distinct from code 1 (invalid target size), so a test can tell
+// "wrong renderer/scene pairing" from "bad target" by number alone.
 constexpr int kWrongSceneKindErrorCode = 2;
 
 // The clip plane of the golden FR-render.4 setup: z = 0 (normal +Z through the
@@ -282,8 +284,9 @@ TEST(T1V2IrDispatch, MeshDispatchRendersGoldenQuad) {
     auto material =
         std::make_shared<render::PhongMaterial>(kBaseColor);
     data::Mesh quad = makeQuadMesh();
-    // The scene carries the mesh's AssetHandle (SPEC §9 V2.5); the renderer
-    // resolves it through the shared registry.
+    // The scene carries the mesh's AssetHandle, not mesh bytes: the renderer
+    // resolves it through the shared registry at draw time (RE-minimal
+    // hand-off — the render side never stores CPU geometry).
     auto registry = std::make_shared<render::AssetRegistry>();
     const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
@@ -344,7 +347,10 @@ TEST(T1V2IrDispatch, PlaneDispatchRendersSolidImage) {
 TEST(T1V2IrDispatch, VolumeDispatchRendersAnalyticRayCast) {
     auto dataset = std::make_shared<const data::VolumeDataset>(makeUniformDataset());
     volume::TransferFunction tf = makeGreenTransferFunction();
-    render::VolumeInstance instance{dataset, tf, glm::mat4(1.0f)}; // shared + by value (T13)
+    // Ownership split in the instance: voxels by SHARED reference (co-owned,
+    // cannot dangle), transfer function BY VALUE (small immutable ramp —
+    // copying removes the last pointer from the path).
+    render::VolumeInstance instance{dataset, tf, glm::mat4(1.0f)};
     render::VolumeScene scene;
     scene.volumes.push_back(instance);
 

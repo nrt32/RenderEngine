@@ -21,7 +21,7 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
 endif()
 
-# Warnings-as-errors is mandated by the project (SPEC S5, NFR Build hygiene).
+# Warnings-as-errors is mandated by the project (SPEC §5, NFR Build hygiene).
 # It is applied ONLY to RenderEngine's own targets (re_core, re_tests, ...) —
 # NOT to third-party dependencies fetched via FetchContent, which must build
 # with their own flags. The re_project_warnings interface below is linked by
@@ -35,7 +35,7 @@ target_compile_options(re_project_warnings INTERFACE
 )
 
 # ---------------------------------------------------------------------------
-# Third-party dependencies — pinned via FetchContent GIT_TAG (SPEC S2/S6).
+# Third-party dependencies — pinned via FetchContent GIT_TAG (SPEC §2/§6).
 # Every GIT_TAG is a release tag or commit SHA (never a branch name).
 # ---------------------------------------------------------------------------
 include(FetchContent)
@@ -53,7 +53,7 @@ FetchContent_Declare(
 )
 
 # glad2 v2.0.8 — GL loader generator (glad_add_library). Pinned to the v2.0.8
-# release commit (SPEC S2: commit 73db193).
+# release commit (SPEC §2: commit 73db193).
 FetchContent_Declare(
     glad
     GIT_REPOSITORY https://github.com/Dav1dde/glad.git
@@ -135,7 +135,7 @@ if(NOT glad_POPULATED)
     FetchContent_Populate(glad)
 endif()
 add_subdirectory("${glad_SOURCE_DIR}/cmake" "${CMAKE_CURRENT_BINARY_DIR}/glad-cmake" EXCLUDE_FROM_ALL)
-# Generate + build a static glad loader for OpenGL 4.6 core (SPEC S2). The
+# Generate + build a static glad loader for OpenGL 4.6 core (SPEC §2). The
 # loader is built against the same GLFW-provided context in core/.
 glad_add_library(glad_gl_core_46 STATIC API gl:core=4.6 REPRODUCIBLE)
 

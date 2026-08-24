@@ -68,15 +68,22 @@ class AssetStore {
     AssetStore(AssetStore&&) noexcept = default;
     AssetStore& operator=(AssetStore&&) noexcept = default;
 
-    /// Register mesh (the store takes a SHARED reference — co-ownership, T13);
-    /// dedup by content hash (identical bytes alias; not pointer).
+    /// Register `mesh` and return a generational handle. The store takes a
+    /// SHARED reference (co-ownership: the CPU bytes stay alive while either
+    /// the store or the caller holds them). Dedup is by CONTENT hash —
+    /// registering the same bytes through another pointer aliases the same
+    /// slot instead of duplicating GPU-side state downstream.
     data::Result<BrokerAssetHandle> registerAsset(SharedMesh mesh);
 
-    /// Resolve handle to the live asset as a SHARED reference (co-owned —
-    /// no borrow to track); error code 2 for stale generation+1.
+    /// Resolve a handle to its live asset as a SHARED reference (callers
+    /// co-own the bytes, so nothing can dangle behind their back). A stale
+    /// handle — one minted before the slot's last free/reuse — resolves to
+    /// typed error code 2, never to wrong bytes and never a crash.
     data::Result<SharedMesh> resolve(const BrokerAssetHandle& handle) const;
 
-    /// Free slot; bumps generation so handle becomes stale.
+    /// Free the slot `handle` refers to; the slot's generation is bumped so
+    /// every outstanding handle to it becomes permanently stale (detectable,
+    /// not dangling).
     data::Result<void> unregister(const BrokerAssetHandle& handle);
 
     /// Live slot count.

@@ -44,9 +44,11 @@ class IDirtyTracker {
 
 /// Job executor abstraction for OCP threading (SPEC §10.4, NFR §5).
 ///
-/// Header-only concept with inline synchronous fallback (execute(f){f();})
-/// keeps ASan/UBSan 1-thread determinism; future ThreadPoolExecutor (V4)
-/// injected without editing broker/scene (OCP via parallelFor).
+/// The default is an inline synchronous fallback (execute(f){f();}), which
+/// keeps test runs single-threaded and therefore deterministic under
+/// ASan/UBSan. A real thread pool can later be injected behind this same
+/// interface without editing broker/ or scene/ code — callers depend only on
+/// the abstraction (open/closed principle via parallelFor).
 class IJobExecutor {
    public:
     virtual ~IJobExecutor() = default;

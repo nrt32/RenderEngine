@@ -23,7 +23,9 @@
 namespace re::tests {
 namespace {
 
-// Explainable constants (SPEC §12.4, TASKS T9).
+// Explainable constants: the binding inventory (docs/re_scene_inventory.md)
+// documents EXACTLY 6 tables and 23 fields — the gate pins both numbers so a
+// field added to any Re* type without updating the inventory fails here.
 constexpr int kExpectedTables = 6;  // ReMeshObject, ReVolumeObject, RePlaneObject, ReView, ReScene, AssetHandle
 constexpr int kExpectedFields = 23; // total fields across 6 tables
 const std::vector<std::string> kExpectedTableNames = {
@@ -170,7 +172,10 @@ TEST(T9ReSceneInventory, ReSceneDirectoryHasOnlyReferenceHeader) {
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         if (entry.is_regular_file()) ++fileCount;
     }
-    // T9 only lands mesh_object.hpp as reference; Volume/Contour deferred (T8).
+    // This iteration lands ONLY mesh_object.hpp as the reference Re* type;
+    // Volume/Contour expansions are deliberately deferred (Phong-only,
+    // no new technique headers) — a second file appearing here means someone
+    // expanded render/re_scene without a task mandating it.
     EXPECT_EQ(fileCount, 1) << "render/re_scene/ must contain exactly 1 file (mesh_object.hpp) this iteration";
     EXPECT_TRUE(std::filesystem::exists(dir / "mesh_object.hpp"));
 }

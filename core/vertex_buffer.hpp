@@ -2,7 +2,7 @@
 
 // core/vertex_buffer.hpp — RAII vertex buffer object (VBO) wrapper.
 //
-// core/ is the SOLE owner of raw GL calls (SPEC S3, guardrail
+// core/ is the SOLE owner of raw GL calls (SPEC §3, guardrail
 // gpu_api_ownership): higher layers consume GL only through these wrappers.
 // This header is GL-call-free; the raw glGenBuffers/glBufferData calls live in
 // vertex_buffer.cpp.

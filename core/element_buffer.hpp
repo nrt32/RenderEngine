@@ -2,7 +2,7 @@
 
 // core/element_buffer.hpp — RAII element buffer object (EBO) wrapper.
 //
-// core/ is the SOLE owner of raw GL calls (SPEC S3, guardrail
+// core/ is the SOLE owner of raw GL calls (SPEC §3, guardrail
 // gpu_api_ownership); this header is GL-call-free. The raw glGenBuffers /
 // glBufferData calls live in element_buffer.cpp.
 

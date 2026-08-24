@@ -19,8 +19,10 @@
 
 namespace re::io {
 
-/// Enumerated diagnostics codes carried by data::Error::code for image load
-/// failures (typed, SPEC S5). Public API: lives in the header.
+/// Error codes carried by data::Error::code for image load failures. Typed
+/// and enumerated (never thrown): callers branch on the code instead of
+/// parsing messages, and the numeric values are stable API — tests assert
+/// them.
 enum class ImageLoadError : int {
     FileOpen = 1,        ///< The file could not be opened for reading.
     Decode = 2,          ///< stb_image could not decode the file.

@@ -1,5 +1,8 @@
-// render/mesh_renderer.cpp — MeshRenderer implementation (SPEC §3,
-// FR-render.1).
+// render/mesh_renderer.cpp — MeshRenderer implementation: opaque Phong
+// pass first, then (only when the scene actually contains transparent
+// instances) the order-independent-transparency pass. Geometry is resolved by
+// AssetHandle through the shared asset store, so the same CPU mesh uploaded
+// twice still draws from one GPU buffer.
 
 #include "render/mesh_renderer.hpp"
 
@@ -134,8 +137,11 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
         return data::makeError<void>(1, "MeshRenderer: invalid target size");
     }
 
-    // Determine whether any mesh is transparent (SPEC §3: OIT is a
-    // characteristic of the scene; engaged only when transparency is present).
+    // OIT is a scene-level characteristic, not a renderer setting: scan the
+    // instances once and engage the transparency pipeline only when at least
+    // one material is actually transparent. Pure-opaque scenes therefore keep
+    // the cheap direct path (and its deterministic pixel output), while
+    // blended scenes pay for the linked-list composite.
     bool anyTransparent = false;
     for (const MeshInstance& instance : scene.meshes) {
         if (instance.material && instance.material->isTransparent()) {
@@ -219,9 +225,11 @@ data::Result<void> MeshRenderer::drawLayer(const MeshScene& scene, const Camera&
         if (!instance.material || instance.mesh.isNull()) {
             continue;
         }
-        // For View compositing we draw every instance (transparent handling via
-        // OIT is orchestrated by View if needed; the gate's opaque mesh is drawn
-        // here). The single-item render() path handles OIT separately.
+        // drawLayer draws EVERY resolvable instance unconditionally: it is
+        // one layer of a multi-layer view composition, so transparency
+        // handling (OIT) is orchestrated by the View, not re-decided per
+        // layer here. The direct single-item render() path owns its own
+        // opaque/OIT split — that split must not be duplicated in this loop.
         auto geometry = geometryFor(instance.mesh);
         if (geometry.failed()) {
             return data::makeError<void>(geometry.error().code, geometry.error().message);

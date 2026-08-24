@@ -226,7 +226,9 @@ std::vector<std::uint8_t> renderAndReadPixel(const render::VolumeScene& scene,
 TEST(T9RenderVolume, CenterPixelMatchesAnalyticRayCast) {
     auto dataset = std::make_shared<const data::VolumeDataset>(makeUniformDataset());
     volume::TransferFunction tf = makeGreenTransferFunction();
-    render::VolumeInstance instance{dataset, tf, glm::mat4(1.0f)}; // dataset shared, TF by value (T13)
+    // Ownership split in the instance: voxels by SHARED reference (co-owned,
+    // cannot dangle), transfer function BY VALUE (small immutable ramp).
+    render::VolumeInstance instance{dataset, tf, glm::mat4(1.0f)};
     render::VolumeScene scene;
     scene.volumes.push_back(instance);
 

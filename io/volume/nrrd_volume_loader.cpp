@@ -16,7 +16,7 @@
 namespace re::io {
 namespace {
 
-// v1 memory budget cap (SPEC S5): every axis <= kMaxAxis and the voxel count
+// v1 memory budget cap (SPEC §5): every axis <= kMaxAxis and the voxel count
 // <= 128^3, so the float32 storage stays <= 8 MiB. Enforced at load time so an
 // oversized file fails with a typed error instead of a large allocation.
 constexpr std::uint32_t kMaxAxis = 128;
@@ -30,7 +30,9 @@ struct ScalarInfo {
 };
 
 // The supported scalar types, mirroring tools/convert_nrrd.py's TYPE_MAP (the
-// canonical format the committed NRRDs are written in, SPEC S7).
+// canonical writer for the committed NRRD datasets): the loader accepts
+// exactly the element types that tool emits, so a dataset converted once is
+// always loadable here and vice versa.
 const ScalarInfo* scalarInfo(const std::string& type) {
     static const struct {
         const char* name;
@@ -302,7 +304,10 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
         }
     }
 
-    // --- v1 memory budget cap (SPEC S5): every axis <= 128, count <= 128^3 --
+    // --- v1 memory budget cap: every axis <= 128, total voxels <= 128^3 ------
+    // The cap keeps a worst-case volume at 128^3 * 4 = 8 MiB (float32), so
+    // test environments with modest RAM/VRAM can never be pushed into swap by
+    // a hostile header; larger datasets are a deliberate future decision.
     const std::uint64_t voxelCount =
         sizesValue[0] * sizesValue[1] * sizesValue[2];
     if (sizesValue[0] > kMaxAxis || sizesValue[1] > kMaxAxis ||
@@ -310,7 +315,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
         return data::makeError<data::VolumeDataset>(
             static_cast<int>(VolumeLoadError::BudgetExceeded),
             "NRRD loader: '" + path + "': dimensions " + *sizes +
-                " exceed the v1 memory budget cap (<= 128^3, SPEC S5)");
+                " exceed the v1 memory budget cap (<= 128^3, SPEC §5)");
     }
 
     // --- type ----------------------------------------------------------------
@@ -322,7 +327,10 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
                 "' (v1 supports int8..int64, uint8..uint64, float, double)");
     }
 
-    // --- encoding (v1: raw only, SPEC S7) ------------------------------------
+    // --- encoding (v1: raw only) ---------------------------------------------
+    // "raw" means an uncompressed voxel block; gzip/bzip2 NRRD encodings are
+    // rejected with UnsupportedEncoding rather than half-supported, so a
+    // successfully loaded dataset always has a plain, seekable byte layout.
     const std::string* encoding = field("encoding");
     const std::string encodingValue =
         encoding == nullptr ? std::string("raw") : *encoding; // NRRD default.
@@ -331,7 +339,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
             static_cast<int>(VolumeLoadError::UnsupportedEncoding),
             "NRRD loader: '" + path + "': encoding '" + encodingValue +
                 "' is not supported (v1 loads uncompressed 'raw' blocks only, "
-                "SPEC S7)");
+                "SPEC §7)");
     }
 
     // --- endian (default little, per the NRRD spec) --------------------------

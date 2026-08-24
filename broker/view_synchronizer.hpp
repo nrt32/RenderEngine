@@ -60,8 +60,11 @@ class ViewSynchronizer : public IDirtyTracker {
                              const scene::SceneStore& scene,
                              uint64_t layoutId = 0);
 
-     /// Push opt-in: mark a specific view's field dirty off-frame (SPEC §10.4).
-     void markDirty(uint64_t viewId, scene::FieldId field) noexcept override;
+    /// Push opt-in: mark one view's field dirty between frames so the next
+    /// sync() re-translates exactly that field even if the poll path (store
+    /// generation compare) saw no change — the push half of the hybrid
+    /// poll+push dirty contract.
+    void markDirty(uint64_t viewId, scene::FieldId field) noexcept override;
 
      /// For test: last synced store generation (poll early-out).
      uint64_t lastStoreGen() const noexcept { return lastStoreGen_; }

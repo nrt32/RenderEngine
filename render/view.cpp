@@ -1,4 +1,9 @@
-// render/view.cpp — View (ReView) implementation (SPEC §3.2 V3.4 T5).
+// render/view.cpp — View (ReView) implementation: each screen section owns a
+// ViewTarget (its own framebuffer), binds it, and draws its IRenderable item
+// list in order; `blitToWindow` then copies every target into its rect of the
+// shared window framebuffer. The view never inspects concrete renderer types
+// — items are type-erased draw calls — so adding a technique needs no View
+// change.
 
 #include "render/view.hpp"
 

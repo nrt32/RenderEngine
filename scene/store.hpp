@@ -17,7 +17,11 @@
 
 namespace re::scene {
 
-/// Field identifier for per-field generation tracking (SPEC §10.4).
+/// Field identifier for per-field generation tracking: each enum value names
+/// one independently mutable part of the scene/view state, so a camera orbit
+/// can bump only `CameraView` while layout and items stay clean. Mappers use
+/// these generations as cache keys to skip re-translating unchanged input
+/// (SPEC §10.4).
 enum class FieldId : uint8_t {
     Rect = 0,
     Plane = 1,
@@ -76,10 +80,17 @@ class SceneStore {
     /// Global store generation — monotonic, bumped on every add/remove/mutate.
     uint64_t storeGeneration() const noexcept { return storeGen_; }
 
-    /// Single entry point for field mutation bump (SPEC §10.4 SRP God-object guard).
+    /// Single mutation entry point: every field change goes through `bump`
+    /// (never a direct storeGen increment elsewhere), which keeps the global
+    /// generation and the dirty log consistent and makes "who changed since
+    /// when" answerable from one place — a guard against store methods each
+    /// inventing their own dirty-tracking side channels (SPEC §10.4).
     void bump(FieldId field) noexcept;
 
-    /// Push opt-in: mark a specific id/field dirty (hybrid poll+push, SPEC §10.4).
+    /// Push opt-in: mark a specific id/field dirty without the caller needing
+    /// to mutate through a getter first. Complements the poll path (storeGen
+    /// compare) so consumers can choose cheap polling, precise push, or both
+    /// — the hybrid poll+push contract (SPEC §10.4).
     void markDirty(uint64_t id, FieldId field) noexcept;
 
     /// Counts.
@@ -87,7 +98,12 @@ class SceneStore {
     size_t volumeObjectCount() const noexcept { return volumeObjects_.size(); }
     size_t planeObjectCount() const noexcept { return planeObjects_.size(); }
 
-    /// Dirty fields since gen (bounded set — for T1 returns all if storeGen changed).
+    /// Fields changed since `lastGen`. Coarse but bounded: any store change
+    /// since `lastGen` returns the FULL field set rather than walking the
+    /// whole dirty log, so worst-case cost is O(1) per call and consumers can
+    /// rely on "conservative superset" semantics — re-translating everything
+    /// changed is always safe, just not minimal. Precise per-field filtering
+    /// from the recorded dirty log is a later refinement on the same API.
     std::vector<FieldId> dirtyFieldsSince(uint64_t lastGen) const noexcept;
 
     // --- Asset identity V3.6 (T7) — SceneStore-owned AssetId -----------------
@@ -95,8 +111,10 @@ class SceneStore {
     /// with the caller, T13); dedup by content hash (identical bytes alias).
     data::Result<AssetId> registerMeshAsset(
         AssetRegistry<data::Mesh>::SharedAsset mesh);
-    /// Resolve AssetId to its live asset as a SHARED reference (co-owned —
-    /// no borrow to track, T13); stale generation+1 → code 2.
+    /// Resolve AssetId to its live asset as a SHARED reference (the caller
+    /// co-owns the bytes, so nothing can dangle behind its back); a handle
+    /// whose generation is older than the slot's (freed or reused slot) comes
+    /// back as error code 2 — never a crash and never a dangling pointer.
     data::Result<AssetRegistry<data::Mesh>::SharedAsset> resolveMeshAsset(
         AssetId id) const;
     /// Free asset slot; bumps generation.
@@ -136,7 +154,9 @@ class SceneStore {
     // Hybrid push log: each bump/markDirty records (gen, field) for bounded scan.
     std::vector<std::pair<uint64_t, FieldId>> dirtyLog_{};
 
-    // Asset registries — typed store per kind, extensible via template (T7).
+    // Asset registries: one typed store per CPU asset kind (mesh, volume,
+    // image). The template makes adding a new kind a one-line member instead
+    // of a parallel hand-written registry per type (open/closed extension).
     AssetRegistry<data::Mesh> meshAssets_;
     AssetRegistry<data::VolumeDataset> volumeAssets_;
     AssetRegistry<data::Image> imageAssets_;

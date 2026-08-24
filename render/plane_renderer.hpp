@@ -101,11 +101,12 @@ struct PlaneGeometry {
 /// a stored scene can never outlive the bytes it draws.
 struct PlaneInstance {
     /// Shared reference to the plane geometry (PlaneMapper's program-duration
-    /// shared unit quad). Null is invalid: render/drawLayer return a typed
-    /// error instead of dereferencing (SPEC §5).
+    /// shared unit quad). Null is invalid by contract: render/drawLayer
+    /// reject it with a typed error instead of dereferencing, so a
+    /// half-constructed instance can never reach GL.
     std::shared_ptr<const PlaneGeometry> geometry = nullptr;
     /// Shared reference to the source image (RGBA8/RGB/gray). Null is
-    /// invalid: render/drawLayer return a typed error (SPEC §5).
+    /// invalid for the same reason: a typed error, never a null-texture draw.
     std::shared_ptr<const data::Image> image = nullptr;
     glm::mat4 model{1.0f};
 };
@@ -145,9 +146,10 @@ class PlaneRenderer : public IRenderer {
     data::Result<void> render(const PlaneScene& scene, const Camera& camera,
                               const RenderTarget& target);
 
-    /// IRenderer dispatch (SPEC §9 V2.3): renders when `scene` holds a
-    /// PlaneScene; returns a typed error when it holds a different technique
-    /// (SPEC §5, no exceptions).
+    /// Type-erased dispatch entry (the IRenderer contract): renders when
+    /// `scene` holds a PlaneScene; a scene of any OTHER technique is rejected
+    /// with a typed error rather than thrown or silently ignored, so a wrong
+    /// renderer/scene pairing surfaces at the call site.
     data::Result<void> render(const Scene& scene, const Camera& camera,
                                const RenderTarget& target) override;
 

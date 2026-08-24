@@ -5,13 +5,14 @@
 //
 // The types every renderer shares: Camera and RenderTarget (moved here from
 // mesh_renderer.hpp so renderers that need only the shared types no longer pull
-// in the whole mesh renderer), the Scene dispatch variant (kept for direct
-// single-item render() tests; View's heterogeneous list uses IRenderable type
-// erasure instead — Scene variant will be replaced by AssetId handles in T7),
-// and the pure abstract IRenderer render contract implemented by the four
-// per-technique renderers (Mesh/Plane/Volume/SliceRenderer). The multi-view
-// workstream (T2, SPEC §9 V2.4) dispatched scene objects to the correct renderer
-// through this interface; T5 replaces it with render::View (ReView) per screen
+// in the whole mesh renderer), the Scene dispatch variant (kept ONLY for the
+// direct single-item render() tests; the View path carries items as
+// type-erased IRenderable draw calls instead, and scenes reference assets by
+// copyable AssetHandle rather than raw CPU pointers), and the pure abstract
+// IRenderer render contract implemented by the four per-technique renderers
+// (Mesh/Plane/Volume/SliceRenderer). The multi-view workstream (SPEC §9 V2.4)
+// dispatched scene objects to the correct renderer through this interface;
+// the V3 view redesign (T5) replaces it with render::View (ReView) per screen
 // section + IRenderable list (render/view.hpp) and deletes ViewRenderer.
 // render::ViewRect remains here as the shared window-section handle.
 //

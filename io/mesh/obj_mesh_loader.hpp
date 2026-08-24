@@ -23,8 +23,9 @@
 
 namespace re::io {
 
-/// Enumerated diagnostics codes carried by data::Error::code for OBJ load
-/// failures (typed, SPEC S5). Public API: lives in the header.
+/// Error codes carried by data::Error::code for OBJ load failures. Typed and
+/// enumerated (never thrown): callers branch on the code instead of parsing
+/// messages, and the numeric values are stable API — tests assert them.
 enum class MeshLoadError : int {
     FileOpen = 1,    ///< The file could not be opened for reading.
     VertexParse = 2, ///< A "v" line does not contain three valid floats.

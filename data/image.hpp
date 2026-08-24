@@ -1,6 +1,6 @@
 #pragma once
 
-// data/image.hpp — CPU image container (SPEC S3, FR-io.3).
+// data/image.hpp — CPU image container (SPEC §3, FR-io.3).
 //
 // data/ is GL-free: this container holds decoded pixel data only. Images are
 // produced by the io/ image loader (stb) and consumed by core/ textures and

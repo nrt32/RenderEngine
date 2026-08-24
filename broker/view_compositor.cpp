@@ -1,4 +1,10 @@
-// broker/view_compositor.cpp — ViewCompositor full persistence (T6).
+// broker/view_compositor.cpp — ViewCompositor: owns the render-side ReView
+// map keyed by the stable (layout, view) identity and drives draw+present.
+// Persistence contract (SPEC §10.2/§10.3, landed by the V3.5 persistence
+// task): views are looked up by STABLE key, never recreated wholesale, so a
+// camera change or 2D→3D toggle keeps the same ReView object (and its GPU
+// targets) alive across frames; only genuinely new/removed layout entries
+// create/destroy ReViews.
 
 #include "broker/view_compositor.hpp"
 

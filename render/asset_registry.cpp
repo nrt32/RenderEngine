@@ -1,5 +1,9 @@
-// render/asset_registry.cpp — the unified typed multi-kind GPU asset store
-// (SPEC §9 V2.5 mesh kind; SPEC §7 T14 volume/image kinds).
+// render/asset_registry.cpp — the unified typed multi-kind GPU asset store:
+// one GL object per distinct asset CONTENT, globally across every renderer
+// that resolves through it. Mesh geometry, volume textures, image textures,
+// and canonical material values each live in their own generational,
+// ref-counted slot table keyed by content hash (never by CPU pointer), with
+// typed stale-handle errors on every lookup path.
 
 #include "render/asset_registry.hpp"
 

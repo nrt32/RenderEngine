@@ -175,7 +175,10 @@ TEST(T3Broker, SameMeshPointerDedupsViaBroker) {
     auto mesh = std::make_shared<data::Mesh>(makeTriangleMesh());
     scene::MeshObject obj1;
     obj1.id = 1;
-    obj1.mesh = mesh; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    obj1.mesh = mesh;
     obj1.transform = glm::mat4(1.0f);
     obj1.generation = 0;
     scene::MeshObject obj2;
@@ -216,7 +219,10 @@ TEST(T3Broker, ForwardingRenderStillGreen) {
     auto quad = std::make_shared<data::Mesh>(makeQuadMesh());
     scene::MeshObject appObj;
     appObj.id = 42;
-    appObj.mesh = quad; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    appObj.mesh = quad;
     appObj.transform = glm::mat4(1.0f);
     scene::TranslateContext ctx;
     auto mapped = mapper->map(appObj, ctx);
@@ -236,7 +242,9 @@ TEST(T3Broker, ForwardingRenderStillGreen) {
 
     render::MeshInstance inst;
     inst.mesh = mapped->mesh;
-    inst.material = material; // shared reference (T13)
+    // The material is stored as a SHARED reference: scene instance and
+    // renderer co-own it, so neither can dangle the other at teardown.
+    inst.material = material;
     inst.model = glm::mat4(1.0f);
     render::MeshScene scene;
     scene.meshes.push_back(inst);

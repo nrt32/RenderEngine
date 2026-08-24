@@ -2,7 +2,7 @@
 
 // core/framebuffer.hpp — RAII framebuffer object (FBO) wrapper.
 //
-// core/ is the SOLE owner of raw GL calls (SPEC S3, guardrail
+// core/ is the SOLE owner of raw GL calls (SPEC §3, guardrail
 // gpu_api_ownership); this header is GL-call-free. The raw
 // glGenFramebuffers / glFramebufferTexture2D calls live in framebuffer.cpp.
 

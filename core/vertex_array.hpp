@@ -2,7 +2,7 @@
 
 // core/vertex_array.hpp — RAII vertex array object (VAO) wrapper.
 //
-// core/ is the SOLE owner of raw GL calls (SPEC S3, guardrail
+// core/ is the SOLE owner of raw GL calls (SPEC §3, guardrail
 // gpu_api_ownership); this header is GL-call-free. The raw
 // glGenVertexArrays / glVertexAttribPointer calls live in vertex_array.cpp.
 

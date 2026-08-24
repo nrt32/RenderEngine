@@ -1,7 +1,7 @@
 #pragma once
 
 // volume/ray_caster.hpp — ray/AABB intersection, sampling-step computation and
-// front-to-back ray-cast compositing math (SPEC S3 "volume/ pure math",
+// front-to-back ray-cast compositing math (SPEC §3 "volume/ pure math",
 // FR-vol.2/FR-vol.3).
 //
 // volume/ is GL-free pure math, headless-testable: these functions compute the

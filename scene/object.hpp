@@ -57,8 +57,10 @@ struct MeshObject {
     }
 };
 
-/// Mesh slice object: same asset/transform/presentation but rendered as clipped slice.
-/// Plane lives on View, not here (SPEC §11.4).
+/// Mesh slice object: same asset/transform/presentation triple as MeshObject,
+/// but rendered clipped by a cut plane. It deliberately does NOT carry the
+/// plane itself — the plane belongs to the View (all slice objects in one view
+/// are cut by the same plane), so it lives with the view state, not per object.
 struct MeshSliceObject {
     ObjectId id{0};
     /// Shared reference to the immutable mesh asset (co-owned; see MeshObject).

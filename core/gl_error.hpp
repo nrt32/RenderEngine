@@ -1,6 +1,6 @@
 #pragma once
 
-// core/gl_error.hpp — GL error-state wrapper (SPEC S3, GL ownership guardrail).
+// core/gl_error.hpp — GL error-state wrapper (SPEC §3, GL ownership guardrail).
 //
 // Tests and higher layers must NOT call raw GL functions directly; they consume
 // GL through core/ wrappers. This component exposes the current GL error state

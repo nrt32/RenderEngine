@@ -291,7 +291,10 @@ class MPRView final : public app::ISample {
             transverseImage_, coronalImage_, sagittalImage_};
         for (std::size_t i = 0u; i < 3u; ++i) {
             scene::PlaneObject appPlane;
-            appPlane.image = sliceImages[i]; // shared asset reference (T13)
+            // Shared-reference ownership: the object stores its asset as a
+            // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+            // while any scene object, store, or renderer still refers to them (T13).
+            appPlane.image = sliceImages[i];
             appPlane.transform = app::makeSliceModel(*sliceImages[i]);
             scene::TranslateContext planeCtx;
             auto mappedPlane = planeMapper->map(appPlane, planeCtx);
@@ -311,7 +314,10 @@ class MPRView final : public app::ISample {
 
         for (std::size_t i = 0u; i < 3u; ++i) {
             scene::ContourObject appContour;
-            appContour.mesh = box_; // shared asset reference (T13)
+            // Shared-reference ownership: the object stores its asset as a
+            // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+            // while any scene object, store, or renderer still refers to them (T13).
+            appContour.mesh = box_;
             appContour.transform = axisModel[i];
             // The clip plane in the object's local (= display) frame: constant
             // Z at the sliced voxel layer's coordinate.
@@ -513,8 +519,11 @@ class MPRView final : public app::ISample {
     std::shared_ptr<data::Mesh> box_;
     std::shared_ptr<render::PhongMaterial> boxMaterial_;
 
-    // The shared GPU asset registry (SPEC §9 V2.5) — one GL object per CPU
-    // mesh, co-owned by every renderer/mapper that resolves through it.
+    // The shared GPU asset registry: one GL object per distinct CPU mesh
+    // content, co-owned by every renderer and mapper that resolves through
+    // it — so the box uploaded for the 3D view, the slice views, and the
+    // contour layer all reference the SAME GPU geometry instead of tripling
+    // the upload.
     std::shared_ptr<render::AssetRegistry> registry_{
         std::make_shared<render::AssetRegistry>()};
     render::MeshScene boxScene_;

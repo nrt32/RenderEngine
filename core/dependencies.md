@@ -2,7 +2,7 @@
 
 `core/` is the GL foundation module. All third-party dependencies it builds
 against are pinned in the repository's root `CMakeLists.txt` via
-`FetchContent_Declare(... GIT_TAG ...)` (SPEC S2, S6 dependency lock). Each
+`FetchContent_Declare(... GIT_TAG ...)` (SPEC §2, §6 dependency lock). Each
 `GIT_TAG` is a release tag or commit SHA — never a branch name.
 
 | Dependency | Pinned tag | Used by |

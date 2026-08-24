@@ -2,12 +2,12 @@
 
 // core/shader_program.hpp — RAII GLSL shader program with typed diagnostics.
 //
-// core/ is the SOLE owner of raw GL calls (SPEC S3, guardrail
+// core/ is the SOLE owner of raw GL calls (SPEC §3, guardrail
 // gpu_api_ownership); this header is GL-call-free (glm is a pure math
 // dependency). The raw glCreateShader / glCompileShader / glLinkProgram calls
 // live in shader_program.cpp.
 //
-// Diagnostics (SPEC S4 FR-core.2): compile/link failures are reported as a
+// Diagnostics (SPEC §4 FR-core.2): compile/link failures are reported as a
 // typed data::Error carrying an enumerated code (ShaderError) and a message
 // built from the driver's info log. Each driver diagnostic line is normalized
 // to start with the project's golden diagnostic prefix "ERROR: " followed by
@@ -32,8 +32,10 @@
 
 namespace re::core {
 
-/// Enumerated diagnostics codes carried by data::Error::code for shader
-/// failures (typed, SPEC S5). Public API: lives in the header.
+/// Error codes carried by data::Error::code for shader failures. Typed and
+/// enumerated (never thrown): callers branch on the code to distinguish a
+/// compile failure in one stage from a link failure, and the numeric values
+/// are stable API — tests assert them.
 enum class ShaderError : int {
     VertexCompile = 1,   ///< Vertex shader failed to compile.
     GeometryCompile = 2, ///< Geometry shader failed to compile.

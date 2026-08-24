@@ -1,4 +1,7 @@
-// app/sample_harness.cpp — shared sample harness implementation (T12).
+// app/sample_harness.cpp — shared sample harness implementation: window +
+// GL context setup, per-frame ImGui overlay, and the run loop that calls the
+// sample's renderFrame. All samples share this scaffolding so a sample file
+// contains only scene/camera/renderer wiring, never platform code.
 
 #include "app/sample_harness.hpp"
 
@@ -27,8 +30,8 @@ bool SampleHarness::initImGui() {
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     // Do not persist an imgui.ini beside the sample binary/cwd: samples are
-    // deterministic and must not leave state files behind (SPEC §5
-    // determinism).
+    // gate-driven and must be deterministic — every run starts from the same
+    // UI state, and the repo tree stays clean of runtime droppings.
     io.IniFilename = nullptr;
 
     if (!ImGui_ImplGlfw_InitForOpenGL(window_.handle(), true)) {

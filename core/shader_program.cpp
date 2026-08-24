@@ -17,7 +17,7 @@ namespace re::core {
 namespace {
 
 /// Normalize a driver info log so every non-empty diagnostic line carries the
-/// project's golden diagnostic prefix "ERROR: " (SPEC S4 FR-core.2) followed
+/// project's golden diagnostic prefix "ERROR: " (SPEC §4 FR-core.2) followed
 /// by the driver's own location + message, e.g.
 ///
 ///   ERROR: 0:7(27): error: `glibberish' undeclared

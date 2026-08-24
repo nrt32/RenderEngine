@@ -1,5 +1,9 @@
-// render/volume_renderer.cpp — VolumeRenderer implementation (SPEC §3,
-// FR-render.6).
+// render/volume_renderer.cpp — VolumeRenderer implementation: GPU ray-cast
+// through the uploaded 3D texture (front-to-back compositing under a transfer
+// function). Sampling runs in texture space so the math is independent of the
+// dataset's world placement; the model matrix only positions the slab
+// intersection. Center-pixel output is deterministic for fixed cameras, which
+// is what the analytic readback gates rely on.
 
 #include "render/volume_renderer.hpp"
 

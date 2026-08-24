@@ -58,7 +58,10 @@ TEST(T6Persistence, CameraRotateKeepsReViewIdentity) {
     scene::SceneStore sceneStore;
     auto quad = std::make_shared<data::Mesh>(makeQuad());
     scene::MeshObject mo;
-    mo.mesh = quad; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    mo.mesh = quad;
     mo.transform = glm::mat4(1.0f);
     uint64_t meshId = sceneStore.addMeshObject(mo);
 
@@ -130,7 +133,10 @@ TEST(T6Persistence, Toggle2D3DKeepsIdentityNoChurn) {
     scene::SceneStore sceneStore;
     auto quad = std::make_shared<data::Mesh>(makeQuad());
     scene::MeshObject mo1;
-    mo1.mesh = quad; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    mo1.mesh = quad;
     uint64_t id1 = sceneStore.addMeshObject(mo1);
     scene::MeshObject mo2;
     mo2.mesh = quad; // same content dedup -> same AssetHandle
@@ -369,13 +375,15 @@ TEST(T6Persistence, HybridDirtyTracking) {
     scene::CompositeKey k3{1, 10, 42, 7, 0xDEADBEEFULL, 0x1234ULL};
     EXPECT_NE(k1, k3) << "different typeHash must not equal (explainable scope)";
 
-    // SceneStore dirtyFieldsSince bounded (shared-owned: the tracker below
-    // co-owns it, T13)
+    // The store is held via shared_ptr because the dirty-tracker facet below
+    // co-owns it: either side may outlive the other in a test.
     auto s2 = std::make_shared<scene::SceneStore>();
     uint64_t sGen0 = s2->storeGeneration();
     data::Mesh m = makeQuad();
     scene::MeshObject mo;
-    mo.mesh = std::make_shared<data::Mesh>(std::move(m)); // shared ref (T13)
+    // The mesh enters as a SHARED reference: object and test co-own the
+    // bytes, so neither can dangle the other.
+    mo.mesh = std::make_shared<data::Mesh>(std::move(m));
     s2->addMeshObject(mo);
     auto sd = s2->dirtyFieldsSince(sGen0);
     EXPECT_FALSE(sd.empty()) << "SceneStore dirtyFieldsSince must be bounded non-empty after add";

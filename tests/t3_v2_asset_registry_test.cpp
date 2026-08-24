@@ -94,7 +94,8 @@ constexpr std::uint32_t kTargetHeight = 64u;
 constexpr std::uint32_t kCenterX = kTargetWidth / 2u;  // 32
 constexpr std::uint32_t kCenterY = kTargetHeight / 2u; // 32
 
-// The color tolerance: 1/255 per SPEC §4.
+// The color tolerance: 1/255, the finest difference an 8-bit readback can
+// resolve at all — one unit of the least significant byte per channel.
 constexpr int kColorTolerance = 1;
 
 // The registry's typed-error codes (render/asset_registry.cpp).
@@ -229,7 +230,9 @@ TEST(T3V2AssetRegistry, SameMeshRegisteredTwiceIsOneGpuObject) {
 // ---------------------------------------------------------------------------
 
 TEST(T3V2AssetRegistry, MeshAndSliceRenderersShareOneGpuObject) {
-    // Shared registry handle (T13): both renderer techniques co-own it.
+    // Both renderer techniques co-own one registry via shared_ptr: the whole
+    // point of the store is that MeshRenderer and SliceRenderer resolving the
+    // same mesh produce ONE GPU object, not two uploads.
     auto registry = std::make_shared<render::AssetRegistry>();
     data::Mesh mesh = makeQuadMesh();
     const auto handle = registry->registerAsset(mesh);

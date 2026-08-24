@@ -109,7 +109,10 @@ class SliceSample final : public re::app::ISample {
 
     re::data::Result<void> renderFrame(int width, int height) override {
         re::render::RenderTarget target;
-        target.framebuffer = nullptr; // the window's default framebuffer (T12)
+        target.framebuffer = nullptr;
+        // null framebuffer = render straight into the window's on-screen
+        // default framebuffer (samples have no offscreen ViewTarget; the
+        // harness hands us its pixel size each frame).
         target.width = static_cast<unsigned>(width);
         target.height = static_cast<unsigned>(height);
         target.clearColor = glm::vec4(0.10f, 0.10f, 0.12f, 1.0f);

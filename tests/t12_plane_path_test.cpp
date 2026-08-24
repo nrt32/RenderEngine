@@ -148,7 +148,10 @@ std::string readFile(const std::filesystem::path& p) {
 TEST(T12PlanePath, PlaneMapperTranslatesSceneToRender) {
     auto image = std::make_shared<data::Image>(makeGradientImage());
     scene::PlaneObject plane;
-    plane.image = image; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    plane.image = image;
     plane.transform = glm::translate(glm::mat4(1.0f),
                                      glm::vec3(1.0f, 2.0f, 3.0f));
 
@@ -171,15 +174,16 @@ TEST(T12PlanePath, PlaneMapperTranslatesSceneToRender) {
     EXPECT_EQ(mapped->geometry->normal, glm::vec3(0.0f, 0.0f, 1.0f));
 
     // Asset ref + transform carried exactly (RE-minimal pass-through): the
-    // instance shares the SAME image object (shared ownership, T13).
+    // mapped instance must share the SAME image object the scene holds —
+    // shared ownership, no copy of pixels and no re-wrap into a new object.
     EXPECT_EQ(mapped->image, image);
     EXPECT_NEAR(mapped->model[3][0], 1.0f, 1e-6f) << "model translation x";
     EXPECT_NEAR(mapped->model[3][1], 2.0f, 1e-6f) << "model translation y";
     EXPECT_NEAR(mapped->model[3][2], 3.0f, 1e-6f) << "model translation z";
 
     // One shared quad: a second object maps to the SAME geometry instance
-    // (the mapper owns exactly one unit quad; instances co-own a reference,
-    // T13 — pointer identity of the shared_ptr still proves sharing).
+    // because the mapper owns exactly ONE unit quad; instances co-own a
+    // reference to it (pointer identity of the shared_ptr proves sharing).
     scene::PlaneObject second;
     second.image = image;
     auto mappedAgain = mapper.map(second, scene::TranslateContext{});
@@ -187,8 +191,9 @@ TEST(T12PlanePath, PlaneMapperTranslatesSceneToRender) {
     EXPECT_EQ(mappedAgain->geometry.get(), mapped->geometry.get())
         << "all mapped instances share the mapper's single unit quad";
 
-    // Null image asset ref -> typed error code 1 (SPEC §5, never a crash or
-    // a silently-empty instance).
+    // A null image asset reference must come back as typed error code 1 —
+    // never a crash and never a silently-empty mapped instance that would
+    // draw nothing downstream.
     scene::PlaneObject broken; // image == null shared reference
     auto err = mapper.map(broken, scene::TranslateContext{});
     ASSERT_TRUE(err.failed());
@@ -210,7 +215,10 @@ TEST(T12PlanePath, BrokerRegistryRoutesPlaneObjectsThroughIMapper) {
 
     auto image = std::make_shared<data::Image>(makeGradientImage());
     scene::PlaneObject plane;
-    plane.image = image; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    plane.image = image;
     auto mapped = mapper->map(plane, scene::TranslateContext{});
     ASSERT_TRUE(mapped.ok()) << mapped.error().message;
     EXPECT_EQ(mapped->image, image);
@@ -234,7 +242,10 @@ TEST(T12PlanePath, CenterAndCornerPixelsMatchTextureThroughReViewAndBroker) {
     auto* mapper = broker_.get<scene::PlaneObject, render::PlaneInstance>();
 
     scene::PlaneObject plane;
-    plane.image = image; // shared ref (T13); unit quad fills NDC [-1,1]^2
+    // The image is stored by SHARED reference (scene and mapper co-own it),
+    // while geometry comes from the mapper's single unit quad spanning NDC
+    // [-1,1]^2 — one quad, shared by every mapped plane instance.
+    plane.image = image;
     auto mapped = mapper->map(plane, scene::TranslateContext{});
     ASSERT_TRUE(mapped.ok()) << mapped.error().message;
 
@@ -326,7 +337,10 @@ TEST(T12PlanePath, MprSliceLayerThroughPlaneMapperDisplaysSliceBytes) {
     // transform} where the transform scales the shared quad onto the image's
     // pixel rectangle (shared scaffolding, app/mpr_camera.hpp).
     scene::PlaneObject appPlane;
-    appPlane.image = sliceImage; // shared asset reference (T13)
+    // Shared-reference ownership: the object stores its asset as a
+    // co-owned shared_ptr (never a raw borrow), so the CPU bytes stay alive
+    // while any scene object, store, or renderer still refers to them (T13).
+    appPlane.image = sliceImage;
     appPlane.transform = app::makeSliceModel(*sliceImage);
 
     broker::Broker broker_;

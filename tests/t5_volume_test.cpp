@@ -17,7 +17,7 @@
 //     from the committed file (indexing proof);
 //   - golden_volume.nrrd: 2x2x2 int16 with voxel(x,y,z) = x + 2*y + 4*z
 //     (values 0..7), x-fastest;
-//   - v1 budget cap (SPEC S5): every axis <= 128, voxel count <= 128^3
+//   - v1 budget cap (SPEC §5): every axis <= 128, voxel count <= 128^3
 //     (= 2,097,152), float32 storage <= 128^3 * 4 bytes (= 8,388,608).
 
 #include <gtest/gtest.h>
@@ -61,7 +61,9 @@ TEST(T5Volume, SampleCtNrrdLoadsWithExpectedDimsAndCorners) {
     ASSERT_TRUE(result.ok()) << result.error().message;
 
     const data::VolumeDataset& volume = *result;
-    // SPEC S7 / data/README.md: the downsampled CT is 128 x 128 x 70.
+    // The committed downsampled CT is 128 x 128 x 70 (see data/README.md for
+    // the provenance and downsampling recipe) — asserting the exact dims
+    // pins the loader against silent header misreads.
     EXPECT_EQ(volume.sizeX(), 128u);
     EXPECT_EQ(volume.sizeY(), 128u);
     EXPECT_EQ(volume.sizeZ(), 70u);
@@ -292,7 +294,9 @@ TEST(T5Volume, MalformedNrrdReturnsTypedError) {
         std::filesystem::remove(path);
     }
 
-    // (h) Non-raw encoding -> UnsupportedEncoding (v1 is raw-only, SPEC S7).
+    // (h) Non-raw encoding (gzip) -> UnsupportedEncoding: v1 deliberately
+    // supports only uncompressed raw voxel blocks, so compressed inputs are
+    // rejected instead of half-supported.
     {
         const auto path = writeTempNrrd(
             "NRRD0004\ntype: int16\ndimension: 3\nsizes: 2 2 2\nencoding: "
@@ -368,15 +372,16 @@ TEST(T5Volume, MalformedNrrdReturnsTypedError) {
 }
 
 // ---------------------------------------------------------------------------
-// (4) Memory stays within the v1 budget cap (<= 128^3, SPEC S5).
+// (4) Memory stays within the v1 budget cap (<= 128^3, SPEC §5).
 // ---------------------------------------------------------------------------
 TEST(T5Volume, VolumeMemoryWithinBudgetCap) {
     auto result = io::loadNrrdVolume(assetPath("data/volumes/sample_ct.nrrd"));
     ASSERT_TRUE(result.ok()) << result.error().message;
 
     const data::VolumeDataset& volume = *result;
-    // Budget constants (SPEC S5): 128^3 = 2,097,152 voxels;
-    // float32 storage 128^3 * 4 = 8,388,608 bytes (8 MiB).
+    // Budget constants: the loader's cap is 128^3 = 2,097,152 voxels, which
+    // in float32 storage is 128^3 * 4 = 8,388,608 bytes (8 MiB) — small
+    // enough that no test environment can be pushed into swap by a dataset.
     constexpr std::uint64_t kBudgetVoxels = 128ULL * 128ULL * 128ULL;
     constexpr std::size_t kBudgetBytes = 8'388'608;
 

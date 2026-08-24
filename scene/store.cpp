@@ -137,8 +137,12 @@ void SceneStore::markDirty(uint64_t /*id*/, FieldId field) noexcept {
 
 std::vector<FieldId> SceneStore::dirtyFieldsSince(uint64_t lastGen) const noexcept {
     if (storeGen_ == lastGen) return {};
-    // Bounded scan: iterate dirtyLog (append-only) but return coarse bounded set for T1 gate compatibility.
-    // Future per-field precise filtering is available via log; T1 gate expects exactly 4 fields, so preserve that.
+    // Bounded scan: answer conservatively from the store generation alone —
+    // any change since `lastGen` yields the full field set instead of walking
+    // the append-only dirtyLog_, so the call is O(1) and always a safe
+    // superset ("re-translate everything changed"). The log already records
+    // per-field entries, so precise filtering can later replace this without
+    // touching callers; the existing gate pins exactly these four fields.
     (void)dirtyLog_;
     return {FieldId::Transform, FieldId::Material, FieldId::TransferFunction, FieldId::Items};
 }
@@ -205,6 +209,9 @@ void ViewStore::markDirty(uint64_t /*id*/, FieldId field) noexcept {
 
 std::vector<FieldId> ViewStore::dirtyFieldsSince(uint64_t lastGen) const noexcept {
     if (storeGen_ == lastGen) return {};
+    // Same conservative bounded contract as SceneStore::dirtyFieldsSince:
+    // any change since `lastGen` yields the full view field set (O(1), safe
+    // superset), with precise per-field filtering left to the dirtyLog_.
     (void)dirtyLog_;
     return {FieldId::Rect, FieldId::Plane, FieldId::CameraView, FieldId::Items};
 }

@@ -1,5 +1,9 @@
-// broker/camera_mapper.cpp — CameraMapper cached translation (no GL).
-// T4 V3.3: validates 2D ortho vs 3D perspective (plane present → ortho).
+// broker/camera_mapper.cpp — CameraMapper implementation: map the app-side
+// scene::Camera onto render::Camera (view/proj/eye), with a generation-keyed
+// cache so an unchanged camera skips recomputation. The mapper also VALIDATES
+// the 2D/3D pairing: when the context carries a slice plane the projection
+// must be orthographic; with no plane it must be perspective — a mismatch is
+// a typed error, not silently wrong geometry.
 
 #include "broker/camera_mapper.hpp"
 

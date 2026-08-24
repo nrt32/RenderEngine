@@ -1,4 +1,9 @@
-// broker/asset_store.cpp — broker AssetStore generational handles (T3 skeleton, T7 content-hash).
+// broker/asset_store.cpp — broker-side AssetStore implementation: a
+// generational slot table for mesh assets. Slots are keyed by the CONTENT
+// hash of stable bytes (never by pointer), so registering the same CPU object
+// twice — or two distinct allocations with identical bytes — resolves to one
+// stored asset. Freed slots bump their generation, turning every outstanding
+// handle stale (resolve returns a typed error instead of crashing).
 
 #include "broker/asset_store.hpp"
 

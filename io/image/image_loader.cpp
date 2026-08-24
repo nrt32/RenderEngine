@@ -2,7 +2,7 @@
 // FR-io.4).
 //
 // STB_IMAGE_IMPLEMENTATION is defined in exactly this translation unit; the
-// stb headers themselves are public-domain (SPEC S2, pinned commit).
+// stb headers themselves are public-domain (SPEC §2, pinned commit).
 //
 // The file is opened with std::ifstream first so that "cannot open" and
 // "cannot decode" map to distinct typed errors (FR-io.4); the bytes are then

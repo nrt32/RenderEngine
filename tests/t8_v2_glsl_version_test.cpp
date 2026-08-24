@@ -60,7 +60,8 @@ void main() {
 )";
 
 // The exact string the macro must produce in the gate env. Explainable:
-// 450 = portable floor (SPEC §8, §9 V2.7).
+// 450 is the portable floor — the oldest GLSL version every supported driver
+// (including software llvmpipe) accepts, so all shaders compile everywhere.
 constexpr std::string_view kExpectedVersionLine = "#version 450 core";
 constexpr int kExpectedVersionInt = 450;
 

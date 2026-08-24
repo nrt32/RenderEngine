@@ -1,4 +1,4 @@
-# tests/ — headless unit tests (SPEC S3, S5). Built with ASan+UBSan.
+# tests/ — headless unit tests (SPEC §3, §5). Built with ASan+UBSan.
 
 set(RE_TEST_TARGET re_tests)
 
@@ -74,7 +74,7 @@ target_compile_definitions(${RE_TEST_TARGET} PRIVATE
     RE_TEST_BIN_DIR="${CMAKE_BINARY_DIR}"
 )
 
-# Sanitizers on the test binary: ASan + UBSan (SPEC S5, "Memory/sanitizers").
+# Sanitizers on the test binary: ASan + UBSan (SPEC §5, "Memory/sanitizers").
 target_compile_options(${RE_TEST_TARGET} PRIVATE
     -fsanitize=address,undefined
     -fno-omit-frame-pointer
@@ -92,12 +92,12 @@ target_link_options(${RE_TEST_TARGET} PRIVATE
 
 add_test(NAME ${RE_TEST_TARGET} COMMAND ${RE_TEST_TARGET})
 
-# Headless GL test environment (SPEC S2, S5):
+# Headless GL test environment (SPEC §2, §5):
 #  - GALLIUM_DRIVER=llvmpipe: software rasterizer — deterministic and
 #    leak-clean under ASan (avoids closed D3D12/NVIDIA driver allocations that
 #    LSan cannot attribute to a named module).
 #  - MESA_GL_VERSION_OVERRIDE=4.6: force the reported context version to the
-#    SPEC S2 target. The WSL D3D12 gallium driver exposes GL 4.6 core natively
+#    SPEC §2 target. The WSL D3D12 gallium driver exposes GL 4.6 core natively
 #    (verified via glxinfo -l); llvmpipe caps at 4.5, so the override reports
 #    the project's target 4.6. The version/profile probe happens inside core/
 #    (core::loadCoreGl) and is surfaced through the utils::OffscreenContext

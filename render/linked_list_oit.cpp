@@ -1,5 +1,9 @@
-// render/linked_list_oit.cpp — LinkedListOIT implementation (SPEC §3,
-// FR-render.2/3).
+// render/linked_list_oit.cpp — order-independent transparency via per-pixel
+// linked lists: transparent fragments are captured (color + depth) into a GPU
+// buffer during the draw pass, then composited back-to-front in a full-screen
+// pass. Order independence is what makes overlapping transparent surfaces
+// produce the same pixels regardless of draw order; opaque geometry is
+// unaffected because it renders before capture and depth-blocks fragments.
 
 #include "render/linked_list_oit.hpp"
 

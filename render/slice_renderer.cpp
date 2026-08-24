@@ -1,5 +1,8 @@
-// render/slice_renderer.cpp — SliceRenderer implementation (SPEC §3,
-// FR-render.4).
+// render/slice_renderer.cpp — SliceRenderer implementation: draw a mesh
+// CLIPPED against a cut plane (cross-section fill, the outline peer is the
+// geometry-shader ContourRenderer). The clip runs in a geometry shader so no
+// CPU-side triangle/plane tests are needed; captured cross-sections reuse the
+// same clip pass via transform feedback.
 
 #include "render/slice_renderer.hpp"
 
@@ -138,8 +141,12 @@ data::Result<void> SliceRenderer::render(const SliceScene& scene,
         if (!instance.material || instance.mesh.isNull()) {
             continue;
         }
-        // Slicing does not use OIT in v1 (SPEC §3): every instance is clipped
-        // and drawn through the clip pass regardless of material transparency.
+        // Slicing deliberately has NO transparency path in v1: every instance
+        // goes through the clip pass regardless of material alpha. A cut
+        // surface is interior geometry where order-independent blending would
+        // need per-fragment plane distance sorting that the linked-list OIT
+        // does not provide; transparent slicing stays out until a design
+        // needs it.
         auto geometry = geometryFor(instance.mesh);
         if (geometry.failed()) {
             return data::makeError<void>(geometry.error().code,

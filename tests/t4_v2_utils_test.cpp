@@ -86,7 +86,7 @@ TEST(T4V2Utils, EnvShSetsAuditSourceDirsIncludingUtils) {
     // The running environment must have been sourced with it (R15).
     const char* auditDirs = std::getenv("AUDIT_SOURCE_DIRS");
     ASSERT_NE(auditDirs, nullptr) << "AUDIT_SOURCE_DIRS is unset. Launch with: "
-                                     "source tools/env.sh (SPEC S8, R15).";
+                                     "source tools/env.sh (SPEC §8, R15).";
     EXPECT_NE(std::string(auditDirs).find("utils"), std::string::npos);
 }
 
@@ -96,8 +96,10 @@ TEST(T4V2Utils, EnvShSetsAuditSourceDirsIncludingUtils) {
 // ---------------------------------------------------------------------------
 
 TEST(T4V2Utils, FixtureContextIsUtilsOffscreenContextGl46Core) {
-    // The shared fixture context is now a utils/ component (V2.1 moved it out
-    // of core/); the SPEC §2 invariants it reports are unchanged.
+    // The shared fixture context lives in utils/ (moved out of core/, which
+    // owns only the raw-GL anchors). The invariants it must still report are
+    // unchanged: a 4.6-core headless context — the version floor every
+    // shader in the repo is written against.
     utils::OffscreenContext* ctx = OffscreenEnvironment::context();
     ASSERT_NE(ctx, nullptr);
     EXPECT_EQ(ctx->majorVersion(), 4);

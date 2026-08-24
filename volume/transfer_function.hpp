@@ -1,7 +1,7 @@
 #pragma once
 
 // volume/transfer_function.hpp — scalar-value -> RGBA transfer function
-// (SPEC S3 "volume/ pure math", FR-vol.1).
+// (SPEC §3 "volume/ pure math", FR-vol.1).
 //
 // volume/ is GL-free pure math, headless-testable. A TransferFunction maps a
 // scalar value (e.g. a sampled voxel intensity) to an RGBA color through a

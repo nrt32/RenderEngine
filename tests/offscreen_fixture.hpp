@@ -12,8 +12,11 @@
 
 namespace re::tests {
 
-/// Initializes a single offscreen GL context before the suite and tears it down
-/// after. Logging (spdlog) is initialized here too (SPEC S5).
+/// Initializes a single offscreen GL context before the suite and tears it
+/// down after, so every GL-touching test runs headless (no window server
+/// needed) against one shared, deterministic context. Logging (spdlog) is
+/// initialized here too so test diagnostics go through the same sink as the
+/// engine.
 class OffscreenEnvironment : public ::testing::Environment {
    public:
     void SetUp() override;

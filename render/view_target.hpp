@@ -1,10 +1,14 @@
 #pragma once
 
-// render/view_target.hpp — ViewTarget: one Texture2D+Framebuffer per ViewRect (SPEC §3.2 V3.4 T5).
+// render/view_target.hpp — ViewTarget: the offscreen color target of one view.
 //
-// View (ReView) owns one ViewTarget per screen section, sized rect.w×h. It delegates
-// FBO lifecycle to ViewTarget (SRP via composition); View owns only view semantics
-// (rect+camera+plane+items). ViewTarget owns size/clear/attachment.
+// One ViewTarget = one Texture2D color attachment + the Framebuffer that
+// renders into it, sized exactly to the owning view's rect (rect.w×h), so a
+// multi-view window composites by drawing each section into its own target
+// and blitting them side-by-side into the shared window framebuffer.
+// Ownership split (SRP via composition): View owns only view semantics
+// (rect+camera+plane+items) and delegates ALL FBO lifecycle — creation,
+// resize, clear, attachment — to this class (SPEC §3.2 V3.4 T5).
 
 #include <cstdint>
 

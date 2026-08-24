@@ -9,7 +9,7 @@
 //       (FR-vol.3).
 //
 // All acceptance constants are hand-computed closed forms documented in
-// docs/volume.md. Tolerances follow SPEC S4: pure math within 1e-6.
+// docs/volume.md. Tolerances follow SPEC §4: pure math within 1e-6.
 
 #include <gtest/gtest.h>
 

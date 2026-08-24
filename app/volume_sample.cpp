@@ -67,8 +67,13 @@ class VolumeSample final : public re::app::ISample {
                  re::volume::TransferFunction tf)
         : dataset_(std::make_shared<re::data::VolumeDataset>(std::move(dataset))),
           tf_(std::move(tf)) {
+        // Ownership split: the voxel bytes go in as a SHARED reference
+        // (co-owned by scene object and sample, so neither can dangle the
+        // other), while the transfer function is copied BY VALUE — it is a
+        // tiny immutable ramp and copying removes the last pointer from this
+        // path.
         scene_.volumes.push_back(re::render::VolumeInstance{
-            dataset_, tf_, glm::mat4(1.0f)}); // dataset shared, TF by value (T13)
+            dataset_, tf_, glm::mat4(1.0f)});
 
         const glm::vec3 center(0.5f, 0.5f, 0.5f);
         camera_.position = glm::vec3(0.5f, 0.5f, 3.0f);
@@ -82,7 +87,10 @@ class VolumeSample final : public re::app::ISample {
 
     re::data::Result<void> renderFrame(int width, int height) override {
         re::render::RenderTarget target;
-        target.framebuffer = nullptr; // the window's default framebuffer (T12)
+        target.framebuffer = nullptr;
+        // null framebuffer = render straight into the window's on-screen
+        // default framebuffer (samples have no offscreen ViewTarget; the
+        // harness hands us its pixel size each frame).
         target.width = static_cast<unsigned>(width);
         target.height = static_cast<unsigned>(height);
         target.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);

@@ -84,9 +84,10 @@ class MeshRenderer : public IRenderer {
     data::Result<void> render(const MeshScene& scene, const Camera& camera,
                               const RenderTarget& target);
 
-    /// IRenderer dispatch (SPEC §9 V2.3): renders when `scene` holds a
-    /// MeshScene; returns a typed error when it holds a different technique
-    /// (SPEC §5, no exceptions).
+    /// Type-erased dispatch entry (the IRenderer contract): renders when
+    /// `scene` holds a MeshScene; a scene of any OTHER technique is rejected
+    /// with a typed error rather than thrown or silently ignored, so a wrong
+    /// renderer/scene pairing surfaces at the call site.
     data::Result<void> render(const Scene& scene, const Camera& camera,
                                const RenderTarget& target) override;
 

@@ -8,7 +8,9 @@
 // only viewMatrix() (+projMatrix(), pos) via broker::CameraMapper to
 // render::Camera{view,proj,pos}. Per-field viewGen/projGen split — orbit dirties
 // only viewGen (SPEC §10.4). 2D (plane present) → orthographic, 3D → perspective
-// validated by mapper; no render/ type leaks into scene/ (disposition_scene).
+// validated by mapper; the layer disposition forbids render/ types here —
+// scene/ is the app-side library and must stay render-free (broker/ is the
+// only library that includes both sides).
 
 #include <cstdint>
 
@@ -117,15 +119,19 @@ class Camera {
     static Camera makePerspective(glm::vec3 center, float distance, float fovDeg = 45.0f,
                                   float aspect = 1.0f) noexcept;
 
-    /// Perspective-crosshair camera for 3D view (T4 alias).
-    /// Identical to makePerspective — named for the MPR 3D crosshair view.
+    /// Perspective camera for the MPR 3D crosshair view. Behaviorally
+    /// identical to `makePerspective` — the distinct name documents INTENT at
+    /// call sites (this camera looks at the slice-intersection point) and
+    /// gives the 3D view its own factory, so a future change to crosshair
+    /// framing cannot silently alter other perspective users.
     static Camera makePerspectiveCrosshair(glm::vec3 center, float distance,
                                            float fovDeg = 45.0f, float aspect = 1.0f) noexcept;
 
-    /// Orthographic helper for slice views (plane-normal aligned, T4).
-    /// Returns an Orthographic camera looking along -planeNormal at center at
-    /// the given distance. Ortho bounds are deterministic
-    /// (-1,1,-1,1,0.1,100) scaled to be aspect-independent for the gate.
+    /// Orthographic camera for slice views: looks along `-planeNormal` at
+    /// `center` from `distance`, so the near/far planes bracket the volume and
+    /// the projection is parallel (no depth foreshortening on a cut plane).
+    /// Fixed ortho bounds (-1,1,-1,1,0.1,100) scaled for aspect independence
+    /// keep slice geometry deterministic across viewports.
     static Camera makeOrthoForSlice(glm::vec3 center, glm::vec3 planeNormal, float distance) noexcept;
 
    private:

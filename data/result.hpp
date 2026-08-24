@@ -1,6 +1,6 @@
 #pragma once
 
-// data/result.hpp — GL-free typed error handling (SPEC S5, NAMING_CONVENTIONS
+// data/result.hpp — GL-free typed error handling (SPEC §5, NAMING_CONVENTIONS
 // S8).
 //
 // RenderEngine reports runtime failures through a typed Result<T, Error>

@@ -44,7 +44,9 @@
 #define RE_GLSL_DETAIL_XSTR(x) RE_GLSL_DETAIL_STR(x)
 
 /// The full `#version` line, e.g. `"#version 450 core"` or `"#version 460 core"`.
-/// This is the single `#version` concern (SPEC §9 V2.7).
+/// Single point of truth for the shader language version: every .glsl file in
+/// the repo gets its `#version` injected from this macro at load time, so the
+/// compiled pipeline cannot drift between shaders (one knob, RE_GLSL_VERSION).
 #define RE_GLSL_VERSION_LINE "#version " RE_GLSL_DETAIL_XSTR(RE_GLSL_VERSION) " core"
 
 /// The version as a string literal, e.g. `"450"` or `"460"`.

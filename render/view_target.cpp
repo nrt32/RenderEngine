@@ -1,4 +1,9 @@
-// render/view_target.cpp — ViewTarget implementation (SPEC §3.2 V3.4 T5).
+// render/view_target.cpp — ViewTarget implementation: create/resize the
+// per-view color texture + framebuffer pair. Color-only by design (no depth
+// attachment): every analytic pixel gate in the suite renders through these
+// targets, so the default must stay deterministic on software GL; resizing
+// reallocates storage in place so a window resize does not invalidate the
+// owning View's handle to this target.
 
 #include "render/view_target.hpp"
 
