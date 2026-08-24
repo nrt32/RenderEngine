@@ -255,19 +255,20 @@ class MPRView final : public app::ISample {
         applySliceState();
 
         // The bridge path: sync → renderAll → presentAll blits each target
-        // 1:1 into its pinned window rect.
+        // 1:1 into its pinned window rect. The monadic chain (T22) collapses
+        // the three nested `if (failed()) return` dances: the first failure
+        // short-circuits the chain and propagates its Error unchanged.
         frame_.assign(views_.begin(), views_.end());
-        auto s = ctx_.bridge().sync(frame_, ctx_.store());
-        if (s.failed()) {
-            return s;
-        }
-        auto r = ctx_.bridge().renderAll();
-        if (r.failed()) {
-            return r;
-        }
-        auto p = ctx_.bridge().presentAll(nullptr);
-        if (p.failed()) {
-            return p;
+        auto presented =
+            ctx_.bridge()
+                .sync(frame_, ctx_.store())
+                .andThen(
+                    [this]() { return ctx_.bridge().renderAll(); })
+                .andThen([this]() {
+                    return ctx_.bridge().presentAll(nullptr);
+                });
+        if (presented.failed()) {
+            return presented;
         }
         // Optional single-frame capture of the composed window content
         // (defect-verification aid): with RE_SAMPLE_DUMP_FRAME=<path> set,

@@ -26,7 +26,19 @@
 - **Memory budget caps on sample data** — sample scenes capped; the committed
   sample volume is downsampled to ≤ 128³ (§7) to stay within sane GPU/RAM on WSL.
 - **Typed error reporting** — runtime failures (load, GL, shader) surface as
-  typed, actionable diagnostics, never silent.
+  typed, actionable diagnostics, never silent. Error identity is the pair
+  `(data::Error::domain, data::Error::code)`: numeric code ranges repeat
+  across producers (the three io/ loaders all start at `FileOpen == 1`), so
+  each producer stamps its `data::ErrorDomain` (`ImageIo`/`MeshIo`/
+  `VolumeIo`/`Shader`/`Core`/`Utils`/`Render`/`Broker`/`Scene`) and
+  consumers disambiguate structurally — never by parsing message strings
+  (SPEC §6 "Error codes carry their domain"; landed T22). Dereferencing a
+  failed `Result` asserts in debug builds (abort, never an exception);
+  release builds keep the documented UB, so callers branch on `ok()` /
+  `failed()` first. The dead `hasValue()` accessor (could never differ from
+  `ok()`) was removed in T22; monadic `map()`/`andThen()` helpers collapse
+  sequential fallible-call chains (e.g. the MPR bridge's
+  sync → renderAll → presentAll).
 - **Logging** — **spdlog** (pinned) provides trace/debug/info/warn/error/fatal;
   no custom logging framework. Logging-discipline guardrail still applies: no
   raw `printf`/`std::cout` for diagnostics.

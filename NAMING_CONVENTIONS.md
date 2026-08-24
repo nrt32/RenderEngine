@@ -71,6 +71,17 @@ project.
 - Typed errors via a `Result<T, Error>` style type (SPEC §5); **no exceptions
   in v1**.
 - Errors are typed and actionable; never silent.
+- An error's identity is the pair `(Error::domain, Error::code)`:
+  producers that own an enumerated code range stamp their
+  `data::ErrorDomain` on every error (the io/ loaders' ranges collide
+  numerically), consumers branch on the pair — never by parsing messages.
+  Untagged ad-hoc codes carry `ErrorDomain::None`.
+- `Result::operator*` / `operator->` are value-branch accessors only:
+  branch on `ok()`/`failed()` first. A failed dereference asserts in debug
+  builds; release builds leave it undefined behavior (documented, never an
+  exception).
+- Monadic combinators are camelCase (`map`, `andThen`) per §4 — not std's
+  snake_case `and_then`.
 
 ## 8b. Ownership & borrow notation (hard, T13 user mandate)
 - **No raw pointers where ownership/lifetime matters.** Use `unique_ptr`

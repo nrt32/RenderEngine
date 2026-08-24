@@ -55,6 +55,7 @@ data::Result<data::Mesh> loadObjMesh(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {
         return data::makeError<data::Mesh>(
+            data::ErrorDomain::MeshIo,
             static_cast<int>(MeshLoadError::FileOpen),
             "OBJ loader: cannot open file '" + path + "'");
     }
@@ -83,6 +84,7 @@ data::Result<data::Mesh> loadObjMesh(const std::string& path) {
             float z = 0.0f;
             if (!(tokens >> x) || !(tokens >> y) || !(tokens >> z)) {
                 return data::makeError<data::Mesh>(
+                    data::ErrorDomain::MeshIo,
                     static_cast<int>(MeshLoadError::VertexParse),
                     "OBJ loader: '" + path + "' line " +
                         std::to_string(lineNumber) +
@@ -97,6 +99,7 @@ data::Result<data::Mesh> loadObjMesh(const std::string& path) {
             while (tokens >> token) {
                 if (face.size() >= kMaxFaceVertices) {
                     return data::makeError<data::Mesh>(
+                        data::ErrorDomain::MeshIo,
                         static_cast<int>(MeshLoadError::FaceParse),
                         "OBJ loader: '" + path + "' line " +
                             std::to_string(lineNumber) +
@@ -105,6 +108,7 @@ data::Result<data::Mesh> loadObjMesh(const std::string& path) {
                 std::uint32_t index = 0;
                 if (!parseFaceVertexIndex(token, index)) {
                     return data::makeError<data::Mesh>(
+                        data::ErrorDomain::MeshIo,
                         static_cast<int>(MeshLoadError::FaceParse),
                         "OBJ loader: '" + path + "' line " +
                             std::to_string(lineNumber) +
@@ -115,6 +119,7 @@ data::Result<data::Mesh> loadObjMesh(const std::string& path) {
             }
             if (face.size() < 3) {
                 return data::makeError<data::Mesh>(
+                    data::ErrorDomain::MeshIo,
                     static_cast<int>(MeshLoadError::FaceParse),
                     "OBJ loader: '" + path + "' line " +
                         std::to_string(lineNumber) +
@@ -133,11 +138,13 @@ data::Result<data::Mesh> loadObjMesh(const std::string& path) {
 
     if (positions.empty()) {
         return data::makeError<data::Mesh>(
+            data::ErrorDomain::MeshIo,
             static_cast<int>(MeshLoadError::NoVertices),
             "OBJ loader: '" + path + "' contains no 'v' vertices");
     }
     if (indices.empty()) {
         return data::makeError<data::Mesh>(
+            data::ErrorDomain::MeshIo,
             static_cast<int>(MeshLoadError::NoFaces),
             "OBJ loader: '" + path + "' contains no 'f' faces");
     }
@@ -148,6 +155,7 @@ data::Result<data::Mesh> loadObjMesh(const std::string& path) {
     for (const std::uint32_t index : indices) {
         if (index == 0 || index > positions.size()) {
             return data::makeError<data::Mesh>(
+                data::ErrorDomain::MeshIo,
                 static_cast<int>(MeshLoadError::IndexRange),
                 "OBJ loader: '" + path +
                     "' references out-of-range vertex index " +

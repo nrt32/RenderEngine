@@ -58,7 +58,8 @@ Wavefront OBJ text file:
 
 Typed errors (FR-io.4) carry a `MeshLoadError` code — `FileOpen`,
 `VertexParse`, `FaceParse`, `IndexRange`, `NoVertices`, `NoFaces` — and a
-message naming the file and (for parse errors) the line. No exceptions are
+message naming the file and (for parse errors) the line. Each error is
+stamped with `data::ErrorDomain::MeshIo`. No exceptions are
 thrown; the Mesh is constructed only after the entire file validates, so a
 failed result never carries partial state.
 
@@ -96,6 +97,7 @@ std::int32_t requestedChannels = 0)` decodes any format stb_image handles
 
 Typed errors (FR-io.4) carry an `ImageLoadError` code — `FileOpen`, `Decode`,
 `InvalidChannels` — with the decode message including `stbi_failure_reason()`.
+Each error is stamped with `data::ErrorDomain::ImageIo`.
 No exceptions are thrown; a failed result never carries a partial Image.
 
 ### golden_image.png acceptance constants (hand-counted, from `data/fixtures/golden_image.png`)
@@ -113,7 +115,15 @@ No exceptions are thrown; a failed result never carries a partial Image.
   `gpu_api_ownership`); `data/` links only `glm` (pure math), `io/` links
   `re_data` + the header-only `stb` FetchContent target.
 - **Typed diagnostics**: every failure returns `data::Result` with an
-  enumerated `*Error` code — never exceptions, never silent.
+  enumerated `*Error` code — never exceptions, never silent. Because the
+  three loaders' numeric ranges collide (all start at `FileOpen == 1`),
+  every loader stamps its producer domain on the error
+  (`data::ErrorDomain::ImageIo` / `MeshIo` / `VolumeIo`), so consumers
+  branch on the `(domain, code)` pair and never parse message strings.
+- **Failed-result dereference is a loud bug**: `data::Result::operator*`
+  and `operator->` assert in debug builds when the result holds an error;
+  release builds keep the documented UB, so callers always branch on
+  `ok()`/`failed()` first.
 - **Dependency lock**: stb is pinned by commit SHA via FetchContent (SPEC §6);
   `STB_IMAGE_IMPLEMENTATION` is defined in exactly one translation unit.
 - **Determinism**: loaders are pure functions of the input file; the same file
@@ -189,6 +199,10 @@ count `≤ 128^3`, so an oversized file fails with a typed error instead of a
 multi-megabyte allocation.
 
 ### Typed errors (`VolumeLoadError`)
+
+Every NRRD-loader error is stamped with `data::ErrorDomain::VolumeIo`; the
+codes below are interpreted within that domain (the other loaders reuse the
+same low numbers for different meanings).
 
 | Code | Meaning |
 |---|---|

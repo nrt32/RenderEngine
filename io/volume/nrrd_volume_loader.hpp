@@ -40,7 +40,10 @@ namespace re::io {
 /// Error codes carried by data::Error::code for NRRD load failures. Typed
 /// and enumerated (never thrown): callers branch on the code instead of
 /// parsing messages, and the numeric values are stable API — tests assert
-/// them.
+/// them. Every NRRD-loader error is stamped with
+/// `data::ErrorDomain::VolumeIo`, so its codes are structurally
+/// distinguishable from the numerically-colliding ranges of the other io/
+/// loaders (all three start at FileOpen == 1) without string parsing.
 enum class VolumeLoadError : int {
     FileOpen = 1,             ///< The file could not be opened for reading.
     BadMagic = 2,             ///< The file is not a NRRD (bad magic line).

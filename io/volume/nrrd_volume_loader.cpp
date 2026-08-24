@@ -141,6 +141,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
         return data::makeError<data::VolumeDataset>(
+            data::ErrorDomain::VolumeIo,
             static_cast<int>(VolumeLoadError::FileOpen),
             "NRRD loader: cannot open file '" + path + "'");
     }
@@ -172,6 +173,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     std::string magic;
     if (!nextLine(magic)) {
         return data::makeError<data::VolumeDataset>(
+            data::ErrorDomain::VolumeIo,
             static_cast<int>(VolumeLoadError::BadMagic),
             "NRRD loader: '" + path + "' is empty, not a NRRD file");
     }
@@ -182,6 +184,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
                          magic[7] >= '1' && magic[7] <= '5';
     if (!magicOk) {
         return data::makeError<data::VolumeDataset>(
+            data::ErrorDomain::VolumeIo,
             static_cast<int>(VolumeLoadError::BadMagic),
             "NRRD loader: '" + path + "' first line '" + magic +
                 "' is not a NRRD magic line (expected NRRD0001..NRRD0005)");
@@ -205,6 +208,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
         if (line[0] == ' ' || line[0] == '\t') {
             if (fieldKeys.empty()) {
                 return data::makeError<data::VolumeDataset>(
+                    data::ErrorDomain::VolumeIo,
                     static_cast<int>(VolumeLoadError::MalformedHeader),
                     "NRRD loader: '" + path +
                         "': continuation line before any field");
@@ -215,6 +219,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
         const std::size_t colon = line.find(':');
         if (colon == std::string::npos) {
             return data::makeError<data::VolumeDataset>(
+                data::ErrorDomain::VolumeIo,
                 static_cast<int>(VolumeLoadError::MalformedHeader),
                 "NRRD loader: '" + path + "': header line '" + line +
                     "' is not a 'key: value' field");
@@ -223,6 +228,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
         const std::string value = trimmed(line.substr(colon + 1));
         if (key.empty()) {
             return data::makeError<data::VolumeDataset>(
+                data::ErrorDomain::VolumeIo,
                 static_cast<int>(VolumeLoadError::MalformedHeader),
                 "NRRD loader: '" + path + "': header line '" + line +
                     "' has an empty field key");
@@ -233,6 +239,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     if (!headerTerminated) {
         // Reached EOF without a blank header-terminator line.
         return data::makeError<data::VolumeDataset>(
+            data::ErrorDomain::VolumeIo,
             static_cast<int>(VolumeLoadError::MalformedHeader),
             "NRRD loader: '" + path +
                 "': header is not terminated by a blank line");
@@ -253,6 +260,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     const std::string* type = field("type");
     if (dimension == nullptr || sizes == nullptr || type == nullptr) {
         return data::makeError<data::VolumeDataset>(
+            data::ErrorDomain::VolumeIo,
             static_cast<int>(VolumeLoadError::MalformedHeader),
             "NRRD loader: '" + path +
                 "': missing required header field(s) (need 'dimension', "
@@ -263,6 +271,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     std::uint64_t dimensionValue = 0;
     if (!parseUint(*dimension, dimensionValue) || dimensionValue != 3) {
         return data::makeError<data::VolumeDataset>(
+            data::ErrorDomain::VolumeIo,
             static_cast<int>(VolumeLoadError::UnsupportedDimension),
             "NRRD loader: '" + path + "': dimension '" + *dimension +
                 "' is not supported (v1 loads 3D volumes only)");
@@ -281,6 +290,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
                 if (tokenCount >= 3 ||
                     !parseUint(token, sizesValue[tokenCount])) {
                     return data::makeError<data::VolumeDataset>(
+                        data::ErrorDomain::VolumeIo,
                         static_cast<int>(VolumeLoadError::MalformedHeader),
                         "NRRD loader: '" + path +
                             "': 'sizes' must be exactly "
@@ -296,6 +306,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
         }
         if (tokenCount != 3) {
             return data::makeError<data::VolumeDataset>(
+                data::ErrorDomain::VolumeIo,
                 static_cast<int>(VolumeLoadError::MalformedHeader),
                 "NRRD loader: '" + path +
                     "': 'sizes' must be exactly three "
@@ -313,6 +324,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     if (sizesValue[0] > kMaxAxis || sizesValue[1] > kMaxAxis ||
         sizesValue[2] > kMaxAxis || voxelCount > kMaxVoxels) {
         return data::makeError<data::VolumeDataset>(
+            data::ErrorDomain::VolumeIo,
             static_cast<int>(VolumeLoadError::BudgetExceeded),
             "NRRD loader: '" + path + "': dimensions " + *sizes +
                 " exceed the v1 memory budget cap (<= 128^3, SPEC §5)");
@@ -322,6 +334,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     const ScalarInfo* info = scalarInfo(*type);
     if (info == nullptr) {
         return data::makeError<data::VolumeDataset>(
+            data::ErrorDomain::VolumeIo,
             static_cast<int>(VolumeLoadError::UnsupportedType),
             "NRRD loader: '" + path + "': unsupported type '" + *type +
                 "' (v1 supports int8..int64, uint8..uint64, float, double)");
@@ -336,6 +349,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
         encoding == nullptr ? std::string("raw") : *encoding; // NRRD default.
     if (encodingValue != "raw") {
         return data::makeError<data::VolumeDataset>(
+            data::ErrorDomain::VolumeIo,
             static_cast<int>(VolumeLoadError::UnsupportedEncoding),
             "NRRD loader: '" + path + "': encoding '" + encodingValue +
                 "' is not supported (v1 loads uncompressed 'raw' blocks only, "
@@ -349,6 +363,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     const bool littleEndian = endianValue == "little";
     if (!littleEndian && endianValue != "big") {
         return data::makeError<data::VolumeDataset>(
+            data::ErrorDomain::VolumeIo,
             static_cast<int>(VolumeLoadError::MalformedHeader),
             "NRRD loader: '" + path + "': endian '" + endianValue +
                 "' is invalid (expected 'little' or 'big')");
@@ -360,6 +375,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     const std::size_t rawSize = bytes.size() - pos;
     if (rawSize < expected) {
         return data::makeError<data::VolumeDataset>(
+            data::ErrorDomain::VolumeIo,
             static_cast<int>(VolumeLoadError::VoxelBlockSize),
             "NRRD loader: '" + path + "': raw voxel block has " +
                 std::to_string(rawSize) + " bytes but " +

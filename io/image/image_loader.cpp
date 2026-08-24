@@ -26,6 +26,7 @@ data::Result<data::Image> loadImage(const std::string& path,
                                     std::int32_t requestedChannels) {
     if (requestedChannels < 0 || requestedChannels > 4) {
         return data::makeError<data::Image>(
+            data::ErrorDomain::ImageIo,
             static_cast<int>(ImageLoadError::InvalidChannels),
             "image loader: invalid requestedChannels=" +
                 std::to_string(requestedChannels) +
@@ -35,6 +36,7 @@ data::Result<data::Image> loadImage(const std::string& path,
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
         return data::makeError<data::Image>(
+            data::ErrorDomain::ImageIo,
             static_cast<int>(ImageLoadError::FileOpen),
             "image loader: cannot open file '" + path + "'");
     }
@@ -53,6 +55,7 @@ data::Result<data::Image> loadImage(const std::string& path,
     if (pixels == nullptr) {
         const char* reason = stbi_failure_reason();
         return data::makeError<data::Image>(
+            data::ErrorDomain::ImageIo,
             static_cast<int>(ImageLoadError::Decode),
             std::string("image loader: cannot decode '") + path + "': " +
                 (reason != nullptr ? reason : "unknown stb_image error"));
@@ -60,6 +63,7 @@ data::Result<data::Image> loadImage(const std::string& path,
     if (width <= 0 || height <= 0) {
         stbi_image_free(pixels);
         return data::makeError<data::Image>(
+            data::ErrorDomain::ImageIo,
             static_cast<int>(ImageLoadError::Decode),
             "image loader: '" + path + "' decoded to a zero-sized image");
     }

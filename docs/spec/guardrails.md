@@ -54,7 +54,9 @@
 - **Error codes carry their domain (Sr. review)** — numeric error ranges may
   repeat across loaders/renderers/broker; consumers disambiguate via the
   domain tag on `data::Error`, never by string-parsing messages. Failed
-  `Result` dereference asserts in debug builds. *Review gate; T22.*
+  `Result` dereference asserts in debug builds. *Review gate; landed T22
+  (`data::ErrorDomain`, io/ loader stamping, debug-trap on failed
+  dereference).*
 - **Ownership discipline (T13, user mandate 2026-08-23)** — no raw pointers
   where ownership/lifetime matters. The ownership tool ladder:
   `unique_ptr` for sole owners (Broker's mappers, ReView's IRenderable items),

@@ -42,6 +42,7 @@ add_executable(${RE_TEST_TARGET}
     t19_oit_sample_test.cpp
     t20_broker_path_test.cpp
     t21_persistence_honesty_test.cpp
+    t22_error_model_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
@@ -97,6 +98,36 @@ target_link_options(${RE_TEST_TARGET} PRIVATE
 # offscreen_fixture.cpp's registration.
 
 add_test(NAME ${RE_TEST_TARGET} COMMAND ${RE_TEST_TARGET})
+
+# T22 death-test binary: gtest death tests fork(), which is slow (~10 s per
+# assertion) and documented-unsafe inside re_tests' offscreen GL fixture
+# (llvmpipe worker threads). The debug-abort contract on failed Result
+# dereference needs only data/result.hpp, so it runs here — no GL fixture,
+# single-threaded, deterministic. Same warnings/sanitizer floors as re_tests.
+add_executable(re_tests_death
+    t22_debug_assert_death_test.cpp
+)
+target_link_libraries(re_tests_death
+    PRIVATE
+        re_data
+        re_project_warnings
+        GTest::gtest
+        GTest::gtest_main
+)
+target_compile_definitions(re_tests_death PRIVATE
+    TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+target_compile_options(re_tests_death PRIVATE
+    -fsanitize=address,undefined
+    -fno-omit-frame-pointer
+)
+target_link_options(re_tests_death PRIVATE
+    -fsanitize=address,undefined
+)
+add_test(NAME re_tests_death COMMAND re_tests_death)
+set_tests_properties(re_tests_death PROPERTIES
+    ENVIRONMENT "ASAN_OPTIONS=detect_leaks=1"
+)
 
 # Headless GL test environment (SPEC §2, §5):
 #  - GALLIUM_DRIVER=llvmpipe: software rasterizer — deterministic and

@@ -22,7 +22,10 @@ namespace re::io {
 /// Error codes carried by data::Error::code for image load failures. Typed
 /// and enumerated (never thrown): callers branch on the code instead of
 /// parsing messages, and the numeric values are stable API — tests assert
-/// them.
+/// them. Every image-loader error is stamped with
+/// `data::ErrorDomain::ImageIo`, so its codes are structurally
+/// distinguishable from the numerically-colliding ranges of the other io/
+/// loaders (all three start at FileOpen == 1) without string parsing.
 enum class ImageLoadError : int {
     FileOpen = 1,        ///< The file could not be opened for reading.
     Decode = 2,          ///< stb_image could not decode the file.
