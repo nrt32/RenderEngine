@@ -39,6 +39,7 @@ add_executable(${RE_TEST_TARGET}
     t16_volume_slice_test.cpp
     t17_renderer_consolidation_test.cpp
     t18_depth_test.cpp
+    t19_oit_sample_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

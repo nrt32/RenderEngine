@@ -90,7 +90,7 @@ because the T12/T13 gate spawns them).
 | Plane | `re_sample_plane` | GPU-extracted volume planes (axial + oblique, FR-render.5 extension) | `data/volumes/sample_ct.nrrd` + CT window/level transfer function |
 | Volume | `re_sample_volume` | ray-cast volume (front-to-back compositing) | `data/volumes/sample_ct.nrrd` + CT window/level transfer function |
 | Slice | `re_sample_slice` | geometry-shader plane clip of a mesh | `data/meshes/teapot.obj` (SPEC §7), clipped by a horizontal midplane |
-| OIT | `re_sample_oit` | order-independent transparency (linked-list) | three overlapping transparent quads (in code, deterministic) |
+| OIT | `re_sample_oit` | order-independent transparency over depth-tested opaque meshes (linked-list) | `data/meshes/bunny.obj` (SPEC §7) + procedural boxes (golden opaque box, two alpha-0.5 glass shells) |
 
 The mesh sample frames the bunny with a perspective camera computed from its
 AABB (eye pulled back along +Z by `radius / tan(fov/2)`); the plane sample
@@ -106,10 +106,17 @@ soft tissue opaque/bright). The slice sample loads the teapot and clips it by a
 horizontal plane at its vertical midpoint (`y = 0.5*(min.y + max.y)`, kept side
 `y >= midpoint`) through `render::SliceRenderer` — the geometry shader keeps the
 upper half and emits the on-plane cross-section (slicing is geometry, not
-compositing, SPEC §3). The OIT sample stacks three overlapping transparent quads
-(red near, green middle, blue far) through `render::MeshRenderer` with an
-injected `render::LinkedListOIT` pipeline, so the center region shows all three
-blended in depth order regardless of draw order (FR-render.2/3).
+compositing, SPEC §3). The OIT sample composes REAL meshes (the shared scene
+rig `app/oit_scene.hpp` — the exact arrangement the T19 gate probes): two
+OPAQUE meshes, a golden box and the Stanford bunny at different depths, render
+first through a `render::View` whose per-view depth-test flag is ON
+(`render::View::setDepthTest`, the T18 depth support), so the view target owns
+a real depth attachment and the opaques occlude each other by true depth; then
+two TRANSPARENT glass boxes (red near, blue far, alpha 0.5) that interleave
+both opaque meshes along the view direction are captured by the injected
+`render::LinkedListOIT` pipeline — fragments go into a per-pixel linked list,
+are sorted by depth, and composite back-to-front over the opaque result
+(FR-render.2/3).
 
 ### Driving each capability (per-sample instructions)
 
@@ -125,7 +132,7 @@ result, and exiting cleanly:
 | `re_sample_plane` | observe the two GPU-extracted CT planes (axial left, oblique right; FR-render.5 extension); close the window to exit. |
 | `re_sample_volume` | observe the ray-cast CT chest (FR-render.6); close the window to exit. |
 | `re_sample_slice` | observe the teapot cut open along its horizontal midplane with the on-plane cross-section (FR-render.4); close the window to exit. |
-| `re_sample_oit` | observe the three overlapping transparent quads blended in depth order (FR-render.2/3); close the window to exit. |
+| `re_sample_oit` | observe the golden box and bunny (depth-tested opaque pass) under the two glass shells blended in depth order by the linked-list OIT (FR-render.2/3); close the window to exit. |
 
 The overlay instructions text is the authoritative per-sample help for each
 capability; the table above summarizes it.

@@ -328,9 +328,10 @@ strictly additive:
   sits unused behind them. Mechanism: the capture draws only inside
   `MeshRenderer::render`, immediately after its default depth-off `beginPass`
   prologue (and `View` layers never engage the pipeline), while the composite
-  issues its own explicit `core::disableDepthTest()`. This unblocks the
-  later OIT-sample work (opaque meshes interleaved with transparent shells),
-  which will consume both halves of this feature together.
+  issues its own explicit `core::disableDepthTest()`. The OIT-sample work this
+  unblocked has landed (T19): the sample composes the two halves itself — a
+  depth-tested opaque View pass plus the depth-off pipeline driven over the
+  same target; see "The OIT sample composition" above for that contract.
 
 #### Acceptance constants (depth gate, docs/render.md)
 
@@ -582,6 +583,58 @@ camera mapping NDC `[-1,1]^2` onto the full 64×64 viewport:
 | Opaque-only center alpha | `255` (== 1.0) | opaque material alpha passed through unchanged; pipeline never engaged (FR-render.3) |
 | One transparent quad added | `beginCount == 1`, `drawTransparentCount == 1`, `endCount == 1` | pipeline flips on exactly for the frame (injectable spy, FR-render.3) |
 | Stub pipeline drives renderer | same call counts with a no-op stub | interface is swappable; renderer depends only on the abstraction (FR-render.3) |
+
+#### The OIT sample composition — real meshes over a depth-tested opaque pass (`app/oit_sample.cpp` + `app/oit_scene.hpp`, T19)
+
+The sample scene is no longer transparent quads: it interleaves REAL meshes
+along the view direction — two OPAQUE (a golden flat-shaded box from
+`app::makeBoxMesh`, plus the committed Stanford bunny scaled to a 0.24-unit
+longest AABB side) and two TRANSPARENT glass boxes (alpha 0.5, near red at
+world z `[+0.72,+0.92]`, far blue at z `[-0.56,-0.36]`) whose footprints
+overlap both opaque meshes and each other. The shared rig
+(`app/oit_scene.hpp`) defines the arrangement ONCE for both the sample
+executable and its gate, so the tested scene IS the shown scene.
+
+Composition contract per frame (`oit_scene::composeFrame`):
+
+1. **Opaque pass with true occlusion** — the opaque layer renders through a
+   `render::View` whose `depthTest` flag is ON: the view target owns a depth
+   attachment (`DepthMode::Enabled`, the T18 support) and the shared pass
+   prologue enables + clears the depth test, so golden box and bunny resolve
+   overlaps by depth rather than draw order.
+2. **Depth handed back before capture** — `DrawContext::disableDepthTest()`
+   runs on the SAME context instance that enabled it (its cache tracks the
+   enable, so the raw disable always issues regardless of the global-function
+   cache state), keeping both OIT passes in their established depth-off
+   configuration.
+3. **Capture + depth-sorted composite over the opaque result** — the pipeline
+   captures every glass fragment into the per-pixel linked list, sorts by
+   depth, and blends back-to-front over the opaque image inside the view
+   target; `core::blit` then presents to the window.
+
+v1 capture does not depth-cut: a glass surface BEHIND an opaque mesh still
+composites over it (documented limitation — depth-cut capture would need a
+depth-mask control). The arrangement therefore keeps every probe column's
+glass surfaces strictly IN FRONT of the opaque base surface so the analytic
+expectations stay exact; the bunny-in-front-of-the-far-shell relationship
+remains part of the scene and is covered by an alpha==255 invariant probe.
+
+Acceptance constants (T19 gate, 64×64 ortho `[-1,1]²`, camera `(0,0,5)`):
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| P1 fully-opaque region (pixel `(8,31)`) | `{217,115,38,255}` (±1) | gold `{0.85,0.45,0.15,1}`, flat +Z face shades at exactly base color: `round(0.85·255)=217`, `round(0.45·255)=115`, `round(0.15·255)=38` |
+| P2 near-glass-over-opaque (pixel `(19,31)`) | `{226,67,48,255}` (±1) | near premult `{0.45,0.10,0.10,0.5}` twice (front+back face): acc `{0.675,0.15,0.15}`, `a=0.75`; over gold: `acc + 0.25·{0.85,0.45,0.15} = {0.8875,0.2625,0.1875}`, `a=1` |
+| P3 far-over-near-over-opaque (pixel `(40,31)`) | `{195,62,84,255}` (±1) | full 4-fragment chain far→near: `{0.10,0.175,0.45}` → `{0.15,0.2625,0.675}` → `{0.525,0.23125,0.4375}` → `{0.7125,0.215625,0.31875}`, `a=0.9375`; over gold `+ 0.0625·{0.85,0.45,0.15} = {0.765625,0.24375,0.328125}` |
+| Wrong sort order at P3 | `{95,84,184}` | reversed accumulation gives `{0.371875,0.328125,0.721875}` — far outside 1/255, so the probe discriminates depth ordering |
+| Bunny-interior probe (pixel `(33,16)`) | alpha `255` only | an opaque surface lies under the ray (bunny body or gold box beneath), pinning composited alpha at exactly 1.0 regardless of the smooth-shaded RGB |
+| Captured fragments per frame | exactly `5632` | pixel-center rule: each glass shell covers 32×44 = 1408 centers (near x∈[11,42], y∈[10,53]; far identical) and contributes 2 fragments (front +Z face, back −Z face; no culling, capture depth-off); `(1408+1408)·2` |
+| Pipeline spy, opaque-only layer | `begin/drawTransparent/end == 0/0/0`, probe alphas `255` | no transparent material → pipeline never engages (FR-render.3) |
+| Pipeline spy, full mixed scene | `begin==1`, `drawTransparentCount == 2`, `end==1` | one capture per transparent mesh — spy count equals the number of transparent meshes |
+| Depth-enabled view target | `hasDepth() == true`, complete WITH the depth attachment | the opaque pass consumes the T18 `DepthMode::Enabled` support |
+| Repeat-frame stability | frame 2 reproduces every probe byte | depth/blend state transitions are exact per frame (instance-cached `disableDepthTest` after the enabled prologue) |
+
+Gate: `tests/t19_oit_sample_test.cpp` (N>=3 consecutive green runs).
 
 ### `MeshGeometry` (`render/mesh_geometry.hpp`, `.cpp`)
 
