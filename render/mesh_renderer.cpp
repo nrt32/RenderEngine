@@ -146,10 +146,16 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
     }
 
     // Begin the pass through the ONE shared prologue (bind target → viewport
-    // → clear → depth off → blend off). A null framebuffer selects the
+    // → clear → depth state → blend off). A null framebuffer selects the
     // window's on-screen default framebuffer; otherwise the offscreen FBO is
-    // bound. v1 FBOs are color-only (no depth attachment, SPEC §6 /
-    // docs/core.md), so the depth test stays off.
+    // bound. Direct single-scene renders keep the deterministic depth-off
+    // painter's-order pass — true occlusion via a depth attachment + enabled
+    // depth test is a per-view opt-in (render::View::setDepthTest), applied by
+    // the View's own prologue call when a composition needs it. The OIT passes
+    // below therefore always run with the depth test OFF exactly as before:
+    // the capture draws immediately after this depth-off prologue, and end()
+    // issues its own explicit core::disableDepthTest() — so both behave
+    // identically on color-only and depth-enabled targets.
     core::DrawContext ctx;
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,

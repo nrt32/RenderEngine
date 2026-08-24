@@ -146,7 +146,7 @@ V2.4) drives ("RE dispatches objects to the correct renderer via IRenderer").
 | Type | Purpose |
 |---|---|
 | `Camera` | `view` / `proj` matrices + `position` (eye, for view-direction terms). **Moved here from `mesh_renderer.hpp`** so a file that needs only the shared types no longer pulls in the whole mesh renderer. |
-| `RenderTarget` | a color-only `core::Framebuffer` + pixel size + clear color (SPEC §3; v1 FBOs are color-only, SPEC §6 / docs/core.md). A null framebuffer means the window's default framebuffer (samples). **Moved here from `mesh_renderer.hpp`**. |
+| `RenderTarget` | a `core::Framebuffer` + pixel size + clear color (SPEC §3). The framebuffer is color-only by default (the deterministic-gate configuration, SPEC §6 / docs/core.md) but MAY carry an optional depth attachment when it belongs to a depth-enabled `ViewTarget`; direct renders always keep the depth test off. A null framebuffer means the window's default framebuffer (samples). **Moved here from `mesh_renderer.hpp`**. |
 | `Scene` | `std::variant<const MeshScene*, const PlaneScene*, const VolumeScene*, const SliceScene*>` — the dispatch payload: a pointer to the scene of any of the four techniques. The variant holds **pointers** because a `std::variant` of forward-declared *value* types does not compile (GCC/libstdc++); the scene structs stay defined in their renderer headers and are forward-declared here. Scenes are owned by `app/` and passed by pointer, matching the stateless-renderer model (SPEC §3). |
 | `IRenderer` | the pure abstract contract: `data::Result<void> render(const Scene&, const Camera&, const RenderTarget&) = 0`. Implemented by `MeshRenderer`, `PlaneRenderer`, `VolumeRenderer`, and `SliceRenderer`. |
 
@@ -246,15 +246,17 @@ present. The MPR sample's 2×2 grid (docs/mpr.md) will be driven through this
 | Type | Purpose |
 |---|---|
 | `ViewRect` | a window-section rectangle in GL pixel coordinates (origin bottom-left, matching `core::setViewport`): `x`/`y`/`width`/`height`. The per-view window-section handle the app shares with the engine (still in `render/types.hpp`). |
-| `ViewTarget` | per-view FBO: the color-attachment `core::Texture2D` plus the `core::Framebuffer` that renders into it (texture stays alive for framebuffer lifetime). Sized `rect.w×h`; `View` delegates FBO lifecycle to it (SRP via composition). |
+| `ViewTarget` | per-view FBO: the color-attachment `core::Texture2D` plus the `core::Framebuffer` that renders into it (textures stay alive for framebuffer lifetime), plus an OPTIONAL `DEPTH_COMPONENT24` depth-attachment texture when created with `DepthMode::Enabled` (`hasDepth()`/`depth()`; default `DepthMode::ColorOnly`). Sized `rect.w×h`; an enabled-depth target asserts framebuffer completeness WITH its depth attachment at creation, and `resize()` preserves the mode. `View` delegates FBO lifecycle to it (SRP via composition). |
 | `IRenderable` | type-erased draw (`render/i_renderable.hpp`): `virtual Result<void> drawLayer(Camera,DrawContext&)=0`. Each renderer provides `drawLayer(SceneT,Camera,DrawContext&)` assuming already bound+cleared; `View::addItem<SceneT>(SceneT,Renderer*)` wraps it. `View` never knows the renderer (DIP/OCP). |
-| `View` (`ReView`) | one per screen section: the `ViewRect`, the per-view `Camera`, the `optional<ClipPlane>` (`2D` vs `3D`), the `clearColor`, the owned `ViewTarget` (`rect.w×h`), and the heterogeneous `vector<IRenderable>`. `ensureTarget()` creates/resizes the `ViewTarget`; `render(ctx)` binds the FBO, does `ctx.setViewport/clearColor/clear/disable` then iterates `drawLayer` without clearing between layers; `blitTo(destination)` copies the FBO into its pinned window rect via `core::blit`. Alias `ReView` kept for grep distinctness where both `scene::View` and `render::View` are in scope. |
+| `View` (`ReView`) | one per screen section: the `ViewRect`, the per-view `Camera`, the `optional<ClipPlane>` (`2D` vs `3D`), the `clearColor`, the per-view `depthTest` flag (default false — see "Depth support" below), the owned `ViewTarget` (`rect.w×h`), and the heterogeneous `vector<IRenderable>`. `ensureTarget()` creates/recreates the `ViewTarget` when size OR depth mode changed; `render(ctx)` binds the FBO, runs the shared prologue (clear + depth state per the flag) then iterates `drawLayer` without clearing between layers; `blitTo(destination)` copies the FBO into its pinned window rect via `core::blit`. Alias `ReView` kept for grep distinctness where both `scene::View` and `render::View` are in scope. |
 | `core::blit` | the `core/` wrapper around `glBlitFramebuffer` (guardrail `gpu_api_ownership`: raw GL call lives in `core/draw.cpp`). Copies a color pixel rectangle from a source FBO to a destination framebuffer (`nullptr` = default framebuffer 0), GL_NEAREST, scaled to the destination rect. v1 FBOs are color-only, so only `GL_COLOR_BUFFER_BIT` is blitted. |
 
 **Compositing semantics (View side).** `View::render(ctx)` uses the `DrawContext`
 instance passed by the caller (per-frame, SRP via instance — SPEC §11.6 EOL-5) to
-`setViewport(0,0,w,h)` / `setClearColor` / `clearColor` / `disableDepthTest` /
-`disableBlend` exactly once, then calls each `IRenderable::drawLayer(camera, ctx)`
+run the shared prologue exactly once — `setViewport(0,0,w,h)` / `setClearColor` /
+`clearColor`, then the depth branch (`disableDepthTest` by default; `enableDepthTest`
++ `clearDepth` when this view's `depthTest` flag is true) / `disableBlend` — and then
+calls each `IRenderable::drawLayer(camera, ctx)`
 without clearing between layers — no second layer clears away the first. The
 single-item `Renderer::render(scene,camera,target)` retains its own
 `bind+viewport+clear` for direct tests (regression lock). A `View` with zero
@@ -291,6 +293,63 @@ its rect, so the blit is 1:1):
 | `View::blitTo` before `ensureTarget`/`render` | typed error, code 3 | per-view FBO not created — rejected instead of blitting unrendered target (SPEC §5) |
 
 > **V2 T2 historic note.** The V2 T2 gate (Model B: per-view FBO + engine blit via `ViewRenderer`) used the same 1280×480 / 640×480 constants but dispatched through `IRenderer` + `Scene` variant via `ViewRenderer{setRenderer,renderViews,present}`. T5 replaces that compositor with `ReView`/`ViewTarget` + `IRenderable` type erasure + `drawLayer`; `ViewRenderer` + `render/types.hpp` `Scene` raw-pointer `View` struct are deleted. The `Scene` variant in `render/types.hpp` remains for single-item `render()` direct tests until `AssetId` handles replace it in T7.
+
+### Depth support — opt-in per view (`DepthMode`, `View::setDepthTest`)
+
+Architecture-review finding closed by the depth task: v1 framebuffers were
+**color-only everywhere**, which forced painter's-order workarounds (the MPR
+box emits its faces so the last-drawn near face wins at each pixel) and blocked
+opaque meshes under order-independent transparency. The fix is opt-in and
+strictly additive:
+
+- **Color-only stays the default — the deterministic-gate configuration.**
+  Every analytic pixel gate of the suite renders through color-only targets
+  whose output is painter's-order and therefore reproducible on software GL
+  (llvmpipe). A default-constructed view or `ViewTarget::create(w, h)`
+  allocates no depth attachment, so no existing gate can drift.
+- **`render::ViewTarget` + `DepthMode::Enabled`.** Creating a target with
+  `DepthMode::Enabled` additionally owns a `GL_DEPTH_COMPONENT24` texture
+  (`core::Texture2D::uploadDepth`) attached at `GL_DEPTH_ATTACHMENT`
+  (`core::Framebuffer::attachDepth`). The creation-time completeness check
+  then covers BOTH attachments, so an enabled-depth target asserts framebuffer
+  completeness WITH its depth attachment — an environment that cannot provide
+  it fails loudly at creation instead of silently rendering without occlusion.
+  `resize()` preserves the mode; `hasDepth()`/`depth()` expose it.
+- **`render::View::setDepthTest(bool)` — per-view flag.** When true,
+  `ensureTarget()` creates/recreates the inner target as depth-enabled and the
+  pass prologue enables the depth test and clears it to 1.0; when false
+  (default) the prologue disables depth exactly as before. Flipping the flag
+  recreates only the inner target (the View object persists). Direct
+  single-item renders are unaffected: they keep the deterministic depth-off
+  pass.
+- **OIT is untouched.** Both `LinkedListOIT` passes keep the depth test off
+  exactly as they always did, so transparent compositing produces identical
+  bytes on color-only AND depth-enabled targets — the depth attachment simply
+  sits unused behind them. Mechanism: the capture draws only inside
+  `MeshRenderer::render`, immediately after its default depth-off `beginPass`
+  prologue (and `View` layers never engage the pipeline), while the composite
+  issues its own explicit `core::disableDepthTest()`. This unblocks the
+  later OIT-sample work (opaque meshes interleaved with transparent shells),
+  which will consume both halves of this feature together.
+
+#### Acceptance constants (depth gate, docs/render.md)
+
+Two full-screen opaque quads facing +Z at different depths, drawn in
+ANTI-painter order (nearer FIRST, farther LAST), camera at `(0,0,5)`,
+orthographic `[-1,1]²` onto a 64×64 view:
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| Nearer quad (world z=0, distance 5), base `{0, 0.5, 0, 1}` | bytes `{0, 128, 0, 255}` | front-facing flat headlight shades at exactly base color; `round(0.5*255)=128` |
+| Farther quad (world z=-1, distance 6), base `{0.5, 0, 0, 1}` | bytes `{128, 0, 0, 255}` | same shading rule |
+| Overlap pixel, `depthTest = true` | `{0, 128, 0, 255}` (±1) | true occlusion: the NEARER mesh wins even though it was drawn FIRST (depth test on, cleared to 1.0 per pass) |
+| Overlap pixel, default color-only pass | `{128, 0, 0, 255}` (±1) | painter's order: the LATER-DRAWN (farther) mesh wins — proves the probe discriminates the two semantics (the expected colors differ by 128 in R vs G, far outside 1/255) |
+| Depth-enabled target | `isComplete() == true` with `GL_DEPTH_ATTACHMENT` bound | completeness asserted WITH the depth attachment at creation (`ViewTarget::create`, `DepthMode::Enabled`) |
+| Default target / view | no depth attachment (`hasDepth() == false`) | color-only default untouched — every prior FBO gate keeps its exact configuration |
+| Flag flip / resize | `setDepthTest(true)` → next `ensureTarget()` owns a depth attachment; `setRect` resize preserves it | mode-mismatch recreate path; `resize()` preserves `DepthMode` |
+| OIT composite through a depth-enabled target | `{56, 56, 28, 179}` (±1); captured fragments `64·64·2 = 8192` | same analytic two-transparent-quad blend as FR-render.2 — both OIT passes run depth-off unchanged, so bytes are identical to the color-only run |
+
+Gate: `tests/t18_depth_test.cpp` (N>=3 consecutive green runs).
 
 ### The unified asset store: `AssetRegistry` (SPEC §9 V2.5 mesh kind, SPEC §7 T14 volume/image/material kinds)
 
@@ -559,15 +618,16 @@ Public scene structs (`Camera`/`RenderTarget` live in `render/types.hpp`;
 | Type | Purpose |
 |---|---|
 | `Camera` | `view` / `proj` matrices + `position` (eye, for view-direction terms) — `render/types.hpp`. |
-| `RenderTarget` | a color-only `core::Framebuffer` + pixel size + clear color — `render/types.hpp`. |
+| `RenderTarget` | a `core::Framebuffer` + pixel size + clear color — `render/types.hpp` (color-only by default; an optional depth attachment exists only on depth-enabled `ViewTarget`s, which direct renders never require). |
 | `MeshInstance` | an `AssetHandle` into the shared `AssetRegistry` (SPEC §9 V2.5), its `IMaterial`, and its model matrix. The scene carries the handle — the currency views exchange — never a raw CPU pointer. |
 | `MeshScene` | a vector of `MeshInstance`s (CPU-side; `app/` builds these). |
 
 `MeshRenderer::render(scene, camera, target)`:
 
 1. Binds the target framebuffer, sets the viewport, clears to the target's
-   clear color, and leaves the depth test off (v1 FBOs are color-only, SPEC §6 /
-   docs/core.md).
+   clear color, and keeps the depth test OFF — direct single-scene renders are
+   the deterministic painter's-order pass; true occlusion is a per-view opt-in
+   applied by `View::render`'s own prologue call (depth support section above).
 2. Determines whether any material in the scene is transparent. If so and a
    pipeline is injected, it **engages** the pipeline (brackets the draw with
    `begin()`/`end()`); an opaque-only scene **never** engages it (FR-render.3).
@@ -1069,17 +1129,20 @@ has exactly ONE definition (Sr. review "single internal implementation per
 renderer" rule, SPEC §6):
 
 - **Pass prologue** — binding the target framebuffer, setting the viewport,
-  clearing to the clear color, and disabling depth test + blending existed
+  clearing to the clear color, and setting depth test + blending state existed
   verbatim in every direct `render()` entry point. It is now
-  **`core::DrawContext::beginPass(framebuffer, width, height, r, g, b, a)`**
+  **`core::DrawContext::beginPass(framebuffer, width, height, r, g, b, a, depthTest = false)`**
   (`core/draw.hpp`), called once by each of the six direct-render entry points
   (`Mesh/Plane/Volume/Slice/Contour/VolumeSliceRenderer::render`) and by
   `View::render` — the composition owner whose single clear replaces per-layer
-  clears. Call order
+  clears; the View passes its per-view `depthTest` flag there (all direct
+  renderers keep the defaulted `false`). Call order
   is fixed: bind (null framebuffer = window default FB) → viewport → clear
-  color + clear → depth off → blend off. The OIT composite sequence
+  color + clear → depth state (disabled by default; enabled + depth-cleared on
+  the per-view opt-in) → blend off. The OIT composite sequence
   (`LinkedListOIT::end`) deliberately does NOT call it: compositing must blend
-  OVER the already-drawn opaque contents, so nothing may be cleared there.
+  OVER the already-drawn opaque contents, so nothing may be cleared there — it
+  issues its own narrower sequence with the depth test explicitly disabled.
 - **Full-screen NDC quad** — the position-only two-triangle quad (corners
   (-1,-1), (1,-1), (1,1), (-1,1); index pattern `{0,1,2, 0,2,3}`) lived twice
   as `kScreenQuadVerts` (VolumeRenderer, LinkedListOIT) plus a third

@@ -6,9 +6,17 @@
 // optional<ClipPlane> (2D vs 3D) + list<IRenderable> (VolumeSlice+MeshSlice for
 // 2D, Volume+Mesh for 3D). Each IRenderable is type-erased drawLayer(Camera,DrawContext&)
 // — View never knows the renderer. View::render() begins its pass via the ONE
-// shared prologue core::DrawContext::beginPass (bind+viewport+clear+depth-off+
-// blend-off — T17 single-site rule), then iterates drawLayer without clearing
-// between layers.
+// shared prologue core::DrawContext::beginPass (bind+viewport+clear+depth-
+// state+blend-off — T17 single-site rule), then iterates drawLayer without
+// clearing between layers.
+//
+// Depth handling is per-view and opt-in (architecture review 2026-08-23): a
+// view whose depthTest flag is true renders into a ViewTarget created with
+// DepthMode::Enabled and its pass prologue enables the depth test (+ clears
+// depth), so overlapping opaque geometry resolves by true occlusion — nearer
+// fragment wins regardless of draw order. The DEFAULT stays false: color-only
+// target + depth test disabled, the deterministic painter's-order
+// configuration every existing analytic gate asserts against on software GL.
 
 #include <memory>
 #include <optional>
@@ -31,6 +39,8 @@ namespace re::render {
 /// that assumes the View already bound its FBO and cleared via DrawContext.
 /// The View composes layers without clearing between them; single-item
 /// render::Renderer::render() keeps its own clear for direct tests.
+/// The per-view `depthTest` flag opts the view into a depth-enabled target +
+/// depth-tested pass; the default stays color-only + depth-off.
 class View {
    public:
     /// Construct with a window-section rect (origin bottom-left, GL convention).
@@ -59,6 +69,19 @@ class View {
     const glm::vec4& clearColor() const noexcept { return clearColor_; }
     void setClearColor(glm::vec4 c) noexcept { clearColor_ = c; }
 
+    /// The per-view depth-test flag (default false = color-only painter's-
+    /// order pass). When true, the next ensureTarget() creates/recreates the
+    /// ViewTarget with DepthMode::Enabled (the target must physically own a
+    /// depth attachment for the test to be meaningful) and render()'s prologue
+    /// enables + clears the depth test instead of disabling it, so overlapping
+    /// opaque items resolve by true occlusion. Transparent compositing is
+    /// unaffected by this flag: the OIT capture draws only inside
+    /// MeshRenderer::render, right behind its default depth-off beginPass
+    /// prologue (View layers never engage the pipeline), and the composite
+    /// pass issues its own explicit core::disableDepthTest().
+    bool depthTest() const noexcept { return depthTest_; }
+    void setDepthTest(bool enabled) noexcept { depthTest_ = enabled; }
+
     // --- ViewTarget ---------------------------------------------------------
 
     /// The owned ViewTarget (nullptr until ensureTarget() or render() creates it).
@@ -68,8 +91,11 @@ class View {
     ViewTarget* /*borrow*/ target() noexcept { return target_ ? &*target_ : nullptr; }
     const ViewTarget* /*borrow*/ target() const noexcept { return target_ ? &*target_ : nullptr; }
 
-    /// Ensure the ViewTarget exists and is sized rect_.width×rect_.height.
-    /// Recreate only when size changed (resize path for DPR/window resize).
+    /// Ensure the ViewTarget exists and is sized rect_.width×rect_.height,
+    /// and that its depth mode matches the per-view depthTest flag (a flag
+    /// flip recreates the target with/without its depth attachment).
+    /// Recreate only when size or depth mode changed (resize path for
+    /// DPR/window resize; mode path for setDepthTest).
     data::Result<void> ensureTarget();
 
     // --- IRenderable list ---------------------------------------------------
@@ -103,10 +129,11 @@ class View {
 
     /// Render all items into the View's own FBO. Assumes ensureTarget() already
     /// succeeded; begins the pass through the shared core::DrawContext::beginPass
-    /// prologue (binds the FBO, sets the viewport, clears to clearColor, disables
-    /// depth/blend), then calls each item's drawLayer(camera, ctx) without
-    /// clearing between layers. Returns typed error on target failure or any
-    /// layer failure.
+    /// prologue (binds the FBO, sets the viewport, clears to clearColor, then
+    /// sets the depth state — enabled + depth-cleared iff this view's
+    /// depthTest flag is true, disabled otherwise — and disables blending),
+    /// then calls each item's drawLayer(camera, ctx) without clearing between
+    /// layers. Returns typed error on target failure or any layer failure.
     data::Result<void> render(core::DrawContext& ctx);
 
     /// Convenience: ensureTarget() then render().
@@ -137,6 +164,7 @@ class View {
     Camera camera_{};
     std::optional<ClipPlane> clipPlane_{std::nullopt};
     glm::vec4 clearColor_{0, 0, 0, 0};
+    bool depthTest_{false};
     std::optional<ViewTarget> target_{std::nullopt};
     std::vector<std::unique_ptr<IRenderable>> items_{};
 };

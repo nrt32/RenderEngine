@@ -20,14 +20,32 @@ data::Result<void> View::ensureTarget() {
     }
     const auto w = static_cast<std::uint32_t>(rect_.width);
     const auto h = static_cast<std::uint32_t>(rect_.height);
+    const DepthMode wantedMode =
+        depthTest_ ? DepthMode::Enabled : DepthMode::ColorOnly;
     if (!target_.has_value()) {
-        auto t = ViewTarget::create(w, h);
+        auto t = ViewTarget::create(w, h, wantedMode);
         if (t.failed()) {
             return data::makeError<void>(t.error().code, t.error().message);
         }
         target_ = std::move(*t);
         return data::Result<void>(data::value);
     }
+    // A depth-mode mismatch recreates the target outright so the new
+    // attachment set (with or without the depth texture) is created and
+    // asserted complete together: a depth-tested view must draw into a target
+    // that physically owns a depth attachment, and a color-only view must not
+    // keep a stale one. As with the size path below, only the inner ViewTarget
+    // changes — the View object itself persists (persistence contract).
+    if (target_->depthMode() != wantedMode) {
+        auto t = ViewTarget::create(w, h, wantedMode);
+        if (t.failed()) {
+            return data::makeError<void>(t.error().code, t.error().message);
+        }
+        target_ = std::move(*t);
+        return data::Result<void>(data::value);
+    }
+    // Pure size change: reallocate storage at the new rect size, preserving
+    // this view's depth mode.
     if (target_->width() != w || target_->height() != h) {
         auto r = target_->resize(w, h);
         if (r.failed()) return r;
@@ -39,12 +57,15 @@ data::Result<void> View::render(core::DrawContext& ctx) {
     if (!target_.has_value()) {
         return data::makeError<void>(2, "View: target not created (call ensureTarget)");
     }
-    // Begin the pass through the ONE shared prologue (T17: core::DrawContext::
-    // beginPass — the six-call bind+viewport+clear+depth-off+blend-off sequence
-    // exists exactly once, in core/draw.hpp). The View is the composition
+    // Begin the pass through the ONE shared prologue (the bind+viewport+clear+
+    // depth-state+blend-off sequence exists exactly once, in core/draw.hpp).
+    // The per-view depthTest flag drives the prologue's depth branch: enabled
+    // (+ depth cleared to 1.0) for occlusion-capable views, disabled for the
+    // default color-only painter's-order pass. The View is the composition
     // owner: it clears exactly once here, and layers never clear.
     ctx.beginPass(&target_->framebuffer(), target_->width(), target_->height(),
-                  clearColor_.r, clearColor_.g, clearColor_.b, clearColor_.a);
+                  clearColor_.r, clearColor_.g, clearColor_.b, clearColor_.a,
+                  depthTest_);
 
     for (auto& item : items_) {
         auto res = item->drawLayer(camera_, ctx);

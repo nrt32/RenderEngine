@@ -1,9 +1,12 @@
 // render/view_target.cpp — ViewTarget implementation: create/resize the
-// per-view color texture + framebuffer pair. Color-only by design (no depth
-// attachment): every analytic pixel gate in the suite renders through these
-// targets, so the default must stay deterministic on software GL; resizing
-// reallocates storage in place so a window resize does not invalidate the
-// owning View's handle to this target.
+// per-view color texture + framebuffer pair, plus the OPT-IN depth attachment
+// (DepthMode::Enabled): a DEPTH_COMPONENT24 texture attached to the FBO's
+// depth point whose completeness is asserted together with the color
+// attachment. ColorOnly stays the default of every factory path because every
+// analytic pixel gate in the suite renders through these targets and must stay
+// deterministic painter's-order on software GL; resizing reallocates storage
+// in place (preserving the depth mode) so a window resize does not invalidate
+// the owning View's handle to this target.
 
 #include "render/view_target.hpp"
 
@@ -13,7 +16,8 @@
 
 namespace re::render {
 
-data::Result<ViewTarget> ViewTarget::create(std::uint32_t width, std::uint32_t height) {
+data::Result<ViewTarget> ViewTarget::create(std::uint32_t width,
+                                            std::uint32_t height, DepthMode mode) {
     if (width == 0u || height == 0u) {
         return data::makeError<ViewTarget>(1, "ViewTarget: invalid size 0");
     }
@@ -25,25 +29,49 @@ data::Result<ViewTarget> ViewTarget::create(std::uint32_t width, std::uint32_t h
     if (fb.failed()) {
         return data::makeError<ViewTarget>(fb.error().code, fb.error().message);
     }
+    std::optional<core::Texture2D> depth;
+    if (mode == DepthMode::Enabled) {
+        auto depthTexture = core::Texture2D::create();
+        if (depthTexture.failed()) {
+            return data::makeError<ViewTarget>(depthTexture.error().code,
+                                               depthTexture.error().message);
+        }
+        depth = std::move(*depthTexture);
+        depth->bind(0u);
+        depth->uploadDepth(width, height);
+        depth->unbind(0u);
+    }
     std::vector<std::uint8_t> zeros(static_cast<std::size_t>(width) * height * 4u, 0u);
     color->bind(0u);
     color->upload(width, height, zeros.data());
     color->unbind(0u);
     fb->bind();
     fb->attachColor(*color);
+    if (depth.has_value()) {
+        // An enabled-depth target asserts completeness WITH its depth
+        // attachment: isComplete() below now requires BOTH attachments to be
+        // valid, so a driver that silently dropped the depth attachment would
+        // fail loudly here instead of rendering without occlusion.
+        fb->attachDepth(*depth);
+    }
     if (!fb->isComplete()) {
         fb->unbind();
         return data::makeError<ViewTarget>(1, "ViewTarget: framebuffer incomplete");
     }
     fb->unbind();
-    return data::makeValue<ViewTarget>(ViewTarget(std::move(*color), std::move(*fb), width, height));
+    return data::makeValue<ViewTarget>(
+        ViewTarget(std::move(*color), std::move(*fb), width, height, mode,
+                   std::move(depth)));
 }
 
 data::Result<void> ViewTarget::resize(std::uint32_t newWidth, std::uint32_t newHeight) {
     if (newWidth == 0u || newHeight == 0u) {
         return data::makeError<void>(1, "ViewTarget: resize to 0");
     }
-    auto recreated = ViewTarget::create(newWidth, newHeight);
+    // Recreate at the new size with THIS target's depth mode preserved: a
+    // window resize must never silently turn an occlusion-capable view into a
+    // painter's-order one (or vice versa).
+    auto recreated = ViewTarget::create(newWidth, newHeight, mode_);
     if (recreated.failed()) {
         return data::makeError<void>(recreated.error().code, recreated.error().message);
     }

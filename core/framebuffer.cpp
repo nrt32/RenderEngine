@@ -52,6 +52,11 @@ void Framebuffer::attachColor(const Texture2D& texture) const noexcept {
                            texture.id(), 0);
 }
 
+void Framebuffer::attachDepth(const Texture2D& texture) const noexcept {
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                           texture.id(), 0);
+}
+
 bool Framebuffer::isComplete() const noexcept {
     return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
 }

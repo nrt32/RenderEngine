@@ -47,10 +47,14 @@ struct Camera {
     glm::vec3 position{0.0f, 0.0f, 0.0f};
 };
 
-/// Offscreen render target: a color-only framebuffer plus its pixel size and
-/// clear color (SPEC §3; v1 FBOs are color-only, SPEC §6 / docs/core.md). A
-/// null framebuffer means the window's on-screen default framebuffer (samples,
-/// T12).
+/// Offscreen render target: a framebuffer plus its pixel size and clear color
+/// (SPEC §3). The default configuration is color-only (v1 semantics, and
+/// still the deterministic-gate default — painter's-order output that is
+/// reproducible on software GL), but the framebuffer MAY carry an optional
+/// depth attachment when it belongs to a ViewTarget created with
+/// DepthMode::Enabled; direct renders keep the depth test off either way (the
+/// per-view opt-in lives on render::View::setDepthTest). A null framebuffer
+/// means the window's on-screen default framebuffer (samples, T12).
 struct RenderTarget {
     /// Borrow for the DURATION OF ONE render/blit call only (structurally
     /// guaranteed: renderers use it synchronously inside

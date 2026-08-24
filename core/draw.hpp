@@ -208,6 +208,15 @@ class DrawContext {
     /// Clear color buffer to the last clear color.
     void clearColor() noexcept { glClear(GL_COLOR_BUFFER_BIT); }
 
+    /// Clear the currently-bound draw framebuffer's DEPTH buffer to the
+    /// default 1.0 far value (glClear GL_DEPTH_BUFFER_BIT). Only meaningful on
+    /// a framebuffer that HAS a depth attachment (the optional depth target of
+    /// render::ViewTarget DepthMode::Enabled); on a color-only FBO the clear
+    /// is silently ignored by GL because there is no depth buffer to affect.
+    /// A pass that enables depth testing must clear depth first, so fragments
+    /// of the new frame never depth-fail against the previous frame's values.
+    void clearDepth() noexcept { glClear(GL_DEPTH_BUFFER_BIT); }
+
     /// Depth test toggle — cached per capability.
     void enableDepthTest() noexcept {
         if (cache_.hasDepthTest && cache_.depthEnabled) return;
@@ -264,32 +273,42 @@ class DrawContext {
 
     /// Begin one draw pass into a target framebuffer — THE pass prologue
     /// (renderer-consolidation deliverable: exactly ONE definition of the
-    /// bind-target + viewport + clear + disable-depth/blend sequence exists,
+    /// bind-target + viewport + clear + depth/blend-state sequence exists,
     /// here; every direct renderer render() entry point calls this instead of
-    /// repeating the six state calls).
+    /// repeating the state calls).
     ///
     /// Binds `framebuffer` as the draw target (a null pointer selects the
     /// window's on-screen default framebuffer 0), sets the viewport to the
     /// full `(0, 0, width, height)` rectangle, installs `clearR/G/B/A` as the
-    /// clear color and clears the color buffer, then leaves the depth test
-    /// and blending DISABLED — v1 framebuffers are color-only (docs/core.md),
-    /// so the depth test stays off, and exact-color gates require blending
-    /// off during the pass. Call order is fixed: bind → viewport → clear
-    /// color+clear → depth off → blend off.
+    /// clear color and clears the color buffer, then sets the depth test and
+    /// blending DISABLED — unless `depthTest` is true (the per-view opt-in of
+    /// render::View::setDepthTest): a view that needs true occlusion renders
+    /// into a framebuffer WITH a depth attachment (render::ViewTarget
+    /// DepthMode::Enabled) and this prologue instead ENABLES the depth test
+    /// and clears the depth buffer to 1.0 so the frame starts from a defined
+    /// far depth. Blending always ends up disabled during the pass: exact-color
+    /// gates require it off, and the OIT composite re-enables blend itself.
+    ///
+    /// The default `depthTest = false` keeps every existing call site on the
+    /// deterministic color-only configuration (software-GL safe): all analytic
+    /// pixel gates render with painter's-order semantics exactly as before.
+    /// Call order is fixed: bind → viewport → clear color → depth state (+depth
+    /// clear when enabled) → blend off.
     ///
     /// State transitions go through this instance's cached wrappers (a fresh
     /// DrawContext is cold, so every call of a pass issues its raw GL call
     /// exactly once; duplicate identical passes on the same context hit the
     /// cache). Passes that must NOT clear — e.g. the OIT composite that blends
     /// OVER existing opaque contents — do not call beginPass; they issue their
-    /// own narrower bind/viewport/state sequence explicitly.
+    /// own narrower bind/viewport/state sequence explicitly (and explicitly
+    /// disable depth there, so an enabled-depth target composites identically).
     ///
     /// @note lifetime: borrowed for the duration of this call only — owned by
     /// the caller (a ViewTarget inner FB or the window's default FB when
     /// null), never retained by the context.
     void beginPass(Framebuffer* /*borrow*/ framebuffer, std::uint32_t width,
                    std::uint32_t height, float clearR, float clearG,
-                   float clearB, float clearA) noexcept {
+                   float clearB, float clearA, bool depthTest = false) noexcept {
         if (framebuffer == nullptr) {
             bindDefaultFramebuffer();
         } else {
@@ -298,7 +317,12 @@ class DrawContext {
         setViewport(0, 0, static_cast<int>(width), static_cast<int>(height));
         setClearColor(clearR, clearG, clearB, clearA);
         clearColor();
-        disableDepthTest();
+        if (depthTest) {
+            enableDepthTest();
+            clearDepth();
+        } else {
+            disableDepthTest();
+        }
         disableBlend();
     }
 
@@ -345,8 +369,10 @@ class DrawContext {
 /// core::setViewport and the ViewRect convention of the multi-view compositor
 /// (render/view.hpp, SPEC §3.2).
 ///
-/// v1 framebuffers are color-only (docs/core.md), so only the color buffer is
-/// blitted. With equal source and destination sizes the copy is exact —
+/// Only the COLOR buffer is blitted (GL_COLOR_BUFFER_BIT): the engine's
+/// present path moves pixels, never depth state — a depth-enabled target
+/// presents its color attachment and its depth attachment stays internal.
+/// With equal source and destination sizes the copy is exact —
 /// GL_NEAREST does not filter, so each source pixel lands pixel-for-pixel at
 /// its destination position; the multi-view gate (V2 T2) relies on this to
 /// read each view's scene color at the center of its pinned window rect.

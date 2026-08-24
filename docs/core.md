@@ -47,8 +47,8 @@ context is current (glad not loaded). A generated GL object name is never 0
 | `core::VertexBuffer` | VBO (`GL_ARRAY_BUFFER`) | `bind()`, `upload(data, bytes, usage)`, `unbind()` |
 | `core::ElementBuffer` | EBO (`GL_ELEMENT_ARRAY_BUFFER`) | `bind()`, `upload(u32 indices, count, usage)`, `unbind()` |
 | `core::VertexArray` | VAO | `bind()`, `setAttribute(index, components, normalized, stride, offset)`, `unbind()` |
-| `core::Texture2D` | 2D texture (`GL_TEXTURE_2D`) | `bind(unit)`, `upload(w, h, rgba8)`, `unbind(unit)` |
-| `core::Framebuffer` | FBO | `bind()`, `attachColor(texture)`, `isComplete()`, `unbind()` |
+| `core::Texture2D` | 2D texture (`GL_TEXTURE_2D`) | `bind(unit)`, `upload(w, h, rgba8)`, `uploadDepth(w, h)`, `unbind(unit)` |
+| `core::Framebuffer` | FBO | `bind()`, `attachColor(texture)`, `attachDepth(texture)`, `isComplete()`, `unbind()` |
 
 Design notes:
 
@@ -58,12 +58,23 @@ Design notes:
   the GL spec.
 - **v1 textures are RGBA8** (4 bytes/pixel). `upload()` sets `GL_LINEAR`
   filtering and `GL_CLAMP_TO_EDGE` wrapping, so an uploaded texture (no mipmaps)
-  is complete and directly attachable to a framebuffer.
-- **v1 FBOs are color-only**: `attachColor()` attaches to
+  is complete and directly attachable to a framebuffer. `uploadDepth(w, h)`
+  instead allocates **depth storage** (`GL_DEPTH_COMPONENT24`, no client data —
+  the rasterizer writes it) with `GL_NEAREST` + clamp; that flavor exists solely
+  as the depth attachment of an offscreen target and is never shader-sampled.
+- **FBOs are color-only by default**: `attachColor()` attaches to
   `GL_COLOR_ATTACHMENT0` (default draw/read buffer), so rendering to an FBO
   goes to that attachment. A color-only FBO whose attachment is a complete
-  texture is `GL_FRAMEBUFFER_COMPLETE` (`isComplete()`), which is what the T3
-  gate asserts.
+  texture is `GL_FRAMEBUFFER_COMPLETE` (`isComplete()`). This remains the
+  deterministic-gate default configuration of every analytic pixel test —
+  painter's-order output is reproducible on software GL (llvmpipe).
+  `attachDepth(texture)` adds an OPT-IN second attachment at
+  `GL_DEPTH_ATTACHMENT` from an `uploadDepth()` texture; after that call
+  `isComplete()` requires BOTH attachments to be valid, so a depth-enabled
+  target asserts completeness WITH its depth attachment (a driver silently
+  dropping the depth buffer fails loudly at creation, not silently at render
+  time). Consumers: `render::ViewTarget` (`DepthMode::Enabled`) creates
+  color+depth targets; everything else stays color-only.
 - `BufferUsage` (`StaticDraw`/`DynamicDraw`/`StreamDraw`) maps to
   `GL_STATIC_DRAW` etc.
 
@@ -142,17 +153,27 @@ global mutable). The instance owns its own dirty-flag cache + spy:
   `DrawContext` starts cold (no cross-frame bleed — instance isolation).
 - Spy is per-instance (`ctx.getSpyCounts()`, `ctx.resetSpyCounts()`, `ctx.invalidate()`),
   not global — test determinism via spy per context (not global `getDrawSpyCounts()`).
-- **`beginPass(framebuffer, width, height, r, g, b, a)`** — THE pass prologue
-  (renderer-consolidation deliverable): binds the target (null = window
-  default FB), sets the viewport, installs + applies the clear color, and
-  leaves depth test/blending disabled — in that fixed order. Every direct
-  renderer `render()` entry point and the View composition owner
-  (`View::render` — one clear per frame, layers never clear) begin their pass
-  through this ONE method
-  (the six-call sequence exists exactly once, here). Passes that must not
-  clear (OIT composite over opaque contents) do not call it. State
-  transitions go through the instance cache: a fresh context issues each
-  state call exactly once; identical repeat passes hit the cache.
+- **`beginPass(framebuffer, width, height, r, g, b, a, depthTest = false)`** —
+  THE pass prologue (renderer-consolidation deliverable): binds the target
+  (null = window default FB), sets the viewport, installs + applies the clear
+  color, then sets the DEPTH state and leaves blending disabled — in that
+  fixed order. Every direct renderer `render()` entry point and the View
+  composition owner (`View::render` — one clear per frame, layers never clear)
+  begin their pass through this ONE method (the sequence exists exactly once,
+  here). Passes that must not clear (OIT composite over opaque contents) do
+  not call it. State transitions go through the instance cache: a fresh
+  context issues each state call exactly once; identical repeat passes hit the
+  cache.
+- **Depth branch of the prologue.** The default `depthTest = false` disables
+  the depth test — the deterministic painter's-order configuration all
+  analytic pixel gates assert against on software GL. With `depthTest = true`
+  (the per-view opt-in `render::View::setDepthTest`) the prologue instead
+  ENABLES the depth test and clears the depth buffer to 1.0
+  (`DrawContext::clearDepth`, `GL_DEPTH_BUFFER_BIT`), so a frame drawn into a
+  color+depth target starts from a defined far depth and overlapping opaque
+  geometry resolves by true occlusion (nearer fragment wins regardless of draw
+  order). Clearing depth on an attachment-less FBO is silently ignored by GL,
+  so the flag is safe to set unconditionally per view.
 - Future `FrameContext{ DrawContext draw; Viewport viewport; ClearColor clearCol; }`
   (see `modules.md` RHI) will thread `DrawContext&` through `renderAll`/`drawLayer`
   so `core::Draw` façade delegates to `FrameContext::draw` (DIP). The global free-function
@@ -162,6 +183,11 @@ Gate: `DrawContext` duplicate `setViewport` → exactly 1 `glViewport` (`t2_skel
 `invalidate()` resets cache+spy; two instances are independent (N>=1 consecutive green);
 T17: exactly one `beginPass` definition in the tree, zero clear-prologue repeats under
 `render/`, `<glad/gl.h>` under `render/` == 0 (`t17_renderer_consolidation_test.cpp`).
+T18: the depth branch of the prologue drives the near-mesh-wins overlap gate — a view
+with `depthTest = true` renders into a color+depth target and the nearer of two
+anti-painter-ordered opaque meshes wins the overlap pixel within 1/255, while the same
+arrangement on the default color-only pass keeps the later-drawn mesh
+(`t18_depth_test.cpp`, N>=3).
 
 ### Logging
 

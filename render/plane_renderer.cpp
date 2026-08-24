@@ -227,11 +227,12 @@ data::Result<void> PlaneRenderer::render(const PlaneScene& scene,
     core::VertexArray* quadVao = *quadResult;
 
     // Begin the pass through the ONE shared prologue (bind target → viewport
-    // → clear → depth off → blend off). A null framebuffer selects the
+    // → clear → depth state → blend off). A null framebuffer selects the
     // window's on-screen default framebuffer; otherwise the offscreen FBO is
-    // bound. v1 FBOs are color-only (no depth attachment), so the depth test
-    // is left off; blending is off (textures are sampled with alpha and
-    // written straight).
+    // bound. Direct single-scene renders keep the deterministic depth-off
+    // painter's-order pass (a target's optional depth attachment is consumed
+    // only via the per-view opt-in), so the depth test is left off; blending
+    // is off (textures are sampled with alpha and written straight).
     core::DrawContext ctx;
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,

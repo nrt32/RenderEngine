@@ -15,12 +15,16 @@ namespace re::core {
 
 /// RAII wrapper for a GL framebuffer object (FBO).
 ///
-/// v1 FBOs are color-only: a color attachment (texture) with no depth buffer.
-/// The default draw/read buffers are GL_COLOR_ATTACHMENT0 /
-/// GL_COLOR_ATTACHMENT0 respectively, so a texture attached via attachColor()
-/// is rendered to. A color-only FBO whose attachment is a complete texture is
-/// GL_FRAMEBUFFER_COMPLETE (checked by isComplete()). Movable but not
-/// copyable; the GL object is deleted on destruction.
+/// An FBO is color-only by default: a color attachment (texture) with no depth
+/// buffer — that remains the deterministic-gate default configuration of every
+/// analytic pixel test (software-GL safe, painter's-order semantics). For
+/// targets that need true occlusion, a DEPTH_COMPONENT24 texture can be added
+/// as a second attachment via attachDepth(); a color+depth FBO is
+/// GL_FRAMEBUFFER_COMPLETE only when BOTH attachments are complete, which
+/// isComplete() checks. The default draw/read buffers are
+/// GL_COLOR_ATTACHMENT0 / GL_COLOR_ATTACHMENT0 respectively, so a texture
+/// attached via attachColor() is rendered to. Movable but not copyable; the GL
+/// object is deleted on destruction.
 class Framebuffer {
    public:
     /// Create an FBO (glGenFramebuffers). Returns an error if no GL context is
@@ -46,6 +50,14 @@ class Framebuffer {
     /// Attach `texture` to GL_COLOR_ATTACHMENT0. The framebuffer must be
     /// bound. The texture must be complete (upload() provides that).
     void attachColor(const Texture2D& texture) const noexcept;
+
+    /// Attach `texture` (DEPTH_COMPONENT24 storage from uploadDepth()) as the
+    /// depth attachment GL_DEPTH_ATTACHMENT. The framebuffer must be bound.
+    /// After this call isComplete() requires the depth attachment to be valid
+    /// too, so an enabled-depth target asserts completeness WITH its depth
+    /// attachment — the color-only check alone would no longer describe the
+    /// target.
+    void attachDepth(const Texture2D& texture) const noexcept;
 
     /// True if glCheckFramebufferStatus returns GL_FRAMEBUFFER_COMPLETE for
     /// this FBO (the framebuffer must be bound).

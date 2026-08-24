@@ -79,11 +79,13 @@ data::Result<void> ContourRenderer::render(const ContourScene& scene,
     core::ShaderProgram* programPtr = *programResult;
 
     // Begin the pass through the ONE shared prologue (bind target → viewport
-    // → clear → depth off → blend off). A null framebuffer selects the
-    // window's on-screen default framebuffer (interactive samples); v1 FBOs
-    // are color-only (no depth attachment, SPEC §6 / docs/core.md), so the
-    // depth test is left off. Blending must be OFF so every stroke pixel is
-    // exactly uColor (the FR-app.3 readback compares exact bytes ±1/255) —
+    // → clear → depth state → blend off). A null framebuffer selects the
+    // window's on-screen default framebuffer (interactive samples); direct
+    // single-scene renders keep the deterministic depth-off painter's-order
+    // pass (a target's optional depth attachment is consumed only via the
+    // per-view opt-in), so the depth test is left off. Blending must be OFF
+    // so every stroke pixel is exactly uColor (the FR-app.3 readback compares
+    // exact bytes ±1/255) —
     // beginPass disables it.
     core::DrawContext ctx;
     ctx.beginPass(target.framebuffer, target.width, target.height,

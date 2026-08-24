@@ -19,6 +19,13 @@ namespace re::core {
 /// texture uploaded without mipmaps is complete and directly attachable to a
 /// framebuffer. Movable but not copyable; the GL object is deleted on
 /// destruction.
+///
+/// A texture can also own DEPTH-COMPONENT storage instead of RGBA8 color
+/// (`uploadDepth`): that flavor exists solely to serve as the optional depth
+/// attachment of an offscreen target (core::Framebuffer::attachDepth, the
+/// ViewTarget DepthMode::Enabled path). It is allocated with no client data —
+/// the GPU rasterizes depth into it — and uses GL_NEAREST filtering because it
+/// is never sampled as a shader input in this engine.
 class Texture2D {
    public:
     /// Create a texture name (glGenTextures). Returns an error if no GL
@@ -59,6 +66,15 @@ class Texture2D {
     /// The texture must not be bound to an image unit. Used by the OIT pipeline
     /// to reset the per-pixel head pointers to the null sentinel each frame.
     void clearToU32(std::uint32_t value) const noexcept;
+
+    /// Allocate DEPTH-COMPONENT storage (GL_DEPTH_COMPONENT24, 24 fixed-point
+    /// depth bits per pixel) with no client-side data — a depth attachment is
+    /// written by the rasterizer, never uploaded from the CPU. Sets GL_NEAREST
+    /// filtering and GL_CLAMP_TO_EDGE wrapping so the texture is complete and
+    /// directly attachable to a framebuffer via Framebuffer::attachDepth. The
+    /// texture must be bound. Used by the optional depth attachment of an
+    /// offscreen render target (render::ViewTarget DepthMode::Enabled).
+    void uploadDepth(std::uint32_t width, std::uint32_t height) const noexcept;
 
     /// The GL object name (non-zero for a valid generated name).
     std::uint32_t id() const noexcept {

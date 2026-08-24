@@ -75,4 +75,18 @@ void Texture2D::clearToU32(std::uint32_t value) const noexcept {
     glClearTexImage(id_, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, &value);
 }
 
+void Texture2D::uploadDepth(std::uint32_t width, std::uint32_t height) const noexcept {
+    // DEPTH_COMPONENT24 fixed-point depth (GL_UNSIGNED_INT type over the
+    // DEPTH_COMPONENT format) with a null data pointer: storage is allocated
+    // for the rasterizer to write, nothing is uploaded. GL_NEAREST + clamp
+    // keep the texture framebuffer-complete without implying shader sampling.
+    glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(GL_DEPTH_COMPONENT24),
+                 static_cast<GLsizei>(width), static_cast<GLsizei>(height), 0,
+                 GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
 } // namespace re::core
