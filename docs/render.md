@@ -28,12 +28,17 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 > the **T5 (V3.4) deliverable** (`render::View` (`ReView`) per screen
 > section + `ViewTarget{Texture2D+Framebuffer}` + `IRenderable` type-erased
 > `drawLayer` + `core::blit`; deletes `ViewRenderer`),
-> and the **T11 (V3.8b) deliverable** (`ContourRenderer`, the GPU
+> the **T11 (V3.8b) deliverable** (`ContourRenderer`, the GPU
 > geometry-shader plane∩mesh outline for the MPR contour overlay,
 > FR-app.3 — replaces the deleted CPU `app/mpr_contour.*`
-> `meshPlaneContour`/`overlayContour` path).
+> `meshPlaneContour`/`overlayContour` path),
+> and the **plane-capability review deliverable** (`VolumeSliceRenderer`, GPU
+> volume-plane extraction: a plane through a volume is sampled entirely on
+> the GPU from the cached 3D texture at the view's clip plane — extends
+> FR-render.5/FR-app.2, makes MPR slice scrolling a pure uniform change, and
+> retires the frozen CPU slice images from every live sample).
 > It is part of the `docs/render.md` documentation map
-> (T7/T8/T9/T10/T11 + V2 T1/T2/T3/T7/T8 + T4 + T5 + T11(V3.8b); later tasks extend it).
+> (T7/T8/T9/T10/T11 + V2 T1/T2/T3/T7/T8 + T4 + T5 + T11(V3.8b) + T16; later tasks extend it).
 
 ## Components
 
@@ -57,8 +62,9 @@ numbers are preserved** and diagnostics keep their golden `ERROR: 0:N` form.
 | `mesh_opaque.frag.glsl` | `kOpaqueFragmentShader` | fragment | `MeshRenderer` |
 | `plane.vert.glsl` | `kPlaneVertexShader` | vertex | `PlaneRenderer` |
 | `plane.frag.glsl` | `kPlaneFragmentShader` | fragment | `PlaneRenderer` |
-| `volume_raycast.vert.glsl` | `kRayCastVertexShader` | vertex | `VolumeRenderer` |
+| `volume_raycast.vert.glsl` | `kRayCastVertexShader` | vertex | `VolumeRenderer` + `VolumeSliceRenderer` (shared NDC-quad passthrough) |
 | `volume_raycast.frag.glsl` | `kRayCastFragmentShader` | fragment | `VolumeRenderer` |
+| `volume_slice.frag.glsl` | (new, plane-capability review) | fragment | `VolumeSliceRenderer` |
 | `oit_capture.vert.glsl` | `kCaptureVertexShader` | vertex | `LinkedListOIT` (capture) |
 | `oit_capture.frag.glsl` | `kCaptureFragmentShader` | fragment | `LinkedListOIT` (capture) |
 | `oit_composite.vert.glsl` | `kCompositeVertexShader` | vertex | `LinkedListOIT` (composite) |
@@ -768,8 +774,14 @@ shared ortho down-Z camera mapping `[0,64]^2` 1:1 onto a 64×64 target:
 
 ### `PlaneRenderer` (`render/plane_renderer.hpp`, `.cpp`) — T8, V3.4b audit
 
-A **stateless textured-plane renderer** (SPEC §3, FR-render.5): it feeds the MPR
-slice views (T14) and the plane sample. Since V3.4b (T12) it is the **sole
+A **stateless textured-plane renderer** (SPEC §3, FR-render.5): it is the
+display primitive for IMAGE-BACKED quads — any `data::Image` textured onto a
+plane reaches the GPU only through this renderer. Since the plane-capability
+review deliverable (`VolumeSliceRenderer` below) the MPR slice views extract
+their slices directly from the volume on the GPU, and the plane sample shows
+GPU-extracted CT planes instead of a procedural gradient quad; image-backed
+textured planes (e.g. future overlay images on top of an extracted slice)
+remain this renderer's contract. Since V3.4b (T12) it is the **sole
 owner of every textured-plane draw**: all displays reach the GPU only through
 this renderer — `drawLayer(PlaneScene, Camera, DrawContext&)` inside a ReView's
 IRenderable list (samples), or `render(scene, camera, target)` for direct
@@ -973,6 +985,82 @@ out.rgb = 0.5*(1 + 0.5 + 0.25 + 0.125)     = 0.9375  (along green)
 | Identity-model world AABB | `[0,1]^3` | transform of the 8 corners of `[0,1]^3` by the identity model |
 | `model = T(1,2,3)*S(0.5)` world AABB | `[1,1.5] × [2,2.5] × [3,3.5]` | `S` first then `T`; corner `(0,0,0)` → `(1,2,3)`, corner `(1,1,1)` → `(1.5,2.5,3.5)` |
 | Too many TF control points | typed error containing `more than 8 control points` | the shader's fixed uniform array size is 8 |
+
+### `VolumeSliceRenderer` (`render/volume_slice_renderer.hpp`, `.cpp`) — plane-capability review deliverable
+
+The **GPU volume-plane extraction renderer** (extends FR-render.5/FR-app.2):
+where `VolumeRenderer` ray-casts the whole slab and `PlaneRenderer` displays
+CPU-computed images, `VolumeSliceRenderer` produces a plane through a volume
+**entirely on the GPU** — a "plane" in this engine semantically means a slice
+extracted from volume data, and nothing demonstrates (or gates) extraction
+until this renderer exists. It draws one full-screen quad per instance; the
+fragment shader (`volume_slice.frag.glsl`, sharing
+`volume_raycast.vert.glsl`'s NDC-quad passthrough):
+
+1. reconstructs the pixel's world ray by unprojecting its NDC near/far points
+   through `uViewProj = proj * view` (identical to the ray-cast entry);
+2. intersects the ray with the instance's **world-space `ClipPlane`**
+   (`dot(n, ro + t·rd − p0) = 0`; parallel rays and behind-eye hits write
+   transparent black);
+3. converts the hit into the dataset's model space via `uInvModel` and rejects
+   hits outside the unit cube `[0,1]^3` (with a 1e-4 tolerance band so float
+   rounding cannot punch holes into the outermost voxel ring;
+   CLAMP_TO_EDGE makes the band invisible in the output bytes);
+4. samples the cached R32F `core::Texture3D` at texel coordinate
+   `(idx + 0.5) / dim` with `idx = modelPos · (dim − 1)` — the **same mapping
+   as the ray-cast shader**, so GL_LINEAR reproduces the CPU sampler
+   `data::VolumeDataset::sampleTrilinear` voxel-for-voxel;
+5. writes the transfer-function color as **straight RGBA**
+   (piecewise-linear ramp identical to `volume_raycast.frag.glsl`'s).
+
+Because a slice index enters only through uniforms (the clip-plane point and
+the model matrix), scrolling to another slice is a uniform/state change:
+there is **no CPU voxel loop and no intermediate image anywhere on this
+path**, which is what makes MPR slice scrolling interactive. The CPU oracle
+(`app::makeSliceImage`) is retained solely as the gate tests' reference
+implementation.
+
+Like `ContourRenderer`, this renderer deliberately does **not** join the
+`render::Scene` IRenderer dispatch variant (whose 4-alternative size is pinned
+by its own dispatch gate): ReView composes it through the type-erased
+`drawLayer(VolumeSliceScene, Camera, DrawContext&)` path and direct tests call
+the concrete typed overload. GPU 3D textures resolve through the shared
+asset store (`lookupVolume`, content-hash dedup), so an extracted slice and a
+ray-cast of one dataset share a single upload.
+
+Public scene structs (defined in `volume_slice_renderer.hpp`):
+
+| Type | Purpose |
+|---|---|
+| `VolumeSliceInstance` | a shared dataset reference, an owned by-value transfer function, the model matrix placing the unit cube in world space, and the world-space extraction plane. A null dataset reference is rejected with typed error code 1 (a silently empty layer would be indistinguishable from an empty viewport). |
+| `VolumeSliceScene` | a vector of instances (CPU-side; app builds these). |
+| `kMaxVolumeSliceTfPoints` | `8` — the shader's fixed TF uniform array size; more control points are a typed error, mirroring `VolumeRenderer`. |
+
+**Display-frame convention for axis-aligned MPR views** (shared scaffolding,
+see docs/mpr.md): with the model matrix mapping voxel-center index *i* to
+display coordinate *i + 0.5* on every axis (`app::sliceVolumeModel`: scale by
+`max(dim−1, 1)`, translate by 0.5, then the per-view axis permutation) and an
+orthographic camera over the free-axis rectangle (`app::makeSliceCamera(freeW,
+freeH)`), pixel center `(px, py)` back-projects to continuous index
+`(px, py, heldIndex)` exactly — so extracted output equals the CPU oracle's
+bytes within 1/255 everywhere on the slice.
+
+#### Acceptance constants (plane-capability review gate, docs/render.md)
+
+Synthetic 2×2×2 volume, field `value(x,y,z) = x + 2y + 4z`, axis-probe TF
+(integer v → RGBA `{v/255, (255−v)/255, 0, 1}`, exact at breakpoints),
+Transverse display frame, ortho camera over `[0,2]²`:
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| Mid-plane (z between the two layers, continuous held index 0.5) | column density `x + 2y + 2 ∈ {2,3,4,5}` | trilinear weights are exactly (0.5, 0.5) between layers 0 and 1 |
+| Extracted pixel vs oracle | `tf.sample(dataset.sampleTrilinear(...))` within 1/255 at EVERY probe | FR extension; dense sweep over the whole target |
+| Pixels inside the footprint (64×64 target) | `1024` | centers `(px+0.5)/32 ∈ [0.5, 1.5] ⇔ px ∈ [16, 47]` (closed form; none lands on a boundary) |
+| Pixels outside the footprint | exact `(0,0,0,0)` | rays missing the volume slab write transparent black |
+| Layer state change (plane z: 0.5 → 1.5, same renderer) | red byte shifts exactly `+4` per column | closed-form layer delta `v(x,y,1) − v(x,y,0) = 4`; readback after state change proves re-extraction through uniforms only |
+| Oblique plane `x + z = 1` (normal `normalize(1,0,1)`, identity model) | matches analytic ray-plane oracle within 1/255; corner rays miss → zeros | fully general intersection; no special-casing for oblique planes |
+| MPR axes T/C/S on an asymmetric 8×6×4 volume | whole frame == `app::makeSliceImage` oracle within 1/255 per axis | Transverse holds Z, Coronal holds Y, Sagittal holds X; asymmetric dims make any permutation error fail |
+| Typed errors: null dataset / >8 TF points / 0-size target | codes `1` / `1` / `1` | SPEC §5 diagnostics, never crashes or silent empty output |
 
 ## Guardrails observed
 

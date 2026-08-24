@@ -1,0 +1,200 @@
+#pragma once
+
+// render/volume_slice_renderer.hpp — VolumeSliceRenderer: GPU volume-plane
+// extraction (extends FR-render.5/FR-app.2; plane-capability task).
+//
+// A "plane" in this engine semantically means a slice extracted from volume
+// data. This renderer produces that slice ENTIRELY ON THE GPU: it draws one
+// full-screen quad whose fragment shader reconstructs each pixel's camera
+// ray, intersects the ray with the instance's world-space `ClipPlane`,
+// converts the hit point into the dataset's model space (the unit cube
+// [0,1]^3), samples the cached R32F `core::Texture3D` with hardware
+// trilinear filtering at texel coordinate (idx+0.5)/dim — the exact mapping
+// the VolumeRenderer ray-cast uses, so GL_LINEAR reproduces the CPU sampler
+// `data::VolumeDataset::sampleTrilinear` — and writes the transfer-function
+// color as straight RGBA. Rays that miss the volume slab write transparent
+// black, so the extracted slice appears exactly where the plane crosses the
+// dataset; oblique planes need no special-casing (the intersection is fully
+// general). Because a slice index enters only through uniforms (the plane's
+// point and the instance model matrix), scrolling to another slice is a
+// uniform update — there is no CPU voxel loop and no intermediate image
+// anywhere on this path.
+//
+// Display-frame convention for axis-aligned MPR-style views: with the model
+// matrix mapping voxel-center index i of a free axis to display coordinate
+// i + 0.5 (see app::sliceVolumeModel) and an orthographic camera over that
+// display rectangle, pixel centers land exactly on voxel centers, so the
+// extracted image reproduces the CPU slice oracle byte-for-byte within
+// 1/255 at every probe.
+//
+// Stateless rendering: render()/drawLayer() receive all of their data per
+// call; the renderer owns only GL resources (its cached shader program and
+// one shared full-screen quad VAO/VBO). GPU 3D textures live in the SHARED
+// asset store (`render::AssetRegistry`, unified multi-kind store): every
+// dataset is content-hash-deduped into exactly one Texture3D per registry,
+// shared with VolumeRenderer instances — an extracted slice and a ray-cast
+// of the same dataset upload it once.
+//
+// Like ContourRenderer, this renderer deliberately does NOT join the
+// `render::Scene` IRenderer dispatch variant (the variant's size is pinned
+// by its own dispatch gate): views compose it through the type-erased
+// drawLayer path, and direct tests call the concrete typed overload.
+//
+// render/ is GL-call-free: it draws through the core::Draw API and core/
+// RAII objects (guardrail gpu_api_ownership).
+
+#include <cstddef>
+#include <cstdint>
+#include <glm/mat4x4.hpp>
+#include <glm/vec3.hpp>
+#include <memory>
+#include <optional>
+#include <utility>
+#include <vector>
+
+#include "core/draw.hpp"
+#include "core/element_buffer.hpp"
+#include "core/framebuffer.hpp"
+#include "core/shader_program.hpp"
+#include "core/texture3d.hpp"
+#include "core/vertex_array.hpp"
+#include "core/vertex_buffer.hpp"
+#include "data/result.hpp"
+#include "data/volume_dataset.hpp"
+#include "render/asset_registry.hpp"
+#include "render/types.hpp" // Camera / RenderTarget / ClipPlane
+#include "volume/transfer_function.hpp"
+
+namespace re::render {
+
+/// Maximum transfer-function control points the extraction shader accepts
+/// (the uniform array size in volume_slice.frag.glsl). A
+/// volume::TransferFunction with more points is rejected with a typed error,
+/// mirroring the VolumeRenderer contract.
+inline constexpr std::size_t kMaxVolumeSliceTfPoints = 8u;
+
+/// One GPU-extracted slice: the volume to sample, its transfer function, the
+/// model matrix placing the dataset's unit cube in world space, and the
+/// world-space plane to extract along.
+struct VolumeSliceInstance {
+    /// Shared reference to the immutable volume dataset: the instance
+    /// CO-OWNS the voxels together with the scene object/store, so a stored
+    /// scene can never outlive (or dangle) the bytes it samples. Null is
+    /// invalid by contract: render/drawLayer reject it with a typed error,
+    /// never a silently empty layer (a missing slice is visually
+    /// indistinguishable from an empty viewport).
+    std::shared_ptr<const data::VolumeDataset> dataset = nullptr;
+    /// Transfer function carried BY VALUE on purpose: a TF is a small,
+    /// immutable control-point ramp, and copying it into the per-frame
+    /// instance removes any pointer that could dangle or be nulled mid-frame.
+    /// Default ramp = grayscale black->white (the identity display ramp).
+    volume::TransferFunction transferFunction{
+        {{0.0f, {0, 0, 0, 0}}, {1.0f, {1, 1, 1, 1}}}};
+    /// Model matrix: maps the dataset's model-space unit cube [0,1]^3 into
+    /// world space (identity leaves the cube at [0,1]^3). Voxel-center index
+    /// i sits at model coordinate i/(dim-1); the shader converts back via
+    /// idx = modelPos*(dim-1).
+    glm::mat4 model{1.0f};
+    /// The world-space extraction plane: fragments are shaded where the
+    /// pixel ray crosses THIS plane and the crossing lies inside the model
+    /// cube. For axis-aligned slices through voxel-layer centers the point
+    /// coordinate is index + 0.5 on the held axis.
+    ClipPlane plane{};
+};
+
+/// A scene of extracted-slice instances to render (CPU-side; app/broker build
+/// these).
+struct VolumeSliceScene {
+    std::vector<VolumeSliceInstance> slices;
+};
+
+/// Stateless GPU volume-plane extraction renderer.
+///
+/// Owns only GL resources: the cached extraction shader program and one
+/// shared full-screen quad (every slice covers the whole viewport; coverage
+/// outside the plane/volume intersection writes transparent black). GPU 3D
+/// textures resolve through the shared `AssetRegistry`
+/// (`lookupVolume`, lazy find-or-upload by content hash), so the extraction
+/// path never duplicates a dataset upload and no per-renderer texture map
+/// exists.
+class VolumeSliceRenderer {
+   public:
+    /// Construct with the shared asset store (SHARED ownership: the renderer
+    /// co-owns the registry with every other renderer — declaration order can
+    /// never dangle it). Defaults to the process-wide registry
+    /// (`AssetRegistry::shared()`). A null pointer is accepted at
+    /// construction so member-init order never matters, but every
+    /// render/drawLayer validates it and returns a typed error (code 4)
+    /// instead of dereferencing.
+    explicit VolumeSliceRenderer(
+        std::shared_ptr<AssetRegistry> assets = AssetRegistry::shared());
+
+    VolumeSliceRenderer(const VolumeSliceRenderer&) = delete;
+    VolumeSliceRenderer& operator=(const VolumeSliceRenderer&) = delete;
+
+    /// Render `scene`'s extracted slices into `target` from `camera`: binds
+    /// the target framebuffer, sets the viewport, clears to the clear color,
+    /// disables depth test and blending (exact colors), then draws one
+    /// full-screen quad per instance. On success the target framebuffer is
+    /// left bound (so tests can read it back). Returns a typed error if the
+    /// shader fails to build, an instance carries a null dataset or an
+    /// oversized transfer function, or a draw cannot be issued.
+    data::Result<void> render(const VolumeSliceScene& scene,
+                              const Camera& camera, const RenderTarget& target);
+
+    /// Draw one layer into the currently-bound framebuffer (ReView's
+    /// ViewTarget), assuming ReView already performed bind+viewport+clear via
+    /// the same DrawContext. Does not clear — a second layer (e.g. a contour
+    /// overlay) must not erase the first.
+    data::Result<void> drawLayer(const VolumeSliceScene& scene,
+                                 const Camera& camera, core::DrawContext& ctx);
+
+    /// The shared asset store textures resolve through (non-null after a
+    /// valid construction; null only if constructed with nullptr — renders
+    /// then fail with typed error code 4).
+    const std::shared_ptr<AssetRegistry>& assets() const noexcept {
+        return assets_;
+    }
+
+   private:
+    /// Build (and cache) the extraction shader program, returning a pointer
+    /// to the cached program (non-null on success).
+    data::Result<core::ShaderProgram*> sliceProgram();
+
+    /// Ensure the shared full-screen quad geometry is uploaded, returning a
+    /// pointer to the cached vertex array (non-null on success).
+    /// @note lifetime: non-owning view of renderer-owned storage (the
+    /// quadVao_ `optional<>` member) — valid while this renderer is.
+    data::Result<core::VertexArray*> screenQuad();
+
+    /// Resolve `dataset`'s content in the shared asset store (lazy
+    /// find-or-upload by content hash, no reference-count change),
+    /// returning a pointer to the store-owned texture (non-null on success).
+    /// @note lifetime: non-owning view of store-owned storage (the slot's
+    /// unique_ptr) — valid until the slot's last reference is released or
+    /// the store dies; renderers never retain it across frames.
+    data::Result<core::Texture3D*> textureFor(
+        const std::shared_ptr<const data::VolumeDataset>& dataset);
+
+    /// Upload the transfer function `tf` to the currently-in-use program as
+    /// the TF control-point uniforms (uTfCount/uTfValues/uTfColors).
+    void uploadTransferFunction(const volume::TransferFunction& tf) const;
+
+    /// Shared per-instance draw sequence used by both entry points (the
+    /// caller has already validated the store and prepared the program):
+    /// binds textures/uniforms for `instance` and issues one full-screen
+    /// quad draw. `camera` feeds the ray-reconstruction matrix.
+    data::Result<void> drawOne(const VolumeSliceInstance& instance,
+                               const Camera& camera,
+                               core::ShaderProgram* program);
+
+    std::shared_ptr<AssetRegistry> assets_;
+    std::optional<core::ShaderProgram> program_;
+    std::optional<core::VertexArray> quadVao_;
+    std::optional<core::VertexBuffer> quadVbo_;
+    std::optional<core::ElementBuffer>
+        quadEbo_;                    // index buffer referenced by quadVao_
+    std::size_t quadIndexCount_{6u}; // two triangles
+};
+
+} // namespace re::render

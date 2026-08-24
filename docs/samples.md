@@ -87,14 +87,20 @@ because the T12/T13 gate spawns them).
 | Sample | Executable | Demonstrates | Data |
 |---|---|---|---|
 | Mesh | `re_sample_mesh` | opaque shaded mesh (Phong) | `data/meshes/bunny.obj` (SPEC §7) |
-| Plane | `re_sample_plane` | textured quad | procedural 256×256 RGBA gradient (in code, deterministic) |
+| Plane | `re_sample_plane` | GPU-extracted volume planes (axial + oblique, FR-render.5 extension) | `data/volumes/sample_ct.nrrd` + CT window/level transfer function |
 | Volume | `re_sample_volume` | ray-cast volume (front-to-back compositing) | `data/volumes/sample_ct.nrrd` + CT window/level transfer function |
 | Slice | `re_sample_slice` | geometry-shader plane clip of a mesh | `data/meshes/teapot.obj` (SPEC §7), clipped by a horizontal midplane |
 | OIT | `re_sample_oit` | order-independent transparency (linked-list) | three overlapping transparent quads (in code, deterministic) |
 
 The mesh sample frames the bunny with a perspective camera computed from its
 AABB (eye pulled back along +Z by `radius / tan(fov/2)`); the plane sample
-textures the unit XY quad with a closed-form gradient image; the volume sample
+loads the CT volume and shows two GPU-extracted planes side by side through
+`render::VolumeSliceRenderer` — left, the axial plane at the middle voxel
+layer in the shared MPR display frame; right, the oblique diagonal plane
+`x + z = 1` through the cube center viewed along its normal — replacing the
+former procedural gradient quad (a plane in this engine means a slice
+extracted from volume data, so the sample demonstrates exactly that, with no
+CPU slicing anywhere); the volume sample
 renders the CT chest with a deterministic transfer function (air transparent,
 soft tissue opaque/bright). The slice sample loads the teapot and clips it by a
 horizontal plane at its vertical midpoint (`y = 0.5*(min.y + max.y)`, kept side
@@ -116,7 +122,7 @@ result, and exiting cleanly:
 | Sample | How to drive it |
 |---|---|
 | `re_sample_mesh` | observe the shaded bunny (opaque Phong, FR-render.1); close the window to exit. |
-| `re_sample_plane` | observe the textured gradient quad (FR-render.5); close the window to exit. |
+| `re_sample_plane` | observe the two GPU-extracted CT planes (axial left, oblique right; FR-render.5 extension); close the window to exit. |
 | `re_sample_volume` | observe the ray-cast CT chest (FR-render.6); close the window to exit. |
 | `re_sample_slice` | observe the teapot cut open along its horizontal midplane with the on-plane cross-section (FR-render.4); close the window to exit. |
 | `re_sample_oit` | observe the three overlapping transparent quads blended in depth order (FR-render.2/3); close the window to exit. |
@@ -169,8 +175,9 @@ asserts:
 - **Typed diagnostics**: sample load/window/frame failures surface as typed
   errors (SPEC §5) → the sample exits non-zero; never silent.
 - **Deterministic / single-threaded**: one window, one GL context, one render
-  thread (SPEC §5); the plane sample's texture is a closed-form gradient, so
-  the sample is reproducible with no asset dependency.
+  thread (SPEC §5); the plane sample's two extraction planes are fixed
+  (middle axial layer + the diagonal `x + z = 1` cut of the committed CT), so
+  the sample is reproducible frame for frame.
 - **Logging**: spdlog only (`core::Window` logs the window creation; harness
   errors use spdlog).
 - **Doxygen** on all public API (SPEC §5).

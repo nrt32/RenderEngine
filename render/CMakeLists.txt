@@ -11,6 +11,7 @@ add_library(re_render STATIC
     linked_list_oit.cpp
     plane_renderer.cpp
     volume_renderer.cpp
+    volume_slice_renderer.cpp
     slice_renderer.cpp
     contour_renderer.cpp
     view_target.cpp

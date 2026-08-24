@@ -67,6 +67,7 @@ Pure-redesign iteration (no new FRs). Priority order **redesign-first** per `ope
 | T13 | — | `docs/spec/guardrails.md` (ownership ladder), `NAMING_CONVENTIONS.md` (§8b borrow notation), `tools/audit.rules` (`ownership_raw_ptr_*`), `docs/render.md`/`docs/spec/materials_lights.md`/`docs/spec/assets.md`/`docs/re_scene_inventory.md` (ownership-model sync), `render/re_scene/mesh_object.hpp` (shared material) |
 | T14 | — | `docs/spec/assets.md` (§7 unified multi-kind store record), `docs/render.md` (asset-store section + Plane/Volume renderer texture paths + guardrails), `broker/README.md` (asset_store ↔ render store split) |
 | T15 | — | `tools/audit.sh` (`comment_context` mode), `tools/audit.rules` (`comment_tag_context` bare-tag rule), `tools/audit.rules.example`, comment-hygiene sweep across all modules (self-contained rationale beside every tag) |
+| T16 | — | `render/volume_slice_renderer.*` + `render/shaders/volume_slice.frag.glsl` (GPU volume-plane extraction), `docs/render.md` (VolumeSliceRenderer section + shader table + PlaneRenderer scope note), `docs/mpr.md` (GPU-extracted interactive 2D views, display-frame scaffolding), `docs/samples.md` (plane sample = extracted CT planes) |
 
 > **Naming:** active backlog is `T1..T10` for this iteration (resets after archive — `V2-T1..V2-T8` remain in `COMPLETED_TASKS.md`). `V3.x` survives only as Spec alias in `docs/spec/roadmap.md` §9.1 and parentheses below.
 

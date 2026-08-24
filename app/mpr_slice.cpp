@@ -1,15 +1,17 @@
 // app/mpr_slice.cpp — MPR layout + slice-state scaffolding implementation
 // (SPEC §3, FR-app.2; hosts the plane∩mesh helpers moved from the deleted
-// app/mpr_contour.cpp in V3.8b T11).
+// app/mpr_contour.cpp in V3.8b T11 and the GPU slice-extraction display
+// mapping shared by the sample and its gate tests).
 
 #include "app/mpr_slice.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <vector>
-
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <vector>
 
 namespace re::app {
 
@@ -31,10 +33,10 @@ std::array<MprViewport, 4> mprViewports(int windowWidth, int windowHeight) {
     const int halfW = windowWidth / 2;
     const int halfH = windowHeight / 2;
     std::array<MprViewport, 4> views;
-    views[0] = MprViewport{0, halfH, halfW, halfH};      // T  (top-left)
-    views[1] = MprViewport{halfW, halfH, halfW, halfH};  // C  (top-right)
-    views[2] = MprViewport{0, 0, halfW, halfH};          // S  (bottom-left)
-    views[3] = MprViewport{halfW, 0, halfW, halfH};      // 3D (bottom-right)
+    views[0] = MprViewport{0, halfH, halfW, halfH};     // T  (top-left)
+    views[1] = MprViewport{halfW, halfH, halfW, halfH}; // C  (top-right)
+    views[2] = MprViewport{0, 0, halfW, halfH};         // S  (bottom-left)
+    views[3] = MprViewport{halfW, 0, halfW, halfH};     // 3D (bottom-right)
     return views;
 }
 
@@ -60,7 +62,8 @@ data::Image makeSliceImage(const data::VolumeDataset& dataset,
     }
 
     std::vector<std::uint8_t> pixels;
-    pixels.reserve(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u);
+    pixels.reserve(static_cast<std::size_t>(width) *
+                   static_cast<std::size_t>(height) * 4u);
     for (std::int32_t py = 0; py < height; ++py) {
         for (std::int32_t px = 0; px < width; ++px) {
             // Sample the voxel at the axis-specific coordinates (the free axes
@@ -68,19 +71,19 @@ data::Image makeSliceImage(const data::VolumeDataset& dataset,
             float density = 0.0f;
             switch (axis) {
                 case MprAxis::Transverse:
-                    density = dataset.voxelAt(static_cast<std::uint32_t>(px),
-                                              static_cast<std::uint32_t>(py),
-                                              index);
+                    density =
+                        dataset.voxelAt(static_cast<std::uint32_t>(px),
+                                        static_cast<std::uint32_t>(py), index);
                     break;
                 case MprAxis::Coronal:
-                    density = dataset.voxelAt(static_cast<std::uint32_t>(px),
-                                              index,
-                                              static_cast<std::uint32_t>(py));
+                    density =
+                        dataset.voxelAt(static_cast<std::uint32_t>(px), index,
+                                        static_cast<std::uint32_t>(py));
                     break;
                 case MprAxis::Sagittal:
-                    density = dataset.voxelAt(index,
-                                              static_cast<std::uint32_t>(px),
-                                              static_cast<std::uint32_t>(py));
+                    density =
+                        dataset.voxelAt(index, static_cast<std::uint32_t>(px),
+                                        static_cast<std::uint32_t>(py));
                     break;
             }
             const volume::RgbaColor c = tf.sample(density);
@@ -110,6 +113,64 @@ SlicePlane slicePlane(MprAxis axis, const MprSliceState& state) {
     // Unreachable (the enum has exactly three values); keep the compiler
     // satisfied on all paths.
     return SlicePlane{MprAxis::Transverse, 0.0f};
+}
+
+std::pair<std::uint32_t, std::uint32_t> sliceFreeAxes(
+    const data::VolumeDataset& dataset, MprAxis axis) {
+    switch (axis) {
+        case MprAxis::Transverse: // display over (X, Y) at constant Z
+            return {dataset.sizeX(), dataset.sizeY()};
+        case MprAxis::Coronal: // display over (X, Z) at constant Y
+            return {dataset.sizeX(), dataset.sizeZ()};
+        case MprAxis::Sagittal: // display over (Y, Z) at constant X
+            return {dataset.sizeY(), dataset.sizeZ()};
+    }
+    // Unreachable (the enum has exactly three values); keep the compiler
+    // satisfied on all paths.
+    return {1u, 1u};
+}
+
+glm::mat4 sliceVolumeModel(const data::VolumeDataset& dataset, MprAxis axis) {
+    // Step 1 — scale each VOLUME axis by max(dim - 1, 1): model coordinate
+    // i/(dim-1) then lands exactly on continuous index i after the shader's
+    // idx = modelPos*(dim-1) conversion. The max(.., 1) floor keeps a
+    // single-voxel axis non-degenerate (a zero scale would make the model
+    // matrix singular and its inverse — which the extraction shader uses —
+    // undefined). Step 2 — translate by (0.5, 0.5, 0.5) so voxel-center
+    // index i sits at display coordinate i + 0.5, matching makeSliceImage's
+    // pixel-center convention.
+    const glm::vec3 scales(std::max(dataset.sizeX() - 1u, 1u) * 1.0f,
+                           std::max(dataset.sizeY() - 1u, 1u) * 1.0f,
+                           std::max(dataset.sizeZ() - 1u, 1u) * 1.0f);
+    const glm::mat4 place =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.5f, 0.5f, 0.5f)) *
+        glm::scale(glm::mat4(1.0f), scales);
+
+    // Step 3 — the axis permutation into display space, identical to the
+    // contour overlay's display models (glm's mat4 constructor takes
+    // COLUMNS; each initializer list below is read DOWN the matrix):
+    //   Transverse: identity           — display (x,y,z) = volume (x,y,z);
+    //   Coronal:    rows (x'|y'|z') = (x|z|y) — display x,y = volume x,z;
+    //   Sagittal:   rows (x'|y'|z') = (y|z|x) — display x,y = volume y,z.
+    switch (axis) {
+        case MprAxis::Transverse:
+            return place;
+        case MprAxis::Coronal:
+            return glm::mat4(1.0f, 0.0f, 0.0f, 0.0f, // col0: row0 gets x
+                             0.0f, 0.0f, 1.0f, 0.0f, // col1: row2 gets y
+                             0.0f, 1.0f, 0.0f, 0.0f, // col2: row1 gets z
+                             0.0f, 0.0f, 0.0f, 1.0f) *
+                   place;
+        case MprAxis::Sagittal:
+            return glm::mat4(0.0f, 0.0f, 1.0f, 0.0f, // col0: row2 gets x
+                             1.0f, 0.0f, 0.0f, 0.0f, // col1: row0 gets y
+                             0.0f, 1.0f, 0.0f, 0.0f, // col2: row1 gets z
+                             0.0f, 0.0f, 0.0f, 1.0f) *
+                   place;
+    }
+    // Unreachable (the enum has exactly three values); keep the compiler
+    // satisfied on all paths.
+    return place;
 }
 
 data::Mesh makeBoxMesh(const glm::vec3& min, const glm::vec3& max) {

@@ -4,16 +4,22 @@
 //
 // MPR is app-level composition (SPEC §3: "MPR is app-level composition, not a
 // module"), and the 2x2 viewport grid + the axis sampling convention are pure
-// CPU scaffolding shared by the MPR sample (T14) and its gate tests. This
-// header is deliberately GL-free and ImGui-free: it depends only on data/ and
-// volume/ so the T14 gate can test the layout constants and the per-axis slice
-// sampling headlessly (FR-app.2) without pulling in the harness/GL stack.
+// CPU scaffolding shared by the MPR sample and its gate tests. This header is
+// deliberately GL-free and ImGui-free: it depends only on data/ and volume/ so
+// the gate tests can exercise the layout constants and the slice math
+// headlessly (FR-app.2) without pulling in the harness/GL stack.
 //
 // The pinned axis convention (SPEC §4 FR-app.2): Transverse = slice at constant
-// Z (axial), Coronal = constant Y, Sagittal = constant X. `makeSliceImage`
-// samples the volume along exactly that axis and maps each voxel through a
-// transfer function to an RGBA slice image (the CPU-side of what the T/C/S
-// views display; the shared slice-state/camera scaffolding for the 2D views).
+// Z (axial), Coronal = constant Y, Sagittal = constant X. The 2D views
+// THEMSELVES are GPU-driven: each view's plane is extracted on the GPU by
+// render::VolumeSliceRenderer from the cached 3D texture (a slice-index change
+// is a uniform change — interactive scrolling with no CPU voxel loop).
+// `makeSliceImage` remains in this file as the CPU REFERENCE IMPLEMENTATION
+// of that extraction — the oracle the gate tests compare GPU output against
+// — and nothing in the samples renders through it anymore. The shared
+// display-frame helpers below (`sliceFreeAxes`, `sliceVolumeModel`) define
+// exactly how a dataset maps into a view so GPU output and CPU oracle agree
+// pixel-for-pixel within 1/255.
 //
 // Since V3.8b (T11) this header also hosts the plane∩mesh scaffolding that
 // used to live in app/mpr_contour.hpp (deleted): the per-view `SlicePlane`,
@@ -25,13 +31,15 @@
 // The 2x2 viewport grid (SPEC §4 FR-app.2): a 1280x960 window split into four
 // 640x480 viewports, with T (top-left), C (top-right), S (bottom-left) and the
 // 3D view (bottom-right). `mprViewports` returns the four rectangles (GL
-// pixel coordinates, y up from the bottom scanline, matching core::setViewport).
+// pixel coordinates, y up from the bottom scanline, matching
+// core::setViewport).
 
 #include <array>
 #include <cstdint>
-
+#include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
+#include <utility>
 
 #include "data/image.hpp"
 #include "data/mesh.hpp"
@@ -54,18 +62,18 @@ enum class MprAxis {
 /// A rectangle in GL pixel coordinates (origin bottom-left), used for the MPR
 /// viewport grid.
 struct MprViewport {
-    int x{0};        ///< Left edge, in pixels from the window's left.
-    int y{0};        ///< Bottom edge, in pixels from the window's bottom.
-    int width{0};    ///< Width in pixels.
-    int height{0};   ///< Height in pixels.
+    int x{0};      ///< Left edge, in pixels from the window's left.
+    int y{0};      ///< Bottom edge, in pixels from the window's bottom.
+    int width{0};  ///< Width in pixels.
+    int height{0}; ///< Height in pixels.
 };
 
 /// The slice-state scaffolding: which voxel-index plane each 2D view is on.
 /// v1 holds each view on a fixed (constructor-chosen) index. The slice state
 /// DRIVES the MPR composition: each slice view's contour plane (`slicePlane`)
-/// and the 3D view's camera look-at target (app::make3dCamera, app/mpr_camera.hpp)
-/// are both derived from it — the slice-state ↔ 3D-view camera interplay
-/// (FR-app.3).
+/// and the 3D view's camera look-at target (app::make3dCamera,
+/// app/mpr_camera.hpp) are both derived from it — the slice-state ↔ 3D-view
+/// camera interplay (FR-app.3).
 struct MprSliceState {
     std::uint32_t transverseZ{0}; ///< Transverse slice index (constant Z).
     std::uint32_t coronalY{0};    ///< Coronal slice index (constant Y).
@@ -101,7 +109,10 @@ std::array<MprViewport, 4> mprViewports(int windowWidth, int windowHeight);
 /// Build a 2D RGBA slice image of `dataset` through `tf`, sampling along the
 /// axis `axis` at voxel-index `index` per the SPEC FR-app.2 convention.
 ///
-/// The slice is a rectangle over the two free axes of `dataset`:
+/// This is the CPU REFERENCE IMPLEMENTATION of a volume slice — the oracle
+/// the gate tests compare GPU-extracted planes against (the samples
+/// themselves extract on the GPU and never call this). The slice is a
+/// rectangle over the two free axes of `dataset`:
 ///   - Transverse (constant Z = `index`): width = sizeX, height = sizeY, pixel
 ///     (x, y) sampled from voxel (x, y, index);
 ///   - Coronal (constant Y = `index`): width = sizeX, height = sizeZ, pixel
@@ -126,6 +137,42 @@ data::Image makeSliceImage(const data::VolumeDataset& dataset,
 ///   - Coronal:    y = coronalY + 0.5,
 ///   - Sagittal:   x = sagittalX + 0.5.
 SlicePlane slicePlane(MprAxis axis, const MprSliceState& state);
+
+/// The display-frame dimensions of one slice view: the dataset's voxel counts
+/// along the two free axes of `axis`, in display (x, y) order —
+///   - Transverse: (sizeX, sizeY),
+///   - Coronal:    (sizeX, sizeZ),
+///   - Sagittal:   (sizeY, sizeZ).
+///
+/// These are the units the view's orthographic camera window spans and the
+/// units `sliceVolumeModel` maps the volume into; with a viewport whose pixel
+/// grid matches them 1:1, pixel centers land exactly on voxel centers.
+std::pair<std::uint32_t, std::uint32_t> sliceFreeAxes(
+    const data::VolumeDataset& dataset, MprAxis axis);
+
+/// The model matrix placing the volume's model-space unit cube [0,1]^3 into
+/// the display frame of the slice view `axis`, so a GPU plane extraction
+/// through it shows exactly the free-axis rectangle the CPU oracle
+/// (`makeSliceImage`) computes for the same axis:
+///
+///   - the linear part scales each VOLUME axis by max(dim - 1, 1) and the
+///     translation adds (0.5, 0.5, 0.5), putting voxel-center index i at
+///     display coordinate i + 0.5 on every axis;
+///   - the axis permutation then reorders volume axes into display axes
+///     exactly like the contour overlay's display models — Transverse
+///     identity (display x,y = volume x,y), Coronal swaps Y/Z (display x,y =
+///     volume x,z), Sagittal maps (x,y,z) -> (y,z,x) (display x,y = volume
+///     y,z).
+///
+/// Combined with the per-view clip plane {normal (0,0,1), point (0,0,
+/// heldIndex + 0.5)} in this display frame and an orthographic camera over
+/// [0, freeW] x [0, freeH] (`makeSliceCamera` overload below), pixel center
+/// (px, py) back-projects to continuous index coordinate (px, py,
+/// heldIndex) EXACTLY — so the GPU-extracted texel equals the CPU oracle's
+/// voxel at those indices, and trilinear interpolation matches
+/// sampleTrilinear everywhere else (the shared acceptance contract of the
+/// extraction gate).
+glm::mat4 sliceVolumeModel(const data::VolumeDataset& dataset, MprAxis axis);
 
 /// Build the golden box mesh spanning `[min, max]` in voxel-index coordinates:
 /// 8 corners and 12 outward-facing CCW triangles (the T11 cube winding

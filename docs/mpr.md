@@ -2,16 +2,24 @@
 
 `app/` is the **compositions + samples module** (SPEC §3). MPR is **app-level
 composition, not a module**: the Multi-Planar Reconstruction (MPR) sample
-composes the existing renderers (PlaneRenderer for the slice views,
-ContourRenderer for the GPU contour overlay, MeshRenderer for the 3D view)
-into a single window. This page documents the **T14/T15 deliverables**
-(FR-app.2/3) and their V3.8b (T11) contour revision: the **1280×960 window
-with a 2×2 viewport grid**, the **T/C/S slice views** that sample the volume
-along the pinned axis convention, the **GPU mesh contour overlay** on each
-slice view (plane∩mesh cross-section, FR-app.3), the **3D rendering view**
-(the golden box mesh, FR-app.3), and the **slice-state ↔ 3D-view camera
-interplay**. It is part of the `docs/mpr.md` documentation map
-(T14/T15 + T11(V3.8b)).
+composes the existing renderers (VolumeSliceRenderer for the GPU-extracted
+slice planes, ContourRenderer for the GPU contour overlay, MeshRenderer for
+the 3D view) into a single window. This page documents the **T14/T15
+deliverables** (FR-app.2/3), their V3.8b (T11) contour revision, and the
+plane-capability review revision that moved the T/C/S views onto the **GPU
+extraction path** (`render::VolumeSliceRenderer`): each 2D view's plane is
+sampled directly from the cached 3D texture at that view's clip plane, so
+there is no frozen CPU slice image anywhere on the live path and scrolling is
+interactive by construction (a slice-index change is a uniform/state change).
+The CPU oracle `app::makeSliceImage` is retained only as the gate tests'
+reference implementation. The page documents the **1280×960 window with a
+2×2 viewport grid**, the **T/C/S slice views** along the pinned axis
+convention, the **GPU mesh contour overlay** on each slice view
+(plane∩mesh cross-section, FR-app.3), the **3D rendering view** (the golden
+box mesh, FR-app.3), and the **slice-state ↔ views/camera interplay**
+(extraction planes, contour planes AND the 3D camera all track one shared
+slice state; the sample auto-scrolls it deterministically). It is part of the
+`docs/mpr.md` documentation map (T14/T15 + T11(V3.8b) + plane-capability review).
 
 ## The MPR layout (FR-app.2)
 
@@ -20,9 +28,9 @@ One **1280×960** window is split into a **2×2 grid of four 640×480 viewports*
 
 | Position | View | Content |
 |---|---|---|
-| **T** top-left | Transverse | slice at constant **Z** (axial) + mesh contour |
-| **C** top-right | Coronal | slice at constant **Y** + mesh contour |
-| **S** bottom-left | Sagittal | slice at constant **X** + mesh contour |
+| **T** top-left | Transverse | plane at constant **Z** (axial), GPU-extracted + mesh contour |
+| **C** top-right | Coronal | plane at constant **Y**, GPU-extracted + mesh contour |
+| **S** bottom-left | Sagittal | plane at constant **X**, GPU-extracted + mesh contour |
 | **3D** bottom-right | 3D view | the golden box mesh (FR-app.3) |
 
 `app::mprViewports(windowWidth, windowHeight)` computes the four rectangles
@@ -31,17 +39,39 @@ One **1280×960** window is split into a **2×2 grid of four 640×480 viewports*
 `{0,480,640,480}`, `{640,480,640,480}`, `{0,0,640,480}`, `{640,0,640,480}` —
 the pinned grid positions the T14 gate asserts (FR-app.2(1)).
 
-## The axis sampling convention (FR-app.2)
+## The axis sampling convention (FR-app.2, GPU-extracted)
 
-The three 2D views sample the volume along their pinned axis
+The three 2D views show the volume along their pinned axis
 (SPEC §4 FR-app.2):
 
-- **Transverse** = slice at constant **Z** (axial): the slice image is a
-  rectangle over **(X, Y)** at the chosen Z index;
-- **Coronal** = slice at constant **Y**: the slice image is a rectangle over
-  **(X, Z)** at the chosen Y index;
-- **Sagittal** = slice at constant **X**: the slice image is a rectangle over
-  **(Y, Z)** at the chosen X index.
+- **Transverse** = plane at constant **Z** (axial): displayed over **(X, Y)**;
+- **Coronal** = plane at constant **Y**: displayed over **(X, Z)**;
+- **Sagittal** = plane at constant **X**: displayed over **(Y, Z)**.
+
+Since the plane-capability review deliverable these views do NOT display CPU
+rasterized images: each view renders a `render::VolumeSliceInstance` whose
+
+- `model` is `app::sliceVolumeModel(dataset, axis)` — maps the dataset's
+  model-space unit cube so voxel-center index *i* lands at display coordinate
+  *i + 0.5* on every axis, then applies the per-view axis permutation
+  (Transverse identity / Coronal swaps Y/Z / Sagittal `(x,y,z) → (y,z,x)`),
+- `plane` is `{normal (0,0,1), point (0,0, heldIndex + 0.5)}` in that display
+  frame (the centers of the sliced voxel layer, same convention as
+  `app::slicePlane`),
+- camera is `app::makeSliceCamera(freeW, freeH)` over the free-axis extents
+  (`app::sliceFreeAxes`).
+
+Pixel center `(px, py)` of a 1:1-sized target therefore back-projects to
+continuous index `(px, py, heldIndex)` exactly, and the extracted bytes equal
+the retained CPU oracle `app::makeSliceImage(dataset, tf, axis, index)`
+within 1/255 across the whole frame — the gate pins this per axis on an
+asymmetric 8×6×4 volume, so any axis permutation or orientation error fails.
+
+**Display orientation:** display +y runs along the second free-axis index in
+BOTH the extraction frame and the contour frame (they share one display space,
+so slices and outlines stay pixel-glued); the oracle image's rows carry the
+same index order, so readback row *py* corresponds to image row *py*
+directly.
 
 ## The mesh contour overlay (FR-app.3, GPU since V3.8b)
 
@@ -158,10 +188,24 @@ the T14 gate asserts the SPEC constants directly.
 Builds a 2D RGBA slice `data::Image` of `dataset` through `tf`, sampling along
 `axis` at voxel-index `index` per the convention above. Each voxel is mapped
 through the transfer function (FR-vol.1) to a straight RGBA color and stored as
-RGBA8 bytes (round(v·255+0.5)) in a top-left-origin image. The returned
-image's `width()`/`height()` and per-pixel bytes are the **explainable
-acceptance values** the T14 gate asserts for the per-view pixel checks
-(FR-app.2(2)).
+RGBA8 bytes in a top-left-origin image. Since the GPU-extraction revision this
+function is the **CPU reference implementation only** — the gate tests compare
+GPU-extracted planes against it whole-frame; no sample renders through it
+anymore (mechanically enforced by the extraction gate's comment-stripped grep:
+zero call sites in app samples).
+
+### `app::sliceFreeAxes(dataset, axis)`, `app::sliceVolumeModel(dataset, axis)` (`app/mpr_slice.*`)
+
+The shared display-frame scaffolding for GPU slice views (pure glm math,
+GL-free, headless-testable): `sliceFreeAxes` returns the two free-axis voxel
+counts in display order — Transverse `(sizeX, sizeY)`, Coronal `(sizeX,
+sizeZ)`, Sagittal `(sizeY, sizeZ)` — and `sliceVolumeModel` returns the model
+matrix placing the dataset's unit cube into that view's display frame
+(scale by `max(dim−1, 1)`, translate by 0.5 so voxel-center index *i* lands at
+display *i + 0.5*, then the per-view axis permutation identical to the contour
+overlay's). The gate tests drive these exact functions against the same
+`makeSliceCamera(freeW, freeH)` camera the sample composes, so a
+sample-vs-test wiring divergence cannot reintroduce itself.
 
 ### `app::slicePlane`, `app::makeBoxMesh` (`app/mpr_slice.cpp`),
 ### `app::make3dCamera`, `app::makeSliceCamera`, `app::makeSliceModel`
@@ -196,28 +240,42 @@ images rasterize identically to before.
 ### `app::MPRView : app::ISample` + `main()` (`app/mpr_sample.cpp`)
 
 The MPR sample. On construction it loads the CT volume
-(`data/volumes/sample_ct.nrrd`, SPEC §7), builds the three slice images at the
-initial slice state (middle slice per axis), translates one GPU contour layer
-per view through `broker::ContourMapper` (the golden box
-`[32,96]×[32,96]×[10,60]` inside the 128×128×70 volume, so every slice plane
-cuts it), and configures the 3D-view camera (make3dCamera) and scene (box +
-opaque Phong material). Per frame it:
+(`data/volumes/sample_ct.nrrd`, SPEC §7), registers the golden box mesh
+(`[32,96]×[32,96]×[10,60]` inside the 128×128×70 volume, so every slice plane
+cuts it at ANY index) once with the shared asset store, and registers the
+contour mapper with the Broker. The initial slice state holds the middle
+slice per axis. Per frame it:
 
-1. renders each of the three slice views into its own **640×480 offscreen FBO**
-   via `render::PlaneRenderer`: for view *i* the ortho maps that view's slice
-   image pixel space `[0,imgW]×[0,imgH]` onto the full viewport and the shared
-   unit quad is scaled onto that pixel rectangle (`makeSliceCamera` /
-   `makeSliceModel`), so the whole slice fills the view; a second ReView item
-   then draws that view's **GPU contour** via `render::ContourRenderer`
-   (`drawLayer`, no clear between layers — FR-app.3);
-2. renders the **3D view FBO** (the golden box) via `render::MeshRenderer`
-   with the slice-state-driven camera;
-3. presents the four FBOs onto the window's default framebuffer in their
+1. advances the deterministic **auto-scroll**: every 45 frames the round-robin
+   next axis steps one voxel layer (wrapping at its dimension) — a pure
+   integer mutation of the shared slice state;
+2. for each of T/C/S builds the `VolumeSliceInstance` fresh from the CURRENT
+   state (dataset ref + TF value + display model + constant-Z plane at the
+   held coordinate) and renders it into the view's own **640×480 offscreen
+   FBO** via `render::VolumeSliceRenderer::drawLayer` — the extraction samples
+   the cached R32F texture on the GPU; a slice change reaches it exclusively
+   through uniforms (docs/render.md, "VolumeSliceRenderer");
+3. layers that view's **GPU contour** over the extracted plane — translated
+   from the same current plane through `broker::ContourMapper` and drawn by
+   `render::ContourRenderer` (`drawLayer`, no clear between layers,
+   FR-app.3) — so outlines stay pixel-glued to the displayed layer while
+   scrolling;
+4. renders the **3D view FBO** (the golden box) via `render::MeshRenderer`
+   with a camera recomputed from the current slice state (`make3dCamera`):
+   moving any slice moves the crosshair and refocuses the 3D view;
+5. presents the four FBOs onto the window's default framebuffer in their
    viewport regions via the engine present path (`render::View::blitTo` →
    `core::blit`, T5 V3.4, docs/render.md): the sample builds per-view ReViews
    (ViewTarget + IRenderable list) and blits each FBO into its window rect —
-   **no app-side viewport blending** (the old textured-quad present pass is
-   gone).
+   **no app-side viewport blending**.
+
+There is NO CPU slice image anywhere on this path (the extraction gate greps
+the sample source for zero `makeSliceImage` call sites after comment
+stripping). The interactive-scroll correctness gate drives the renderer
+directly: render → readback → move ONLY the slice-plane point one layer →
+render again → the new readback must equal the new layer's closed-form values
+(+4 per red byte on the probe field), proving re-extraction through uniforms
+with no CPU image involved.
 
 The sample exits cleanly (code 0) after `RE_SAMPLE_MAX_FRAMES` frames (default
 300) so the gate can run it headlessly under Xvfb within a timeout (FR-app.1).
@@ -249,7 +307,9 @@ the other samples (docs/samples.md).
 | Transverse axis | constant Z | SPEC §4 FR-app.2 (axial) |
 | Coronal axis | constant Y | SPEC §4 FR-app.2 |
 | Sagittal axis | constant X | SPEC §4 FR-app.2 |
-| Slice-image pixel | `round(tf.sample(voxel)·255 + 0.5)` per channel | FR-vol.1 exact at control points; the T14 gate uses a synthetic volume + TF so each pixel's red byte equals the underlying voxel value |
+| Extracted-slice pixel | `tf.sample(dataset.sampleTrilinear(px, py, heldIndex))` within 1/255 per channel | the GPU shader samples the cached R32F texture at `(idx+0.5)/dim`, reproducing `sampleTrilinear` voxel-for-voxel; whole-frame equality with the CPU oracle asserted per axis on an 8×6×4 volume |
+| Slice state change → pixels | new layer's closed-form values within one frame; probe-field delta exactly +4 per red byte | readback after a plane-point-only change proves re-extraction through uniforms (no CPU image on the path) |
+| Auto-scroll cadence | 1 layer / 45 frames, round-robin T→C→S | deterministic animation demonstrating interactive scrolling; bounded smoke runs (20 frames) stay on the initial mid-volume state |
 | Contour color | `(255, 0, 0, 255)` | `app::kContourColor` = pure red (FR-app.3); GPU strokes are exact (blending disabled) |
 | Contour band | 2 px (Euclidean) = the renderer stroke half-width `uHalfWidthPx` | SPEC §4 FR-app.3; the geometry shader expands each outline segment to a ±2 px thick-line quad with square caps |
 | Contour coverage | ≥ 90% of in-band pixels match the contour color (within 1/255), readback-verified | SPEC §4 FR-app.3. The 2 px band around the gate's 32×32 rectangle holds **exactly 508 pixels** (closed-form count: 128-unit perimeter × 4-unit band ≈ 512, minus the overlapping corner regions; no pixel center sits at distance exactly 2.0, so the count is rounding-independent). Every in-band pixel center lies inside some emitted quad, so the matched fraction is ~100% |
@@ -262,27 +322,33 @@ the other samples (docs/samples.md).
 | Sample exit code | `0` | the harness returns 0 only after all frames rendered cleanly; any frame error → 1, any hang → 124, any ASan/UBSan abort → signal (FR-app.1) |
 
 The T14 gate asserts the layout constants (1) and, for each of T/C/S, that the
-slice image's pixel bytes read the volume along the pinned axis (2), plus the
-MPR sample smoke run (gate G, N≥3). The T15 gate asserts the GPU contour
-overlay (≥ 90% of the 2 px band pixels match the contour color within 1/255,
-per view, via `utils::PixelReader` readback of the `ContourRenderer` output),
+CPU oracle reads the volume along the pinned axis (2), plus the MPR sample
+smoke run (gate G, N≥3). The T15 gate asserts the GPU contour overlay
+(≥ 90% of the 2 px band pixels match the contour color within 1/255, per
+view, via `utils::PixelReader` readback of the `ContourRenderer` output),
 the broker translation (`ContourMapper` RE-minimal payload + typed errors),
 and the 3D view (center pixel = base color), plus the MPR sample smoke run
-(gate G, N≥3). The layout/slice tests are CPU-only; the contour/3D-view tests
-render under the offscreen fixture; the smoke test spawns the sample
-subprocess.
+(gate G, N≥3). The plane-capability review gate additionally asserts, per
+axis, that the composed ReView path's GPU-extracted frame equals the retained
+CPU oracle whole-frame within 1/255 on an asymmetric volume, plus the
+readback-after-state-change interactivity proof and the mechanical floor
+(plane sample loads a volume; zero `makeSliceImage` call sites in the MPR
+sample; oracle retained). The layout/slice tests are CPU-only;
+the extraction/contour/3D-view tests render under the offscreen fixture; the
+smoke test spawns the sample subprocess.
 
 ## Guardrails observed
 
 - **GL ownership**: raw `glXxx` calls live only under `core/`. The MPR sample
-  renders through `render::PlaneRenderer`, `render::ContourRenderer`,
+  renders through `render::VolumeSliceRenderer`, `render::ContourRenderer`,
   `render::MeshRenderer` and `core/` wrappers only (guardrail
   `gpu_api_ownership`); `app/mpr_slice.*` and `app/mpr_camera.*` are GL-free.
 - **Typed diagnostics**: frame/GL failures surface as typed `data::Result`
   errors (SPEC §5); never silent.
 - **Deterministic / single-threaded**: one window, one GL context, one render
-  thread (SPEC §5). Slice images, contour overlays and the 3D-view camera are
-  built from a fixed slice state (the deterministic CT + a fixed transfer
-  function + the closed-form box cross-section).
+  thread (SPEC §5). The extraction planes, contour overlays, auto-scroll steps
+  and the 3D-view camera are all derived from the shared slice state (the
+  deterministic CT + a fixed transfer function + the closed-form box
+  cross-section), so every frame is reproducible.
 - **Logging**: spdlog only.
 - **Doxygen** on all public API (SPEC §5).

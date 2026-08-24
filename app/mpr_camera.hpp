@@ -61,6 +61,16 @@ render::Camera make3dCamera(const MprSliceState& state,
 /// pixel-identically to the original z = 5 camera.
 render::Camera makeSliceCamera(const data::Image& image);
 
+/// The same 2D slice-view camera over an abstract display rectangle
+/// `[0,widthUnits] x [0,heightUnits]` (no intermediate image required): this
+/// is the form the GPU slice-extraction views use, where the displayed
+/// rectangle spans the dataset's two free axes in voxel-index units and no
+/// CPU-side slice image exists at all. The enclosure contract above applies
+/// unchanged (extraction planes live at heldIndex + 0.5 on the display z
+/// axis, far above z = 0). `makeSliceCamera(image)` delegates here with the
+/// image's pixel dimensions.
+render::Camera makeSliceCamera(float widthUnits, float heightUnits);
+
 /// The model matrix scaling the shared unit quad [-1,1]^2 onto `image`'s pixel
 /// rectangle `[0,imgW]x[0,imgH]` at z = 0, so the whole slice image fills the
 /// viewport when viewed through makeSliceCamera(image). Pure math, shared by

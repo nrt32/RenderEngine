@@ -58,19 +58,21 @@ render::Camera make3dCamera(const MprSliceState& state,
 }
 
 render::Camera makeSliceCamera(const data::Image& image) {
+    return makeSliceCamera(static_cast<float>(image.width()),
+                           static_cast<float>(image.height()));
+}
+
+render::Camera makeSliceCamera(float widthUnits, float heightUnits) {
     render::Camera camera;
-    // Eye far back along +Z so the clip volume encloses both the slice quad
-    // (z = 0) and any contour's display-frame z (the held voxel coordinate +
-    // 0.5) — see the CAMERA ENCLOSURE CONTRACT in app/mpr_camera.hpp. The XY
-    // mapping does not depend on this distance (pure Z translation feeding an
-    // unchanged ortho window), so the slice image rasterizes exactly as
-    // before.
+    // Eye far back along +Z so the clip volume encloses both the display
+    // plane at z = 0 and any contour's display-frame z (the held voxel
+    // coordinate + 0.5) — see the CAMERA ENCLOSURE CONTRACT in
+    // app/mpr_camera.hpp. The XY mapping does not depend on this distance
+    // (pure Z translation feeding an unchanged ortho window).
     camera.position = glm::vec3(0.0f, 0.0f, kSliceEyeDistance);
-    camera.view =
-        glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f),
-                    glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::ortho(0.0f, static_cast<float>(image.width()), 0.0f,
-                             static_cast<float>(image.height()), 0.1f,
+    camera.view = glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f),
+                              glm::vec3(0.0f, 1.0f, 0.0f));
+    camera.proj = glm::ortho(0.0f, widthUnits, 0.0f, heightUnits, 0.1f,
                              2.0f * kSliceEyeDistance);
     return camera;
 }
