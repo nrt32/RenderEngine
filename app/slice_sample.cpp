@@ -16,6 +16,12 @@
 // other capability samples, and exits cleanly (code 0) after
 // RE_SAMPLE_MAX_FRAMES frames (default 300), so the gate can run it headlessly
 // under Xvfb within a timeout (FR-app.1: exit code 0, no sanitizer reports).
+//
+// Live window size (T23): the view's rect and the camera's projection aspect
+// are re-derived from the harness pixel dims EVERY frame via
+// app::fitPerspectiveViewToPixels — the compile-time kWindowWidth/kWindowHeight
+// constants only pick the OPENING window size, never feed projections — so
+// resizing the window reframes the clipped teapot instead of stretching it.
 
 #include <spdlog/spdlog.h>
 
@@ -48,7 +54,8 @@ namespace core = re::core;
 namespace data = re::data;
 namespace scene = re::scene;
 
-// The harness window size.
+// The harness window size: the OPENING size only — every per-frame value
+// (view rect, camera aspect) derives from the live framebuffer dims instead.
 constexpr int kWindowWidth = 800;
 constexpr int kWindowHeight = 600;
 // Default number of frames before the sample exits cleanly (gate overrides via
@@ -92,29 +99,39 @@ class SliceSample final : public app::ISample {
         plane.setSpace(scene::Space::World);
 
         // Perspective camera framing the mesh (eye pulled back along +Z from
-        // the AABB center by radius / tan(fov/2)).
+        // the AABB center by radius / tan(fov/2)). The framing (eye distance,
+        // near/far) is derived ONCE from the mesh bounds; rect + projection
+        // aspect are re-derived from live pixel dims every frame.
         const glm::vec3 center = 0.5f * (b.min + b.max);
         const float radius = 0.5f * glm::length(b.max - b.min);
         const float dist = radius / std::tan(0.5f * glm::radians(kFovYDeg));
+        framing_.fovDeg = kFovYDeg;
+        framing_.nearPlane = 0.1f;
+        framing_.farPlane = 2.0f * (dist + radius);
 
         view_.id = 1;
-        view_.rect = scene::Rect{0, 0, kWindowWidth, kWindowHeight};
         view_.camera = scene::Camera(center + glm::vec3(0.0f, 0.0f, dist),
                                      center, glm::vec3(0.0f, 1.0f, 0.0f));
-        view_.camera.setPerspective(
-            kFovYDeg,
-            static_cast<float>(kWindowWidth) /
-                static_cast<float>(kWindowHeight),
-            0.1f, 2.0f * (dist + radius));
+        app::fitPerspectiveViewToPixels(view_, framing_, kWindowWidth,
+                                        kWindowHeight);
         view_.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         view_.setItemIds({sliceId});
         view_.setPlane(plane);
     }
 
-    data::Result<void> renderFrame(int /*width*/, int /*height*/) override {
-        // The bridge path: sync → renderAll → presentAll(null destination =
-        // window default framebuffer). The ReView target rect equals the
-        // harness pixel size, so the blit is 1:1.
+    /// The resize hook: apply the new pixel dims immediately so the very next
+    /// frame (and its sync) already carries the corrected rect + aspect.
+    void onResize(int width, int height) noexcept override {
+        applyLiveDims(width, height);
+    }
+
+    data::Result<void> renderFrame(int width, int height) override {
+        // Live dims first: rect + camera aspect always derive from THIS
+        // frame's framebuffer size (change-guarded setters make a no-resize
+        // frame free), then the bridge path: sync → renderAll → presentAll
+        // (null destination = window default framebuffer). The ReView target
+        // rect equals the live pixel size, so the blit is 1:1.
+        applyLiveDims(width, height);
         views_ = {view_};
         auto s = ctx_.bridge().sync(views_, ctx_.store());
         if (s.failed()) {
@@ -140,14 +157,24 @@ class SliceSample final : public app::ISample {
                "compositing). The MeshSliceObject translates through "
                "broker::MeshSliceObjectMapper with the plane supplied by its "
                "View.\n"
+               "Resize check: drag a window edge — the view reframes to the "
+               "live pixel size (camera aspect follows width/height), no "
+               "stretching.\n"
                "Run the sample, then close the window (or set "
                "RE_SAMPLE_MAX_FRAMES) to exit.";
     }
 
    private:
+    /// Re-derive the view rect + camera aspect from live pixel dims — the one
+    /// body shared by the resize hook and every rendered frame.
+    void applyLiveDims(int width, int height) noexcept {
+        app::fitPerspectiveViewToPixels(view_, framing_, width, height);
+    }
+
     std::shared_ptr<const data::Mesh> mesh_;
     broker::AppContext ctx_;
     scene::View view_{};
+    app::PerspectiveFraming framing_{}; // fov/near/far fixed; aspect is live
     std::vector<scene::View> views_{};
 };
 

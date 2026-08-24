@@ -28,7 +28,15 @@ unchanged.
   window-event primitives the harness run loop drives.
 - `handle()` — the raw `GLFWwindow*` for the ImGui GLFW backend.
 - `width()` / `height()` — the client-area pixel size (the framebuffer size the
-  samples render into).
+  samples render into), kept LIVE by the framebuffer-size callback (below).
+- **Framebuffer-size events (`core::FramebufferSizeState`, T23)** — `create()`
+  registers the GLFW framebuffer-size callback; every event overwrites the
+  stored physical pixel size and latches a dirty flag that
+  `Window::consumeFramebufferResized()` returns-and-clears (one delivery per
+  event batch). The bookkeeping lives in a shared state block targeted by the
+  GLFW user pointer, so the registration survives `Window` moves, and paths
+  that never create a visible window (the offscreen unit-test fixture) never
+  fire it — the headless gates are unaffected.
 - Version probe via `glGetIntegerv` (GL_MAJOR_VERSION / GL_MINOR_VERSION),
   matching the offscreen fixture (SPEC §2/§8).
 
@@ -40,18 +48,22 @@ the frame loop. A sample implements `ISample` and the harness drives it:
 
 | Member | Purpose |
 |---|---|
-| `ISample::renderFrame(width, height)` | render one frame of the sample's 3D scene into the window's **default framebuffer** (a `render::RenderTarget` with `framebuffer == nullptr`, see below). Returns a typed error on failure (SPEC §5). |
+| `ISample::renderFrame(width, height)` | render one frame of the sample's 3D scene into the window's **default framebuffer** (a `render::RenderTarget` with `framebuffer == nullptr`, see below). `width`/`height` are the CURRENT framebuffer pixel size — samples must derive view rects and camera aspect from these live dims, never from compile-time constants. Returns a typed error on failure (SPEC §5). |
+| `ISample::onResize(width, height)` | optional resize hook (T23): called once per pending framebuffer-size event batch with the current pixel size, BEFORE the affected frame; default no-op. Samples that re-derive everything per frame need not override. |
 | `ISample::title()` | one-line description shown in the ImGui overlay. |
 | `ISample::instructions()` | optional multi-line help text shown in the overlay (T13) describing how to drive the sample's capability; empty by default. |
-| `SampleHarness::run(maxFrames)` | the run loop: poll events → ImGui new-frame → sample `renderFrame` → ImGui overlay → present. Stops cleanly after `maxFrames` frames or on window close; returns the process exit code (0 clean). |
+| `SampleHarness::run(maxFrames)` | the run loop: poll events → (resize delivery) → ImGui new-frame → sample `renderFrame` → ImGui overlay → present. Stops cleanly after `maxFrames` frames or on window close; returns the process exit code (0 clean). |
 | `app::sampleMaxFrames(default)` | reads the `RE_SAMPLE_MAX_FRAMES` env var (bounded run, so the gate can terminate samples headlessly). |
 
 Per frame the harness:
-1. `pollEvents()`, then starts the ImGui frame (`ImGui_ImplOpenGL3_NewFrame`,
+1. `pollEvents()`, then — when a framebuffer-size event arrived since the
+   previous frame (T23) — delivers `ISample::onResize(currentW, currentH)`
+   before anything else consumes the frame;
+2. starts the ImGui frame (`ImGui_ImplOpenGL3_NewFrame`,
    `ImGui_ImplGlfw_NewFrame`, `ImGui::NewFrame`);
-2. calls `sample_->renderFrame(w, h)` into the window's default framebuffer —
+3. calls `sample_->renderFrame(w, h)` into the window's default framebuffer —
    if it returns a typed error, the run aborts with exit code 1 (never silent);
-3. draws the overlay (`title`, frame counter, and — when the sample provides
+4. draws the overlay (`title`, frame counter, and — when the sample provides
    them — the per-capability driving instructions from `ISample::instructions()`),
    renders ImGui (`ImGui_ImplOpenGL3_RenderDrawData`), and swaps buffers.
 
@@ -74,6 +86,32 @@ and `LinkedListOIT::end` (the composite pass) also treat a null framebuffer as
 the default, so the slice and OIT samples can render on-screen. Offscreen FBO
 targets (the T7–T11 gate paths) are unchanged; a zero-width/height target is
 still rejected with a typed error.
+
+### Live window size (T23)
+
+Every sample derives its view rects and camera aspect from the **live
+framebuffer pixel size** — compile-time window constants pick only the OPENING
+window size and never feed projections, so a window resize reframes geometry
+instead of stretching it:
+
+| Sample | What tracks the live dims |
+|---|---|
+| mesh / slice / volume | full-window view: `app::fitPerspectiveViewToPixels` re-derives rect `{0,0,w,h}` + projection aspect `w/h` each frame (fov/near/far and the eye framing stay fixed) |
+| OIT | full-window view: rect `{0,0,w,h}` + the arrangement ortho window grown to `±aspect` horizontally (`oit_scene::cameraFor`) |
+| plane | two-view split re-resolved to left/right halves of the CURRENT window each frame; extraction cameras keep their dataset-extent ortho windows (the MPR display convention) |
+| MPR | the 2x2 grid re-resolves via `app::mprViewports(w, h)` (four equal quadrants of the live window) and the 3D camera aspect follows its live quadrant |
+
+**Manual verification** (interactive, WSLg): run any sample, then drag a
+window edge/corner — the scene reframes to the new shape with no stretching
+and no GL errors; MPR re-splits its grid live. The automated T23 gate covers
+the same contract deterministically without a display:
+`tests/t23_resize_test.cpp` simulates a resize by calling the hook's exact
+code directly and asserts the next-frame projection matrix equals
+`glm::perspective(fov, newAspect, near, far)` within 1e-6 (all 16 entries,
+plus the closed-form `[0][0] = f/aspect` scalars with `f = sqrt(3)` at fov
+60°), that the recomputed projection reaches the compositor's ReView through
+`IViewBridge::sync` at a stable ReView address, and that the MPR grid math
+re-splits over new dims.
 
 ## Samples (T12 + T13)
 
@@ -124,15 +162,18 @@ Every sample's ImGui overlay shows a short "How to drive this capability" help
 block (from `ISample::instructions()`, T13). Each sample is static in v1 (one
 window, one GL context, one render thread, SPEC §5 — no camera controls), so
 "driving" the capability means running the sample, observing the rendered
-result, and exiting cleanly:
+result, optionally resizing the window to verify the live-aspect reframe
+(manual verification, T23 — the overlay instructions carry the same note), and
+exiting cleanly:
 
 | Sample | How to drive it |
 |---|---|
-| `re_sample_mesh` | observe the shaded bunny (opaque Phong, FR-render.1); close the window to exit. |
-| `re_sample_plane` | observe the two GPU-extracted CT planes (axial left, oblique right; FR-render.5 extension); close the window to exit. |
-| `re_sample_volume` | observe the ray-cast CT chest (FR-render.6); close the window to exit. |
-| `re_sample_slice` | observe the teapot cut open along its horizontal midplane with the on-plane cross-section (FR-render.4); close the window to exit. |
-| `re_sample_oit` | observe the golden box and bunny (depth-tested opaque pass) under the two glass shells blended in depth order by the linked-list OIT (FR-render.2/3); close the window to exit. |
+| `re_sample_mesh` | observe the shaded bunny (opaque Phong, FR-render.1); resize check: drag an edge — the view reframes, no stretching; close the window to exit. |
+| `re_sample_plane` | observe the two GPU-extracted CT planes (axial left, oblique right; FR-render.5 extension); resize check: the split follows the live window halves; close the window to exit. |
+| `re_sample_volume` | observe the ray-cast CT chest (FR-render.6); resize check: drag an edge — the view reframes, no stretching; close the window to exit. |
+| `re_sample_slice` | observe the teapot cut open along its horizontal midplane with the on-plane cross-section (FR-render.4); resize check: drag an edge — the view reframes, no stretching; close the window to exit. |
+| `re_sample_oit` | observe the golden box and bunny (depth-tested opaque pass) under the two glass shells blended in depth order by the linked-list OIT (FR-render.2/3); resize check: ortho extents follow the live aspect; close the window to exit. |
+| `re_sample_mpr` | scroll the auto-advancing slices and watch the 3D crosshair view track them (FR-app.2/3); resize check: the 2x2 grid re-splits into four equal quadrants of the live window; close the window to exit. |
 
 The overlay instructions text is the authoritative per-sample help for each
 capability; the table above summarizes it.
@@ -168,7 +209,7 @@ asserts:
 | Quantity | Value | Where it comes from |
 |---|---|---|
 | Sample exit code | `0` | the harness returns 0 only after `RE_SAMPLE_MAX_FRAMES` frames all rendered without error and ImGui shut down cleanly; any frame failure → 1, any hang → 124 (`timeout`), any ASan/UBSan abort → signal (FR-app.1 "exit code 0") |
-| Window-opened marker in log | contains `GL 4.6 core` | `core::Window::create` logs `window: 800x600 GL 4.6 core` only after `glfwCreateWindow` + `gladLoadGL` + the `glGetIntegerv` 4.6 probe succeed (FR-app.1 "opens a window", SPEC §2/§8) |
+| Window-opened marker in log | contains `GL 4.6 core` | `core::Window::create` logs `window: 800x600 (framebuffer 800x600) GL 4.6 core` (requested size + live framebuffer size) only after `glfwCreateWindow` + glad loading + the `glGetIntegerv` 4.6 probe succeed (FR-app.1 "opens a window", SPEC §2/§8) |
 | Sanitizer signatures in log | none of `AddressSanitizer`, `UndefinedBehaviorSanitizer`, `runtime error:`, `LeakSanitizer` | FR-app.1 "no sanitizer reports"; address/UB detection stays active in the subprocess (the leak gate remains the unit-test suite on llvmpipe, SPEC §8 — the Xvfb windowing stack's fontconfig/pango allocations are third-party driver noise) |
 | Per-sample frame count | `20` | `RE_SAMPLE_MAX_FRAMES=20`: bounded run proving the loop iterated; exit 0 implies all 20 frames rendered |
 

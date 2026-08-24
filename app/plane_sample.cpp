@@ -30,6 +30,12 @@
 // 300) or a window close, the harness stops the loop and returns exit code 0
 // (FR-app.1).
 //
+// Live window size (T23): both views' rects are re-derived from the harness
+// pixel dims EVERY frame (left = left half, right = right half of the CURRENT
+// size), so a window resize re-splits the layout instead of stretching stale
+// rects; the extraction cameras keep their dataset-extent ortho windows (the
+// MPR display convention), so the extracted planes rescale with the view.
+//
 // (Capability acceptance: FR-app.1.)
 
 #include <spdlog/spdlog.h>
@@ -68,7 +74,9 @@ namespace data = re::data;
 namespace scene = re::scene;
 namespace volume = re::volume;
 
-// The harness window size, split into two side-by-side views.
+// The harness window size: the OPENING size only — the per-frame view rects
+// derive from the live framebuffer dims (left/right halves of the CURRENT
+// size) instead.
 constexpr int kWindowWidth = 800;
 constexpr int kWindowHeight = 600;
 constexpr int kViewWidth = kWindowWidth / 2;
@@ -165,6 +173,12 @@ class PlaneSample final : public app::ISample {
         views_[1].setPlane(obliquePlane);
     }
 
+    /// The resize hook: apply the new pixel dims immediately so the very next
+    /// frame (and its sync) already carries the corrected view rects.
+    void onResize(int width, int height) noexcept override {
+        applyLiveRects(width, height);
+    }
+
     data::Result<void> renderFrame(int width, int height) override {
         // Clear the window behind the two-view split (a background, not a
         // viewport blend — the views are placed by the engine blit).
@@ -173,9 +187,12 @@ class PlaneSample final : public app::ISample {
         core::setClearColor(0.02f, 0.02f, 0.03f, 1.0f);
         core::clearColor();
 
-        // The bridge path for BOTH views: after the first sync the poll
-        // early-out makes sync free, and renderAll/presentAll compose and
-        // present the two targets every frame.
+        // Live dims first: both rects re-split the CURRENT window size (left
+        // half | right half; change-guarded setters make a no-resize frame
+        // free), then the bridge path for BOTH views: after the first sync
+        // the poll early-out makes sync free, and renderAll/presentAll
+        // compose and present the two targets every frame.
+        applyLiveRects(width, height);
         frame_.assign(views_.begin(), views_.end());
         auto s = ctx_.bridge().sync(frame_, ctx_.store());
         if (s.failed()) {
@@ -201,11 +218,24 @@ class PlaneSample final : public app::ISample {
                "volume - extraction is fully general, no CPU slicing.\n"
                "Both layers are mediated by broker::VolumeSliceObjectMapper "
                "(the view owns the plane).\n"
+               "Resize check: drag a window edge — the two-view split "
+               "re-resolves to the live pixel size (left/right halves of the "
+               "current window), no stale rects.\n"
                "Run the sample, then close the window (or set "
                "RE_SAMPLE_MAX_FRAMES) to exit.";
     }
 
    private:
+    /// Re-derive both view rects from live pixel dims: left view = the left
+    /// half, right view = the right half of the CURRENT window (odd widths
+    /// give the extra pixel to the right view via width - width/2) — the one
+    /// body shared by the resize hook and every rendered frame.
+    void applyLiveRects(int width, int height) noexcept {
+        const int leftWidth = width / 2;
+        views_[0].setRect(scene::Rect{0, 0, leftWidth, height});
+        views_[1].setRect(scene::Rect{leftWidth, 0, width - leftWidth, height});
+    }
+
     std::shared_ptr<const data::VolumeDataset> dataset_;
     volume::TransferFunction tf_; // immutable value; copied into instances
     broker::AppContext ctx_;

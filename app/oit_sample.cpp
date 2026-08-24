@@ -34,6 +34,11 @@
 //
 // Exits cleanly (code 0) after RE_SAMPLE_MAX_FRAMES frames (default 300) so
 // the gate can run it headlessly under Xvfb within a timeout (FR-app.1).
+//
+// Live window size (T23): the view's rect and the arrangement camera's aspect
+// are re-derived from the harness pixel dims EVERY frame (the ortho window
+// grows/shrinks horizontally with width/height), so a window resize reframes
+// the composition instead of stretching it.
 
 #include <spdlog/spdlog.h>
 
@@ -66,7 +71,8 @@ namespace data = re::data;
 namespace oit = re::app::oit_scene;
 namespace scene = re::scene;
 
-// The harness window size.
+// The harness window size: the OPENING size only — every per-frame value
+// (view rect, camera aspect) derives from the live framebuffer dims instead.
 constexpr int kWindowWidth = 800;
 constexpr int kWindowHeight = 600;
 // Default number of frames before the sample exits cleanly.
@@ -105,21 +111,25 @@ class OitSample final : public app::ISample {
                                                  oit::kFarGlassColor));
 
         view_.id = 1;
-        view_.rect = scene::Rect{0, 0, kWindowWidth, kWindowHeight};
+        applyLiveDims(kWindowWidth, kWindowHeight);
         view_.setClearColor(oit::kClearColor);
         view_.setDepthTest(true);
         // All four object ids (1..4): addMeshObject assigns sequential ids.
         view_.setItemIds({1u, 2u, 3u, 4u});
     }
 
-    data::Result<void> renderFrame(int width, int height) override {
-        // Live aspect from the harness pixel size (the arrangement camera is
-        // aspect-corrected so no window shape stretches the scene).
-        const float aspect =
-            static_cast<float>(width) / static_cast<float>(height);
-        view_.mutateCamera(
-            [&](scene::Camera& c) { c = oit::cameraFor(aspect); });
+    /// The resize hook: apply the new pixel dims immediately so the very next
+    /// frame (and its sync) already carries the corrected rect + aspect.
+    void onResize(int width, int height) noexcept override {
+        applyLiveDims(width, height);
+    }
 
+    data::Result<void> renderFrame(int width, int height) override {
+        // Live aspect from THIS frame's harness pixel size first (the
+        // arrangement camera is aspect-corrected so no window shape stretches
+        // the scene; change-guarded setters make a no-resize frame free),
+        // then the bridge path: sync → renderAll → presentAll.
+        applyLiveDims(width, height);
         views_ = {view_};
         auto s = ctx_.bridge().sync(views_, ctx_.store());
         if (s.failed()) {
@@ -146,11 +156,26 @@ class OitSample final : public app::ISample {
                "fragments are captured into a per-pixel linked list, sorted "
                "by depth, and composited back-to-front over the opaque image "
                "— correct regardless of draw order.\n"
+               "Resize check: drag a window edge — the composition reframes "
+               "to the live pixel size (ortho extents follow width/height), "
+               "no stretching.\n"
                "Run the sample, then close the window (or set "
                "RE_SAMPLE_MAX_FRAMES) to exit.";
     }
 
    private:
+    /// Re-derive the full-window view rect + the arrangement camera's aspect
+    /// from live pixel dims — the one body shared by the resize hook and every
+    /// rendered frame. The ortho window keeps NDC [-1,1] vertically and grows
+    /// to ±aspect horizontally (the oit_scene::cameraFor contract), so no
+    /// window shape stretches the composition.
+    void applyLiveDims(int width, int height) {
+        view_.setRect(scene::Rect{0, 0, width, height});
+        view_.mutateCamera([&](scene::Camera& c) {
+            c = oit::cameraFor(app::aspectFromDims(width, height));
+        });
+    }
+
     /// A flat-shaded axis-aligned box MeshObject value (identity transform —
     /// extents are baked into the mesh geometry).
     static scene::MeshObject makeBoxObject(const glm::vec3& minCorner,

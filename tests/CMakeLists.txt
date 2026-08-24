@@ -43,6 +43,7 @@ add_executable(${RE_TEST_TARGET}
     t20_broker_path_test.cpp
     t21_persistence_honesty_test.cpp
     t22_error_model_test.cpp
+    t23_resize_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

@@ -77,6 +77,18 @@ int SampleHarness::run(int maxFrames) {
     while (!window_.shouldClose() && frames < maxFrames && frameOk) {
         window_.pollEvents();
 
+        // Deliver a pending framebuffer resize BEFORE anything else consumes
+        // the frame: the core::Window callback latched the new physical pixel
+        // size during pollEvents, and the sample must see it before this
+        // frame's render call. One consume per frame means a burst of events
+        // coalesces into a single delivery carrying the latest size; frames
+        // with no event skip the hook entirely, so the bounded headless runs
+        // (fixed-size windows, no resize events at all) behave exactly as
+        // before.
+        if (window_.consumeFramebufferResized()) {
+            sample_->onResize(window_.width(), window_.height());
+        }
+
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
@@ -131,6 +143,26 @@ int SampleHarness::run(int maxFrames) {
     // Single cleanup path; the destructor's call is a no-op via the flag.
     shutdownImGui();
     return frameOk ? 0 : 1;
+}
+
+float aspectFromDims(int width, int height) noexcept {
+    const float w = static_cast<float>(width > 0 ? width : 1);
+    const float h = static_cast<float>(height > 0 ? height : 1);
+    return w / h;
+}
+
+void fitPerspectiveViewToPixels(scene::View& view,
+                                const PerspectiveFraming& framing, int width,
+                                int height) noexcept {
+    // The view covers the whole window and the camera's projection aspect
+    // follows the live pixel ratio; fov/near/far (and the eye framing built by
+    // the sample) are untouched. Both setters only bump generations on a real
+    // change, so repeated calls with unchanged dims cost nothing downstream.
+    view.setRect(scene::Rect{0, 0, width, height});
+    view.mutateCamera([&framing, width, height](scene::Camera& camera) {
+        camera.setPerspective(framing.fovDeg, aspectFromDims(width, height),
+                              framing.nearPlane, framing.farPlane);
+    });
 }
 
 int sampleMaxFrames(int defaultFrames) noexcept {

@@ -39,6 +39,15 @@ One **1280×960** window is split into a **2×2 grid of four 640×480 viewports*
 `{0,480,640,480}`, `{640,480,640,480}`, `{0,0,640,480}`, `{640,0,640,480}` —
 the pinned grid positions the T14 gate asserts (FR-app.2(1)).
 
+The sample resolves this grid from the **live framebuffer size every frame**
+(T23): the window OPENS at the SPEC 1280×960 (four 640×480 quadrants) and a
+window resize re-applies the same quadrant formula over the new pixel size
+(four equal quadrants of the current window; the 3D view's camera aspect
+follows its live bottom-right quadrant), so resizing re-splits the layout
+instead of stretching stale rects. The harness delivers resize events through
+`core::Window`'s framebuffer-size callback + `ISample::onResize`
+(docs/samples.md "Live window size").
+
 ## The axis sampling convention (FR-app.2, GPU-extracted)
 
 The three 2D views show the volume along their pinned axis
@@ -301,8 +310,8 @@ the other samples (docs/samples.md).
 
 | Quantity | Value | Where it comes from |
 |---|---|---|
-| Window size | `1280×960` | SPEC §4 FR-app.2 |
-| Each viewport | `640×480` | SPEC §4 FR-app.2 (`window/2 × window/2`) |
+| Window size | `1280×960` (opening size) | SPEC §4 FR-app.2; the live grid re-resolves from the current framebuffer each frame (T23, docs/samples.md "Live window size") |
+| Each viewport | `640×480` (at the opening size) | SPEC §4 FR-app.2 (`window/2 × window/2`) |
 | Grid positions | T `{0,480}`, C `{640,480}`, S `{0,0}`, 3D `{640,0}` | the four equal quadrants, y up from the bottom scanline |
 | Transverse axis | constant Z | SPEC §4 FR-app.2 (axial) |
 | Coronal axis | constant Y | SPEC §4 FR-app.2 |

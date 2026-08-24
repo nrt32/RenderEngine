@@ -32,6 +32,12 @@
 //
 // Exits cleanly (code 0) after RE_SAMPLE_MAX_FRAMES frames (default 300) so
 // the gate can run it headlessly under Xvfb within a timeout (FR-app.1).
+//
+// Live window size (T23): the window OPENS at the SPEC 1280x960, but the 2x2
+// grid is re-resolved from the LIVE framebuffer dims every frame via
+// app::mprViewports(width, height) (four equal quadrants of the current size)
+// and the 3D view's camera aspect follows its live quadrant — a resize
+// re-splits the layout instead of stretching stale rects.
 
 #include <spdlog/spdlog.h>
 
@@ -75,15 +81,13 @@ namespace volume = re::volume;
 
 using MprAxis = app::MprAxis;
 
-// The harness window size (SPEC FR-app.2: 1280x960).
+// The harness window size: the OPENING size only (SPEC FR-app.2 pins
+// 1280x960 as the default MPR window) — the per-frame grid re-resolves from
+// the live framebuffer dims instead.
 constexpr int kWindowWidth = 1280;
 constexpr int kWindowHeight = 960;
 // Default number of frames before the sample exits cleanly.
 constexpr int kDefaultFrames = 300;
-// The offscreen slice-view resolution (SPEC FR-app.2: each viewport is
-// 640x480).
-constexpr std::uint32_t kViewportWidth = 640u;
-constexpr std::uint32_t kViewportHeight = 480u;
 
 // Auto-scroll cadence: every kFramesPerStep rendered frames the round-robin
 // next slice axis advances one voxel layer. Deterministic, and slow enough
@@ -214,6 +218,8 @@ class MPRView final : public app::ISample {
         }
 
         // --- Views ----------------------------------------------------------
+        // The initial 2x2 grid at the OPENING window size; every frame
+        // re-resolves it from the live pixel dims (see renderFrame).
         const std::array<app::MprViewport, 4> grid =
             app::mprViewports(kWindowWidth, kWindowHeight);
         for (std::size_t i = 0; i < 3u; ++i) {
@@ -233,6 +239,15 @@ class MPRView final : public app::ISample {
         views_[3].setClearColor(glm::vec4(0.10f, 0.10f, 0.14f, 1.0f));
         views_[3].setItemIds({boxId_});
 
+        grid_ = grid;
+        applySliceState();
+    }
+
+    /// The resize hook: re-split the 2x2 grid over the new pixel size and
+    /// push the state (incl. the 3D camera's live quadrant aspect) so the
+    /// very next frame already carries the corrected layout.
+    void onResize(int width, int height) noexcept override {
+        resolveLiveGrid(width, height);
         applySliceState();
     }
 
@@ -244,6 +259,12 @@ class MPRView final : public app::ISample {
         core::setViewport(0, 0, width, height);
         core::setClearColor(0.02f, 0.02f, 0.03f, 1.0f);
         core::clearColor();
+
+        // Re-resolve the 2x2 grid from THIS frame's pixel dims first: four
+        // equal quadrants of the live window (change-guarded setters make a
+        // no-resize frame free), then the slice state below derives its
+        // cameras against the current quadrant sizes.
+        resolveLiveGrid(width, height);
 
         // Advance the deterministic auto-scroll: mutates ONLY the slice state
         // (three integers). Everything downstream derives from it below.
@@ -303,7 +324,7 @@ class MPRView final : public app::ISample {
     const char* instructions() const noexcept override {
         return "Capability: Multi-Planar Reconstruction (interactive "
                "scrolling).\n"
-               "A single 1280x960 window shows four 640x480 viewports in a "
+               "The window opens at 1280x960 with four equal viewports in a "
                "2x2 grid:\n"
                "T (top-left) = Transverse plane (constant Z) + GPU mesh "
                "contour,\n"
@@ -317,11 +338,26 @@ class MPRView final : public app::ISample {
                "IViewBridge); the slices are EXTRACTED ON THE GPU from the "
                "cached 3D texture: every few frames the next axis advances "
                "one voxel layer and all views track it.\n"
+               "Resize check: drag a window edge — the grid re-splits into "
+               "four equal quadrants of the live pixel size, no stale rects.\n"
                "Run the sample, then close the window (or set "
                "RE_SAMPLE_MAX_FRAMES) to exit.";
     }
 
    private:
+    /// Re-resolve the 2x2 viewport grid from live pixel dims (four equal
+    /// quadrants of the CURRENT window via app::mprViewports) and push the
+    /// rects into the views — the one body shared by the resize hook and
+    /// every rendered frame. Change-guarded setters keep a no-resize frame
+    /// free of generation churn.
+    void resolveLiveGrid(int width, int height) {
+        grid_ = app::mprViewports(width, height);
+        for (std::size_t i = 0; i < views_.size(); ++i) {
+            views_[i].setRect(scene::Rect{grid_[i].x, grid_[i].y,
+                                          grid_[i].width, grid_[i].height});
+        }
+    }
+
     /// One deterministic auto-scroll step every kFramesPerStep frames: the
     /// round-robin next axis advances +1, wrapping at its dimension (valid
     /// voxel-layer indices are 0..dim-1). Pure integer state mutation.
@@ -398,8 +434,10 @@ class MPRView final : public app::ISample {
 
         // Cameras: the 2D slice cameras are static per axis extents; the 3D
         // camera tracks the crosshair (the slice-state ↔ 3D-view interplay).
-        const float aspect3d = static_cast<float>(kViewportWidth) /
-                               static_cast<float>(kViewportHeight);
+        // Its aspect follows the LIVE bottom-right quadrant dims, so a window
+        // resize reframes the 3D view instead of stretching it.
+        const float aspect3d = app::aspectFromDims(grid_[3].width,
+                                                   grid_[3].height);
         views_[3].mutateCamera([&](scene::Camera& c) {
             c = broker::make3dCamera(app::sliceCrosshair(sliceState_),
                                      box_->bounds(), aspect3d);
@@ -481,6 +519,9 @@ class MPRView final : public app::ISample {
     std::array<uint64_t, 3> contourIds_{};
 
     std::array<scene::View, 4> views_{};
+    /// The live 2x2 grid (re-resolved from the current pixel size each frame;
+    /// the 3D camera aspect derives from its quadrant).
+    std::array<app::MprViewport, 4> grid_{};
     std::vector<scene::View> frame_{};
 
     /// One-shot guard for the RE_SAMPLE_DUMP_FRAME diagnostic capture.
