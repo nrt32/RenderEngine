@@ -81,8 +81,8 @@ TEST(T6Persistence, CameraRotateKeepsReViewIdentity) {
     // and a missing stack is a typed sync error rather than an empty view.
     auto stack = broker::RenderStack::create(registry);
     auto compositor = std::make_shared<broker::ViewCompositor>(broker, stack);
-    broker::ViewSynchronizer sync(broker, compositor, nullptr, stack);
-    broker::ViewBridge bridge(std::make_shared<broker::ViewSynchronizer>(broker, compositor, nullptr, stack),
+    broker::ViewSynchronizer sync(broker, compositor, stack);
+    broker::ViewBridge bridge(std::make_shared<broker::ViewSynchronizer>(broker, compositor, stack),
                               std::make_shared<broker::ViewCompositor>(broker, stack));
     // Use our sync/compositor for identity test to keep pointer stable
     // Do initial sync
@@ -162,7 +162,7 @@ TEST(T6Persistence, Toggle2D3DKeepsIdentityNoChurn) {
     // below exercises through mapCached hits.
     auto stack = broker::RenderStack::create(registry);
     auto compositor = std::make_shared<broker::ViewCompositor>(broker, stack);
-    broker::ViewSynchronizer sync(broker, compositor, nullptr, stack);
+    broker::ViewSynchronizer sync(broker, compositor, stack);
     std::vector<scene::View> views = {view};
     ASSERT_TRUE(sync.sync(views, sceneStore, 7).ok());
     render::View* rvBefore = compositor->getView(7, 42);
@@ -399,16 +399,15 @@ TEST(T6Persistence, HybridDirtyTracking) {
     auto sd = s2->dirtyFieldsSince(sGen0);
     EXPECT_FALSE(sd.empty()) << "SceneStore dirtyFieldsSince must be bounded non-empty after add";
 
-    // IJobExecutor inline fallback exercised (hybrid OCP threading)
+    // IJobExecutor inline fallback exercised (hybrid OCP threading). The
+    // former batched entry point was removed with its discarded-results call
+    // site (persistence-honesty task): only the scalar synchronous execute()
+    // contract remains, which is what ships today.
     broker::InlineJobExecutor exec;
     int counter = 0;
     auto fn = [](void* c) { ++*static_cast<int*>(c); };
     exec.execute(fn, &counter);
     EXPECT_EQ(counter, 1) << "InlineJobExecutor execute must call fn exactly once (explainable)";
-    int sum = 0;
-    auto pfn = [](std::size_t i, void* c) { *static_cast<int*>(c) += static_cast<int>(i); };
-    exec.parallelFor(4, pfn, &sum);
-    EXPECT_EQ(sum, 6) << "InlineJobExecutor parallelFor 0+1+2+3=6 explainable";
 
     // IDirtyTracker adapters: SceneStoreTracker / ViewStoreTracker DIP
     broker::SceneStoreTracker sTracker(s2);

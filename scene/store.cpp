@@ -1,5 +1,6 @@
 #include "scene/store.hpp"
 
+#include <string>
 #include <unordered_map>
 
 namespace re::scene {
@@ -14,7 +15,12 @@ uint64_t SceneStore::addMeshObject(MeshObject obj) {
     obj.generation = storeGen_ + 1;
     meshObjects_.emplace(id, std::move(obj));
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
+    // Adding an object dirties BOTH the item inventory (views re-translate
+    // their item lists) and the new object's transform state (never yet
+    // translated) — recorded through the bounded one-slot-per-field log so
+    // `dirtyFieldsSince` reports the genuine per-field change set.
+    recordDirty_(FieldId::Transform);
+    recordDirty_(FieldId::Items);
     return id;
 }
 uint64_t SceneStore::addMeshSliceObject(MeshSliceObject obj) {
@@ -23,7 +29,12 @@ uint64_t SceneStore::addMeshSliceObject(MeshSliceObject obj) {
     obj.generation = storeGen_ + 1;
     meshSliceObjects_.emplace(id, std::move(obj));
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
+    // Adding an object dirties BOTH the item inventory (views re-translate
+    // their item lists) and the new object's transform state (never yet
+    // translated) — recorded through the bounded one-slot-per-field log so
+    // `dirtyFieldsSince` reports the genuine per-field change set.
+    recordDirty_(FieldId::Transform);
+    recordDirty_(FieldId::Items);
     return id;
 }
 uint64_t SceneStore::addVolumeObject(VolumeObject obj) {
@@ -32,7 +43,12 @@ uint64_t SceneStore::addVolumeObject(VolumeObject obj) {
     obj.generation = storeGen_ + 1;
     volumeObjects_.emplace(id, std::move(obj));
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
+    // Adding an object dirties BOTH the item inventory (views re-translate
+    // their item lists) and the new object's transform state (never yet
+    // translated) — recorded through the bounded one-slot-per-field log so
+    // `dirtyFieldsSince` reports the genuine per-field change set.
+    recordDirty_(FieldId::Transform);
+    recordDirty_(FieldId::Items);
     return id;
 }
 uint64_t SceneStore::addVolumeSliceObject(VolumeSliceObject obj) {
@@ -41,7 +57,12 @@ uint64_t SceneStore::addVolumeSliceObject(VolumeSliceObject obj) {
     obj.generation = storeGen_ + 1;
     volumeSliceObjects_.emplace(id, std::move(obj));
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
+    // Adding an object dirties BOTH the item inventory (views re-translate
+    // their item lists) and the new object's transform state (never yet
+    // translated) — recorded through the bounded one-slot-per-field log so
+    // `dirtyFieldsSince` reports the genuine per-field change set.
+    recordDirty_(FieldId::Transform);
+    recordDirty_(FieldId::Items);
     return id;
 }
 uint64_t SceneStore::addPlaneObject(PlaneObject obj) {
@@ -50,7 +71,12 @@ uint64_t SceneStore::addPlaneObject(PlaneObject obj) {
     obj.generation = storeGen_ + 1;
     planeObjects_.emplace(id, std::move(obj));
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
+    // Adding an object dirties BOTH the item inventory (views re-translate
+    // their item lists) and the new object's transform state (never yet
+    // translated) — recorded through the bounded one-slot-per-field log so
+    // `dirtyFieldsSince` reports the genuine per-field change set.
+    recordDirty_(FieldId::Transform);
+    recordDirty_(FieldId::Items);
     return id;
 }
 uint64_t SceneStore::addContourObject(ContourObject obj) {
@@ -59,7 +85,12 @@ uint64_t SceneStore::addContourObject(ContourObject obj) {
     obj.generation = storeGen_ + 1;
     contourObjects_.emplace(id, std::move(obj));
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, FieldId::Transform);
+    // Adding an object dirties BOTH the item inventory (views re-translate
+    // their item lists) and the new object's transform state (never yet
+    // translated) — recorded through the bounded one-slot-per-field log so
+    // `dirtyFieldsSince` reports the genuine per-field change set.
+    recordDirty_(FieldId::Transform);
+    recordDirty_(FieldId::Items);
     return id;
 }
 
@@ -106,6 +137,10 @@ bool SceneStore::removeMeshObject(uint64_t id) noexcept {
     tombstoneGen_[id] = it->second.generation + 1;
     meshObjects_.erase(it);
     ++storeGen_;
+    // Erasure dirties the item inventory of every view holding this id; the
+    // id's tombstone generation is retained so resolve(id) can report a
+    // typed stale error instead of an indistinguishable "unknown".
+    recordDirty_(FieldId::Items);
     return true;
 }
 bool SceneStore::removeMeshSliceObject(uint64_t id) noexcept {
@@ -114,6 +149,10 @@ bool SceneStore::removeMeshSliceObject(uint64_t id) noexcept {
     tombstoneGen_[id] = it->second.generation + 1;
     meshSliceObjects_.erase(it);
     ++storeGen_;
+    // Erasure dirties the item inventory of every view holding this id; the
+    // id's tombstone generation is retained so resolve(id) can report a
+    // typed stale error instead of an indistinguishable "unknown".
+    recordDirty_(FieldId::Items);
     return true;
 }
 bool SceneStore::removeVolumeObject(uint64_t id) noexcept {
@@ -122,6 +161,10 @@ bool SceneStore::removeVolumeObject(uint64_t id) noexcept {
     tombstoneGen_[id] = it->second.generation + 1;
     volumeObjects_.erase(it);
     ++storeGen_;
+    // Erasure dirties the item inventory of every view holding this id; the
+    // id's tombstone generation is retained so resolve(id) can report a
+    // typed stale error instead of an indistinguishable "unknown".
+    recordDirty_(FieldId::Items);
     return true;
 }
 bool SceneStore::removeVolumeSliceObject(uint64_t id) noexcept {
@@ -130,6 +173,10 @@ bool SceneStore::removeVolumeSliceObject(uint64_t id) noexcept {
     tombstoneGen_[id] = it->second.generation + 1;
     volumeSliceObjects_.erase(it);
     ++storeGen_;
+    // Erasure dirties the item inventory of every view holding this id; the
+    // id's tombstone generation is retained so resolve(id) can report a
+    // typed stale error instead of an indistinguishable "unknown".
+    recordDirty_(FieldId::Items);
     return true;
 }
 bool SceneStore::removePlaneObject(uint64_t id) noexcept {
@@ -138,7 +185,10 @@ bool SceneStore::removePlaneObject(uint64_t id) noexcept {
     tombstoneGen_[id] = it->second.generation + 1;
     planeObjects_.erase(it);
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, FieldId::Items);
+    // Erasure dirties the item inventory of every view holding this id; the
+    // id's tombstone generation is retained so resolve(id) can report a
+    // typed stale error instead of an indistinguishable "unknown".
+    recordDirty_(FieldId::Items);
     return true;
 }
 bool SceneStore::removeContourObject(uint64_t id) noexcept {
@@ -147,30 +197,64 @@ bool SceneStore::removeContourObject(uint64_t id) noexcept {
     tombstoneGen_[id] = it->second.generation + 1;
     contourObjects_.erase(it);
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, FieldId::Items);
+    // Erasure dirties the item inventory of every view holding this id; the
+    // id's tombstone generation is retained so resolve(id) can report a
+    // typed stale error instead of an indistinguishable "unknown".
+    recordDirty_(FieldId::Items);
     return true;
+}
+
+void SceneStore::recordDirty_(FieldId field) noexcept {
+    // Bounded drain: at most one slot per FieldId — a re-mutation RAISES the
+    // recorded generation in place instead of appending, so the log's size is
+    // capped by the FieldId count no matter how many frames mutate the store.
+    for (auto& entry : dirtyLog_) {
+        if (entry.second == field) {
+            entry.first = storeGen_;
+            return;
+        }
+    }
+    dirtyLog_.emplace_back(storeGen_, field);
 }
 
 void SceneStore::bump(FieldId field) noexcept {
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, field);
+    recordDirty_(field);
 }
 
 void SceneStore::markDirty(uint64_t /*id*/, FieldId field) noexcept {
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, field);
+    recordDirty_(field);
 }
 
 std::vector<FieldId> SceneStore::dirtyFieldsSince(uint64_t lastGen) const noexcept {
-    if (storeGen_ == lastGen) return {};
-    // Bounded scan: answer conservatively from the store generation alone —
-    // any change since `lastGen` yields the full field set instead of walking
-    // the append-only dirtyLog_, so the call is O(1) and always a safe
-    // superset ("re-translate everything changed"). The log already records
-    // per-field entries, so precise filtering can later replace this without
-    // touching callers; the existing gate pins exactly these four fields.
-    (void)dirtyLog_;
-    return {FieldId::Transform, FieldId::Material, FieldId::TransferFunction, FieldId::Items};
+    std::vector<FieldId> out;
+    // The log holds one slot per ever-dirtied field with its LATEST mutation
+    // generation, so scanning it yields exactly the distinct set of fields
+    // genuinely mutated after `lastGen` — first-mutation order, no hardcoded
+    // superset. Cost is O(#FieldIds) per call (bounded drain structure).
+    for (const auto& entry : dirtyLog_) {
+        if (entry.first > lastGen) out.push_back(entry.second);
+    }
+    return out;
+}
+
+data::Result<void> SceneStore::resolve(uint64_t id) const noexcept {
+    if (meshObjects_.count(id) != 0u || meshSliceObjects_.count(id) != 0u ||
+        volumeObjects_.count(id) != 0u || volumeSliceObjects_.count(id) != 0u ||
+        planeObjects_.count(id) != 0u || contourObjects_.count(id) != 0u) {
+        return data::Result<void>(data::value);
+    }
+    if (tombstoneGen_.count(id) != 0u) {
+        // The tombstone generation written on erase is finally READ here: a
+        // handle minted before an erase resolves to a typed stale error
+        // (code 2), never to an "unknown id" guess and never to a crash.
+        return data::makeError<void>(
+            2, "SceneStore::resolve: stale object handle — id " +
+                   std::to_string(id) + " was erased (tombstone present)");
+    }
+    return data::makeError<void>(
+        1, "SceneStore::resolve: unknown object id " + std::to_string(id));
 }
 
 data::Result<AssetId> SceneStore::registerMeshAsset(
@@ -199,10 +283,12 @@ uint64_t ViewStore::addView(View view) {
     view.itemsGen = view.generation;
     views_.emplace(id, std::move(view));
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, FieldId::Rect);
-    dirtyLog_.emplace_back(storeGen_, FieldId::Plane);
-    dirtyLog_.emplace_back(storeGen_, FieldId::CameraView);
-    dirtyLog_.emplace_back(storeGen_, FieldId::Items);
+    // A new view starts with all four render-relevant fields genuinely
+    // untranslated, so each enters the bounded log exactly once.
+    recordDirty_(FieldId::Rect);
+    recordDirty_(FieldId::Plane);
+    recordDirty_(FieldId::CameraView);
+    recordDirty_(FieldId::Items);
     return id;
 }
 const View* /*borrow*/ ViewStore::getView(uint64_t id) const noexcept {
@@ -219,27 +305,57 @@ bool ViewStore::removeView(uint64_t id) noexcept {
     tombstoneGen_[id] = it->second.generation + 1;
     views_.erase(it);
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, FieldId::Items);
+    // Erasure dirties the item inventory of every view holding this id; the
+    // id's tombstone generation is retained so resolve(id) can report a
+    // typed stale error instead of an indistinguishable "unknown".
+    recordDirty_(FieldId::Items);
     return true;
+}
+
+void ViewStore::recordDirty_(FieldId field) noexcept {
+    // Bounded drain (same one-slot-per-field structure as SceneStore): the
+    // log size is capped by the FieldId count regardless of frame count.
+    for (auto& entry : dirtyLog_) {
+        if (entry.second == field) {
+            entry.first = storeGen_;
+            return;
+        }
+    }
+    dirtyLog_.emplace_back(storeGen_, field);
 }
 
 void ViewStore::bump(FieldId field) noexcept {
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, field);
+    recordDirty_(field);
 }
 
 void ViewStore::markDirty(uint64_t /*id*/, FieldId field) noexcept {
     ++storeGen_;
-    dirtyLog_.emplace_back(storeGen_, field);
+    recordDirty_(field);
 }
 
 std::vector<FieldId> ViewStore::dirtyFieldsSince(uint64_t lastGen) const noexcept {
-    if (storeGen_ == lastGen) return {};
-    // Same conservative bounded contract as SceneStore::dirtyFieldsSince:
-    // any change since `lastGen` yields the full view field set (O(1), safe
-    // superset), with precise per-field filtering left to the dirtyLog_.
-    (void)dirtyLog_;
-    return {FieldId::Rect, FieldId::Plane, FieldId::CameraView, FieldId::Items};
+    std::vector<FieldId> out;
+    // Computed, never hardcoded: exactly the distinct fields whose latest
+    // mutation generation is greater than `lastGen` (e.g. a lone camera bump
+    // reports {CameraView}, not a fixed four-field list).
+    for (const auto& entry : dirtyLog_) {
+        if (entry.first > lastGen) out.push_back(entry.second);
+    }
+    return out;
+}
+
+data::Result<void> ViewStore::resolve(uint64_t id) const noexcept {
+    if (views_.count(id) != 0u) return data::Result<void>(data::value);
+    if (tombstoneGen_.count(id) != 0u) {
+        // Tombstone generations are retained on erase precisely so a stale
+        // view handle resolves to this typed error instead of "unknown".
+        return data::makeError<void>(
+            2, "ViewStore::resolve: stale view handle — id " +
+                   std::to_string(id) + " was erased (tombstone present)");
+    }
+    return data::makeError<void>(
+        1, "ViewStore::resolve: unknown view id " + std::to_string(id));
 }
 
 } // namespace re::scene

@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "data/result.hpp"
 #include "scene/asset_id.hpp"
 #include "scene/asset_registry.hpp"
 #include "scene/object.hpp"
@@ -102,13 +103,23 @@ class SceneStore {
     size_t volumeObjectCount() const noexcept { return volumeObjects_.size(); }
     size_t planeObjectCount() const noexcept { return planeObjects_.size(); }
 
-    /// Fields changed since `lastGen`. Coarse but bounded: any store change
-    /// since `lastGen` returns the FULL field set rather than walking the
-    /// whole dirty log, so worst-case cost is O(1) per call and consumers can
-    /// rely on "conservative superset" semantics — re-translating everything
-    /// changed is always safe, just not minimal. Precise per-field filtering
-    /// from the recorded dirty log is a later refinement on the same API.
+    /// Fields genuinely changed since `lastGen`, computed from the per-field
+    /// dirty log (never a hardcoded superset). The log holds at most ONE slot
+    /// per FieldId whose recorded generation is RAISED in place on every new
+    /// mutation of that field (bounded drain: memory stays O(#FieldIds)
+    /// regardless of frame count), so the answer is the exact distinct set of
+    /// fields mutated after `lastGen` in first-mutation order — e.g. a lone
+    /// camera bump yields exactly `{CameraView}`, not a fixed four-field list.
     std::vector<FieldId> dirtyFieldsSince(uint64_t lastGen) const noexcept;
+
+    /// Resolve a stable object handle against live storage and tombstones
+    /// (typed-error stale detection, SPEC §10.4 hybrid contract). Returns
+    /// success when `id` is live in any owned object map; error code 2 when
+    /// the id was erased (its tombstone generation is retained exactly so a
+    /// held handle can be distinguished from a never-existing one); error
+    /// code 1 when the id never existed. Never throws, never returns a
+    /// dangling borrow — the caller re-fetches through the typed getters.
+    data::Result<void> resolve(uint64_t id) const noexcept;
 
     // --- Asset identity V3.6 (T7) — SceneStore-owned AssetId -----------------
     /// Register mesh asset (the store takes a SHARED reference — co-ownership
@@ -153,9 +164,15 @@ class SceneStore {
 
    private:
     uint64_t allocId() noexcept { return nextId_++; }
+    /// Single write path of the bounded dirty log: raise the field's slot
+    /// generation in place (or append a new slot) so the log can never grow
+    /// past one entry per FieldId (see SceneStore::dirtyFieldsSince).
+    void recordDirty_(FieldId field) noexcept;
     uint64_t storeGen_{0};
     uint64_t nextId_{1};
-    // Hybrid push log: each bump/markDirty records (gen, field) for bounded scan.
+    // Per-field dirty log with ONE slot per FieldId whose recorded
+    // generation is raised on every mutation of that field — the bounded
+    // structure `dirtyFieldsSince` computes from (never a hardcoded set).
     std::vector<std::pair<uint64_t, FieldId>> dirtyLog_{};
 
     // Asset registries: one typed store per CPU asset kind (mesh, volume,
@@ -197,10 +214,22 @@ class ViewStore {
     void markDirty(uint64_t id, FieldId field) noexcept;
     size_t count() const noexcept { return views_.size(); }
 
+    /// Fields genuinely changed since `lastGen` — same computed per-field
+    /// dirty-log contract as SceneStore::dirtyFieldsSince (exact distinct
+    /// set, bounded one-slot-per-field log, first-mutation order).
     std::vector<FieldId> dirtyFieldsSince(uint64_t lastGen) const noexcept;
+
+    /// Resolve a stable view handle against live storage and tombstones —
+    /// success when live, error code 2 when erased (tombstone present),
+    /// error code 1 when never added (see SceneStore::resolve).
+    data::Result<void> resolve(uint64_t id) const noexcept;
 
    private:
      uint64_t allocId() noexcept { return nextId_++; }
+     /// Single write path of the bounded dirty log: raise the field's slot
+     /// generation in place (or append a new slot) so the log can never grow
+     /// past one entry per FieldId (see SceneStore::dirtyFieldsSince).
+     void recordDirty_(FieldId field) noexcept;
      uint64_t storeGen_{0};
      uint64_t nextId_{1};
      std::unordered_map<uint64_t, View> views_;

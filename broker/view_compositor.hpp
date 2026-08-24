@@ -16,6 +16,7 @@
 
 #include "broker/broker.hpp"
 #include "broker/render_stack.hpp"
+#include "broker/stable_key.hpp"
 #include "core/framebuffer.hpp"
 #include "data/result.hpp"
 #include "render/mesh_renderer.hpp" // render::MeshInstance (capture payloads)
@@ -45,27 +46,14 @@ class ViewCompositor {
                             std::shared_ptr<RenderStack> stack = nullptr)
         : broker_(std::move(broker)), stack_(std::move(stack)) {}
 
-    // --- ReView lifetime (persistence by CompositeKey stable part) ------------
+    // --- ReView lifetime (persistence by stable key) --------------------------
+    //
+    // ReView identity is broker::StableKey{version, layoutId, viewId} — the
+    // single shared definition from broker/stable_key.hpp that the
+    // synchronizer's per-view caches key on too, so both collaborators can no
+    // longer diverge on what identifies one persistent ReView.
 
-    /// Stable key for ReView identity (Version + LayoutId + ViewId).
-    struct StableKey {
-        uint32_t version{1};
-        uint64_t layoutId{0};
-        uint64_t viewId{0};
-        bool operator==(const StableKey& o) const noexcept {
-            return version == o.version && layoutId == o.layoutId && viewId == o.viewId;
-        }
-    };
-    struct StableKeyHash {
-        std::size_t operator()(const StableKey& k) const noexcept {
-            std::size_t h = static_cast<std::size_t>(k.version);
-            h ^= std::hash<uint64_t>{}(k.layoutId) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-            h ^= std::hash<uint64_t>{}(k.viewId) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-            return h;
-        }
-    };
-
-    /// Get existing ReView by stable key (or nullptr).
+    /// Get existing ReView by (layoutId, viewId) under the current schema version (or nullptr).
     /// @note lifetime: non-owning view over compositor-owned `unique_ptr`
     /// storage (views_) — valid until the ReView is pruned/cleared or the
     /// compositor dies; never delete through it.
@@ -87,7 +75,7 @@ class ViewCompositor {
     size_t viewCount() const noexcept { return views_.size(); }
 
     /// Access all cached ReViews (for renderAll/presentAll).
-    const std::unordered_map<StableKey, std::unique_ptr<render::View>, StableKeyHash>& views() const noexcept {
+    const std::unordered_map<StableKey, std::unique_ptr<render::View>>& views() const noexcept {
         return views_;
     }
 
@@ -129,8 +117,8 @@ class ViewCompositor {
 
     std::shared_ptr<Broker> broker_;
     std::shared_ptr<RenderStack> stack_;
-    std::unordered_map<StableKey, std::unique_ptr<render::View>, StableKeyHash> views_{};
-    std::unordered_map<StableKey, std::vector<render::MeshInstance>, StableKeyHash>
+    std::unordered_map<StableKey, std::unique_ptr<render::View>> views_{};
+    std::unordered_map<StableKey, std::vector<render::MeshInstance>>
         transparentPending_{};
 };
 

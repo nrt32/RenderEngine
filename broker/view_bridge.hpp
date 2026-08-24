@@ -60,8 +60,7 @@ class ViewBridge : public IViewBridge {
     static std::shared_ptr<ViewBridge> create(
         std::shared_ptr<Broker> broker, std::shared_ptr<RenderStack> stack) {
         auto comp = std::make_shared<ViewCompositor>(broker, stack);
-        auto sync = std::make_shared<ViewSynchronizer>(broker, comp,
-                                                       nullptr, stack);
+        auto sync = std::make_shared<ViewSynchronizer>(broker, comp, stack);
         return std::make_shared<ViewBridge>(std::move(sync), std::move(comp));
     }
 

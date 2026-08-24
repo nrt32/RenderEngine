@@ -24,7 +24,7 @@ peer to `scene`/`render`/`core`). Owns no GL and no app rendering logic — only
 
 ## Per-type inventory (one file per mapper — `broker_per_type`)
 
-- `camera_mapper.*` — `ICachedMapper<scene::Camera, render::Camera>` (per-field viewGen/projGen)
+- `camera_mapper.*` — `ICachedMapper<scene::Camera, render::Camera>` (per-field viewGen/projGen; `mapCached` memoizes ONE slot per owning-view id — key is a CompositeKey over viewId + both generations + an FNV-1a fingerprint of the camera's stable parameter bytes — so two cameras never thrash each other; hit/miss counters are test evidence)
 - `material_mapper.*` — `IMapper<scene::MeshMaterialDesc, shared_ptr<render::IMaterial>>` (Phong values → canonical store-resident materials; value-dedup via `AssetRegistry::registerMaterial`, the SPEC §12 hand-off that replaced the old `material = nullptr` placeholder)
 - `mesh_object_mapper.*` — `ICachedMapper<scene::MeshObject, render::MeshInstance>` (AssetHandle via AssetRegistry dedup; composes MaterialMapper for its presentation field)
 - `mesh_slice_object_mapper.*` — `ICachedMapper<scene::MeshSliceObject, render::SliceScene>` (contextual: the clip plane comes from the VIEW by value, converted through the one PlaneMapper rule; cache keyed id+generation+plane)
@@ -37,9 +37,10 @@ peer to `scene`/`render`/`core`). Owns no GL and no app rendering logic — only
 - `render_stack.*` — the technique-renderer set (Mesh/Slice/Volume/VolumeSlice/Plane/Contour renderers over ONE AssetRegistry, optional LinkedListOIT). Not a mapper: the layers the synchronizer builds bind their drawLayer closures to these renderers.
 - `app_context.*` — the DIP composition root `{SceneStore, Broker(full default inventory), RenderStack, ViewBridge}`; the ONLY constructor call an app needs.
 - `slice_display.*` — slice-display camera factories returning `scene::Camera` values (`makeSliceCamera`, `make3dCamera`) plus `toRenderCamera` (the CameraMapper translation without cache/validation); formerly `app/mpr_camera.*`, moved here because they build RE-side types and app must not name them.
-- `view_synchronizer.*` — polls `SceneStore::storeGeneration()` early-out + bounded `dirtyFieldsSince` (SRP: cache/dirty); item ids translate into REAL renderer-bound layers — an unresolvable id is typed error code 11, never a silently skipped item
+- `view_synchronizer.*` — polls `SceneStore::storeGeneration()` early-out + computed `dirtyFieldsSince` (SRP: cache/dirty); item ids translate into REAL renderer-bound layers — an unresolvable id is typed error code 11, never a silently skipped item
 - `view_compositor.*` — owns dispatch/present (SRP: ReView map); runs the OIT capture/composite stage after each view pass when transparent instances are pending
 - `view_bridge.*` — `IViewBridge` façade composing `ViewSynchronizer` + `ViewCompositor` (SRP via composition)
+- `stable_key.hpp` — THE single ReView identity key `{version, layoutId, viewId}` shared by synchronizer caches and the compositor's ReView map (one definition — divergent twins were a persistence-honesty review finding)
 
 App never holds an `IMapper`; only `IViewBridge` (DIP via the `AppContext`
 composition root). Since T20 this ACL is mechanically enforced:

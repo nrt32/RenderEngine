@@ -22,20 +22,20 @@
 // an OIT pipeline: they go to the compositor's capture stage instead of inline
 // layers (FR-render.2/3), because View layers never engage the pipeline.
 //
-/// Ownership (T13): `broker`, `stack` and `executor` are SHARED references
-/// (co-owned — wiring can never dangle); the compositor back-pointer is a
-/// WEAK observer (the compositor is owned by the ViewBridge that wires both
-/// sides), locked per sync and treated as absent when expired.
+/// Ownership (T13): `broker` and `stack` are SHARED references (co-owned —
+/// wiring can never dangle); the compositor back-pointer is a WEAK observer
+/// (the compositor is owned by the ViewBridge that wires both sides), locked
+/// per sync and treated as absent when expired.
 
 #include <memory>
 #include <span>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "broker/broker.hpp"
 #include "broker/idirty_tracker.hpp"
 #include "broker/render_stack.hpp"
+#include "broker/stable_key.hpp"
 #include "data/result.hpp"
 #include "scene/composite_key.hpp"
 #include "scene/store.hpp"
@@ -66,11 +66,8 @@ class ViewSynchronizer : public IDirtyTracker {
     public:
      explicit ViewSynchronizer(std::shared_ptr<Broker> broker,
                                std::shared_ptr<ViewCompositor> compositor = nullptr,
-                               std::shared_ptr<IJobExecutor> executor = nullptr,
                                std::shared_ptr<RenderStack> stack = nullptr)
           : broker_(std::move(broker)), compositor_(std::move(compositor)),
-            executor_(executor ? std::move(executor)
-                               : std::make_shared<InlineJobExecutor>()),
             stack_(std::move(stack)) {}
 
      /// Primary sync: views + sceneStore, optional layoutId (default 0 for single-layout).
@@ -104,20 +101,10 @@ class ViewSynchronizer : public IDirtyTracker {
          uint64_t viewGen{static_cast<uint64_t>(-1)};
          uint64_t projGen{static_cast<uint64_t>(-1)};
      };
-     struct StableKey {
-         uint64_t layoutId{0};
-         uint64_t viewId{0};
-         bool operator==(const StableKey& o) const noexcept {
-             return layoutId == o.layoutId && viewId == o.viewId;
-         }
-     };
-     struct StableKeyHash {
-         std::size_t operator()(const StableKey& k) const noexcept {
-             std::size_t h = std::hash<uint64_t>{}(k.layoutId);
-             h ^= std::hash<uint64_t>{}(k.viewId) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-             return h;
-         }
-     };
+     // ReView cache identity is the SHARED broker::StableKey (the same
+     // definition the compositor's map keys on) — no local twin key exists
+     // anymore, so a synchronizer cache entry and its ReView can never
+     // disagree on identity.
 
      bool hasPushDirty(uint64_t viewId, scene::FieldId field) const noexcept;
 
@@ -140,7 +127,6 @@ class ViewSynchronizer : public IDirtyTracker {
      /// Weak OBSERVER of the dispatch/present side (owned by the wiring
      /// ViewBridge). Locked per sync; expired == no compositor wired.
      std::weak_ptr<ViewCompositor> compositor_;
-     std::shared_ptr<IJobExecutor> executor_;
      /// The technique-renderer set layers bind to (see header comment).
      std::shared_ptr<RenderStack> stack_;
      uint64_t lastStoreGen_{0};
@@ -149,10 +135,8 @@ class ViewSynchronizer : public IDirtyTracker {
      /// against (object mutations bump the STORE even though the VIEW gens
      /// stand still, so item content changes must re-translate).
      uint64_t lastSceneStoreGen_{0};
-     std::unordered_map<StableKey, ViewCache, StableKeyHash> caches_{};
+     std::unordered_map<StableKey, ViewCache> caches_{};
      std::unordered_map<uint64_t, std::vector<scene::FieldId>> pushDirties_{};
-     // Last computed scene dirty set for storeGeneration poll
-     mutable std::vector<scene::FieldId> lastDirtySet_{};
 };
 
 } // namespace re::broker

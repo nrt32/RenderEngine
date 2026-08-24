@@ -1,11 +1,17 @@
 #pragma once
 
-// broker/idirty_tracker.hpp — IDirtyTracker + IJobExecutor skeletons (SPEC §10.4, V3.5 T6).
+// broker/idirty_tracker.hpp — IDirtyTracker + IJobExecutor seam (SPEC §10.4, V3.5 T6).
 //
 // Hybrid poll+push dirty wiring via IDirtyTracker abstraction (DIP):
 // ViewSynchronizer depends on IDirtyTracker, not concrete SceneStore/ViewStore.
 // Future ThreadPoolExecutor can batch invalidations without editing synchronizer.
-// IJobExecutor with inline synchronous fallback keeps ASan/UBSan 1-thread determinism.
+// IJobExecutor is the single-threaded execution seam: its inline synchronous
+// fallback keeps ASan/UBSan 1-thread determinism. It deliberately ships with
+// ONLY the scalar execute() entry point — the former unused batch entry
+// (exercised by a discarded-results call in the synchronizer, a review
+// finding) was removed rather than kept as write-only scaffolding; the batched
+// form arrives together with a real ThreadPoolExecutor implementation that has
+// a genuine consumer.
 //
 // Pure interfaces, header-only, GL-free.
 
@@ -42,27 +48,25 @@ class IDirtyTracker {
     virtual void markDirty(uint64_t id, re::scene::FieldId field) noexcept = 0;
 };
 
-/// Job executor abstraction for OCP threading (SPEC §10.4, NFR §5).
+/// Job executor seam for OCP threading (SPEC §10.4, NFR §5).
 ///
 /// The default is an inline synchronous fallback (execute(f){f();}), which
 /// keeps test runs single-threaded and therefore deterministic under
-/// ASan/UBSan. A real thread pool can later be injected behind this same
-/// interface without editing broker/ or scene/ code — callers depend only on
-/// the abstraction (open/closed principle via parallelFor).
+/// ASan/UBSan. A real thread pool can later extend this interface (adding the
+/// batched entry point it actually needs) without editing broker/ or scene/
+/// code — callers depend only on the abstraction (open/closed principle).
+/// Deliberately execute()-only today: no batched API is kept alive by fake or
+/// discarded-result call sites.
 class IJobExecutor {
    public:
     virtual ~IJobExecutor() = default;
     virtual void execute(void (*fn)(void*), void* ctx) = 0;
-    virtual void parallelFor(std::size_t n, void (*fn)(std::size_t, void*), void* ctx) = 0;
 };
 
 /// Inline synchronous fallback (zero threads, deterministic).
 class InlineJobExecutor final : public IJobExecutor {
-    public:
-     void execute(void (*fn)(void*), void* ctx) override { fn(ctx); }
-     void parallelFor(std::size_t n, void (*fn)(std::size_t, void*), void* ctx) override {
-         for (std::size_t i = 0; i < n; ++i) fn(i, ctx);
-     }
+   public:
+    void execute(void (*fn)(void*), void* ctx) override { fn(ctx); }
 };
 
 /// Adapter: SceneStore as IDirtyTracker (DIP — broker depends on abstraction, store is detail).

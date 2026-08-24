@@ -39,6 +39,15 @@ struct Aabb {
 
 /// View-scoped context — needed by every mapper (ISP role interface).
 struct ViewContext {
+    /// Identity of the app view this translation serves (its stable View
+    /// handle). Cached mappers whose input type carries no intrinsic id
+    /// (scene::Camera is a plain value copied freely between views) key
+    /// their per-view memo entries on it, so two cameras synced in the same
+    /// pass can never evict or serve each other's entries. 0 = "no owning
+    /// view" (direct mapper calls outside a sync pass) — still safe because
+    /// cache keys also fold in the camera's own per-field generations and
+    /// stable parameter bytes.
+    uint64_t viewId{0};
     /// View plane carried BY VALUE (T13: no raw borrow of the app View's
     /// plane — the context is a self-contained snapshot). `nullopt` means a
     /// 3D view — LSP valid.

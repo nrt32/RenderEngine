@@ -10,19 +10,28 @@
 // outside core/). T4 validates 2D ortho vs 3D perspective (plane present →
 // ortho) via TranslateContext::hasPlane().
 //
-// Why mapCached currently does NOT memoize (T20): the former single-slot
-// cache keyed on (viewGen, projGen) collided across VIEWS — independent
-// scene::Camera instances each start their generations at zero, so a sync
-// over several views served the first view's matrices to every later one
-// (the MPR sample's 2D/3D views rendered through each other's cameras). A
-// correct memo needs a per-camera identity (id-keyed multi-entry cache,
-// tracked as the T21 persistence-honesty follow-up); until scene::Camera
-// carries an id through the sync path, translation recomputes — two glm
-// matrix constructions per dirty camera, correctness over a micro-optimization.
+// mapCached memoizes per CAMERA IDENTITY (persistence-honesty task T21):
+// each owning view id (TranslateContext::view.viewId) owns ONE memo slot
+// holding its last translation together with the scene::CompositeKey it was
+// computed from ({viewId, generations, FNV-1a fingerprint of the camera's
+// stable parameter bytes}). A hit therefore implies byte-identical input, so
+// serving the memo is indistinguishable from recomputing; a second camera's
+// entry lives in ITS OWN slot, which is what kills the old single-slot
+// defect where two views' cameras thrashed one shared entry (and at
+// generation zero even served each other's matrices). One slot per id also
+// bounds memory by the view count — a continuously orbiting camera replaces
+// its slot instead of accumulating history. invalidate(id) evicts exactly
+// that view's slot. Hit/miss counters are exposed as test evidence that
+// alternating pans over several cameras produce per-camera hits (no
+// cross-camera thrash).
+
+#include <cstdint>
+#include <unordered_map>
 
 #include "broker/i_mapper.hpp"
 #include "render/types.hpp"
 #include "scene/camera.hpp"
+#include "scene/composite_key.hpp"
 #include "scene/translate_context.hpp"
 
 namespace re::broker {
@@ -43,14 +52,41 @@ class CameraMapper : public ICachedMapper<scene::Camera, render::Camera> {
     data::Result<render::Camera> map(const scene::Camera& app,
                                      const scene::TranslateContext& ctx) const override;
 
-    /// Cached-translation contract point: validates then translates (see the
-    /// header comment for why there is no memo behind it right now).
+    /// Cached translation: validates (always — a hit must never bypass the
+    /// 2D/3D pairing check), then serves the per-view memo when the
+    /// CompositeKey of {viewId, gens, stable param bytes} is unchanged;
+    /// otherwise re-translates and replaces that view's slot.
     data::Result<render::Camera> mapCached(const scene::Camera& app,
                                            const scene::TranslateContext& ctx) override;
 
-    /// Invalidate any memoized state for `id` (no-op while unmemoized; kept
-    /// so the ICachedMapper contract and callers stay stable).
-    void invalidate(uint64_t /*id*/) override;
+    /// Evict the memo slot of view `id` (the id-keyed half of the
+    /// ICachedMapper contract); all other views keep theirs.
+    void invalidate(uint64_t id) override;
+
+    // --- Test-evidence counters (spy surface for the cache contract) --------
+    /// Memo hits served without re-translating.
+    uint64_t cacheHits() const noexcept { return hits_; }
+    /// Full translations performed (misses).
+    uint64_t cacheMisses() const noexcept { return misses_; }
+    /// Views currently holding a memo slot (one slot max per view id).
+    std::size_t cacheEntries() const noexcept { return cache_.size(); }
+
+   private:
+    /// Build the cache key from the owning view id + both camera generations
+    /// + an FNV-1a fingerprint of the camera's stable parameter bytes (via
+    /// CompositeKey::hashStableBytes — the one canonical byte hash).
+    static scene::CompositeKey makeKey(const scene::Camera& app,
+                                       const scene::TranslateContext& ctx) noexcept;
+
+    /// One memo slot per owning-view identity: the exact key the value was
+    /// translated from plus the translated render-side camera.
+    struct Memo {
+        scene::CompositeKey key{};
+        render::Camera value{};
+    };
+    std::unordered_map<uint64_t, Memo> cache_{};
+    uint64_t hits_{0};
+    uint64_t misses_{0};
 };
 
 } // namespace re::broker

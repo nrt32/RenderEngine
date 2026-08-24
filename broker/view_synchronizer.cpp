@@ -48,15 +48,17 @@ uint64_t ViewSynchronizer::storeGeneration() const noexcept {
 }
 
 std::vector<scene::FieldId> ViewSynchronizer::dirtyFieldsSince(uint64_t lastGen) const noexcept {
-    // Hybrid: if no generation change but push exists, still return bounded push set
+    // This facet reports exactly the PUSH dirties recorded since `lastGen`
+    // was observed (bounded distinct set, first-seen order) — never a
+    // hardcoded fallback list. The poll half of the hybrid contract runs
+    // through the per-view/per-store generation compares inside sync(); the
+    // store's own computed dirtyFieldsSince feeds that path.
     bool genChanged = (lastStoreGen_ != lastGen);
-    bool hasPush = !pushDirties_.empty();
-    if (!genChanged && !hasPush) return {};
-    // Bounded set: collect distinct push fields plus generic if needed
+    if (!genChanged && pushDirties_.empty()) return {};
     std::unordered_set<int> seen;
     std::vector<scene::FieldId> out;
     out.reserve(4);
-    for (auto& kv : pushDirties_) {
+    for (const auto& kv : pushDirties_) {
         for (auto f : kv.second) {
             int k = static_cast<int>(f);
             if (!seen.count(k)) {
@@ -64,11 +66,6 @@ std::vector<scene::FieldId> ViewSynchronizer::dirtyFieldsSince(uint64_t lastGen)
                 out.push_back(f);
             }
         }
-    }
-    if (out.empty()) {
-        // Fallback generic bounded set (still bounded, not full scan)
-        out = {scene::FieldId::Rect, scene::FieldId::Plane, scene::FieldId::CameraView,
-               scene::FieldId::Items};
     }
     return out;
 }
@@ -149,7 +146,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         if (!rv) {
             return data::makeError<void>(10, "ViewSynchronizer: ensureView failed");
         }
-        StableKey key{layoutId, av.id};
+        StableKey key = makeStableKey(layoutId, av.id); // current schema version stamped centrally
         auto it = caches_.find(key);
         bool isNew = (it == caches_.end());
         ViewCache& cache = caches_[key]; // default ~0
@@ -248,6 +245,10 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
             // The context carries the plane BY VALUE: a self-contained
             // snapshot the mapper can hold without borrowing live view state,
             // so translation cannot dangle if the app mutates the view later.
+            // viewId gives the CameraMapper's per-view memo its identity key:
+            // two views' cameras (which are freely-copied plain values) can
+            // never evict or serve each other's cached entries.
+            ctx.view.viewId = av.id;
             ctx.view.viewPlane = av.plane;
             ctx.view.viewMatrix = av.camera.viewMatrix();
             ctx.view.projMatrix = av.camera.projMatrix();
@@ -315,8 +316,11 @@ data::Result<void> ViewSynchronizer::mapItemToLayer(
             "built; construct the synchronizer/bridge with a RenderStack");
     }
     // Self-contained context per item: the plane snapshot travels by value
-    // (mappers never borrow live view state), matrices from the view camera.
+    // (mappers never borrow live view state), matrices from the view camera,
+    // and viewId names the owning app view — the same identity contract the
+    // camera path uses, so any future id-keyed mapper cache stays correct.
     scene::TranslateContext ctx;
+    ctx.view.viewId = av.id;
     ctx.view.viewPlane = av.plane;
     ctx.view.viewMatrix = av.camera.viewMatrix();
     ctx.view.projMatrix = av.camera.projMatrix();

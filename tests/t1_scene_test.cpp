@@ -208,17 +208,25 @@ TEST(T1SceneStore, DirtyFieldsSince) {
     obj.mesh = mesh;
     store.addMeshObject(obj);
     auto dirty = store.dirtyFieldsSince(0);
-    // Bounded set: implementation returns exactly 4 fields (Transform, Material, TransferFunction, Items) when storeGen != lastGen.
-    EXPECT_EQ(dirty.size(), 4u) << "dirtyFieldsSince(0) must return exactly 4 fields (bounded, explainable constant)";
+    // Computed from the per-field dirty log: one add dirties exactly the new
+    // object's Transform plus the item inventory — not a hardcoded superset.
+    ASSERT_EQ(dirty.size(), 2u) << "dirtyFieldsSince(0) after one add must be {Transform, Items}";
+    EXPECT_EQ(dirty[0], scene::FieldId::Transform) << "first recorded field of an add is Transform";
+    EXPECT_EQ(dirty[1], scene::FieldId::Items) << "an add also dirties the item inventory";
     EXPECT_TRUE(store.dirtyFieldsSince(store.storeGeneration()).empty())
         << "dirtyFieldsSince(currentGen) must be empty (no new mutation)";
-    // ViewStore variant: also bounded.
+    // ViewStore variant: computed too — a fresh view is genuinely untranslated
+    // in all four render-relevant fields.
     scene::ViewStore vstore;
     EXPECT_TRUE(vstore.dirtyFieldsSince(0).empty());
     scene::View view;
     vstore.addView(view);
     auto vdirty = vstore.dirtyFieldsSince(0);
-    EXPECT_EQ(vdirty.size(), 4u) << "ViewStore dirtyFieldsSince must return 4 fields (Rect,Plane,CameraView,Items)";
+    ASSERT_EQ(vdirty.size(), 4u) << "ViewStore addView dirties Rect,Plane,CameraView,Items";
+    EXPECT_EQ(vdirty[0], scene::FieldId::Rect);
+    EXPECT_EQ(vdirty[1], scene::FieldId::Plane);
+    EXPECT_EQ(vdirty[2], scene::FieldId::CameraView);
+    EXPECT_EQ(vdirty[3], scene::FieldId::Items);
 }
 
 // ---------------------------------------------------------------------------

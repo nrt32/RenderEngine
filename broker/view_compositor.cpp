@@ -23,19 +23,19 @@
 namespace re::broker {
 
 render::View* /*borrow*/ ViewCompositor::getView(uint64_t layoutId, uint64_t viewId) noexcept {
-    StableKey k{1, layoutId, viewId};
+    StableKey k = makeStableKey(layoutId, viewId);
     auto it = views_.find(k);
     return it == views_.end() ? nullptr : it->second.get();
 }
 
 const render::View* /*borrow*/ ViewCompositor::getView(uint64_t layoutId, uint64_t viewId) const noexcept {
-    StableKey k{1, layoutId, viewId};
+    StableKey k = makeStableKey(layoutId, viewId);
     auto it = views_.find(k);
     return it == views_.end() ? nullptr : it->second.get();
 }
 
 render::View* /*borrow*/ ViewCompositor::ensureView(uint64_t layoutId, const scene::View& appView) {
-    StableKey k{1, layoutId, appView.id};
+    StableKey k = makeStableKey(layoutId, appView.id);
     auto it = views_.find(k);
     if (it != views_.end()) {
         return it->second.get();
@@ -79,14 +79,14 @@ void ViewCompositor::clear() noexcept {
 void ViewCompositor::setTransparentItems(uint64_t layoutId, uint64_t viewId,
                                          std::vector<render::MeshInstance> items) {
     if (items.empty()) {
-        transparentPending_.erase(StableKey{1, layoutId, viewId});
+        transparentPending_.erase(makeStableKey(layoutId, viewId));
         return;
     }
-    transparentPending_[StableKey{1, layoutId, viewId}] = std::move(items);
+    transparentPending_[makeStableKey(layoutId, viewId)] = std::move(items);
 }
 
 std::size_t ViewCompositor::transparentCount(uint64_t layoutId, uint64_t viewId) const {
-    auto it = transparentPending_.find(StableKey{1, layoutId, viewId});
+    auto it = transparentPending_.find(makeStableKey(layoutId, viewId));
     return it == transparentPending_.end() ? 0u : it->second.size();
 }
 
