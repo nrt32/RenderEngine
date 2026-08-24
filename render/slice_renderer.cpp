@@ -6,8 +6,6 @@
 
 #include "render/slice_renderer.hpp"
 
-#include <glad/gl.h>
-
 #include <cstddef>
 #include <filesystem>
 #include <glm/glm.hpp>
@@ -23,6 +21,9 @@ namespace re::render {
 // Shaders live as .glsl files under render/shaders/ (SPEC §9 V2.6) and are
 // loaded via core::ShaderProgram's file helpers. The plane is defined in
 // world space by a unit normal + point; kept side is dot(normal, p-point)>=0.
+// GL primitive constants come from core/ (e.g. core::PrimitiveMode for the
+// capture below) — this layer never includes glad directly
+// (guardrail gpu_api_ownership).
 
 // A sentinel coordinate written into the capture buffer before capture; after
 // capture, entries still equal to this sentinel were never written (the
@@ -59,8 +60,9 @@ data::Result<core::ShaderProgram*> SliceRenderer::captureProgram() {
         return data::makeValue<core::ShaderProgram*>(&*captureProgram_);
     }
     // Capture the single `gWorldPos` varying (world-space cross-section
-    // vertex). Capture is begun with GL_TRIANGLES (the geometry stage outputs
-    // triangle_strip) via core::TransformFeedback::begin at draw time.
+    // vertex). Capture begins with the triangle primitive mode (the geometry
+    // stage outputs a triangle_strip) via core::TransformFeedback::begin at
+    // draw time.
     const std::vector<std::string> varyings = {"gWorldPos"};
     const std::filesystem::path dir = RE_SHADER_DIR;
     auto program = core::ShaderProgram::createWithTransformFeedbackFromFiles(
@@ -87,50 +89,10 @@ data::Result<core::TransformFeedback*> SliceRenderer::captureFeedback() {
     return data::makeValue<core::TransformFeedback*>(&*captureFeedback_);
 }
 
-data::Result<MeshGeometry*> SliceRenderer::geometryFor(
-    const AssetHandle& handle) {
-    if (!registry_) {
-        return data::makeError<MeshGeometry*>(
-            4, "SliceRenderer: no asset registry injected");
-    }
-    // The shared AssetRegistry is the single owner of GPU geometry (SPEC §9
-    // V2.5): resolving the handle returns the one GPU object registered for
-    // this CPU mesh, shared with MeshRenderer.
-    return registry_->resolve(handle);
-}
-
-data::Result<void> SliceRenderer::render(const SliceScene& scene,
-                                         const Camera& camera,
-                                         const ClipPlane& plane,
-                                         const RenderTarget& target) {
-    if (target.width == 0u || target.height == 0u) {
-        return data::makeError<void>(1, "SliceRenderer: invalid target size");
-    }
-
-    auto programResult = clipProgram();
-    if (programResult.failed()) {
-        return data::makeError<void>(programResult.error().code,
-                                     programResult.error().message);
-    }
-    core::ShaderProgram* program = *programResult;
-
-    // Bind the target and prepare draw state. A null framebuffer means the
-    // window's on-screen default framebuffer (T12/T13 interactive samples);
-    // otherwise bind the offscreen FBO. v1 FBOs are color-only (no depth
-    // attachment, SPEC §6 / docs/core.md), so the depth test is left off.
-    if (target.framebuffer == nullptr) {
-        core::bindDefaultFramebuffer();
-    } else {
-        target.framebuffer->bind();
-    }
-    core::setViewport(0, 0, static_cast<int>(target.width),
-                      static_cast<int>(target.height));
-    core::setClearColor(target.clearColor.r, target.clearColor.g,
-                        target.clearColor.b, target.clearColor.a);
-    core::clearColor();
-    core::disableDepthTest();
-    core::disableBlend();
-
+data::Result<void> SliceRenderer::clipInstances(const SliceScene& scene,
+                                                const Camera& camera,
+                                                const ClipPlane& plane,
+                                                core::ShaderProgram* program) {
     program->use();
     program->setUniformMat4("uView", camera.view);
     program->setUniformMat4("uProj", camera.proj);
@@ -146,8 +108,9 @@ data::Result<void> SliceRenderer::render(const SliceScene& scene,
         // surface is interior geometry where order-independent blending would
         // need per-fragment plane distance sorting that the linked-list OIT
         // does not provide; transparent slicing stays out until a design
-        // needs it.
-        auto geometry = geometryFor(instance.mesh);
+        // needs it. Both entry points share that behavior via this loop.
+        auto geometry =
+            resolveMeshGeometry(registry_, instance.mesh, "SliceRenderer");
         if (geometry.failed()) {
             return data::makeError<void>(geometry.error().code,
                                          geometry.error().message);
@@ -163,6 +126,33 @@ data::Result<void> SliceRenderer::render(const SliceScene& scene,
         }
     }
     return data::Result<void>(data::value);
+}
+
+data::Result<void> SliceRenderer::render(const SliceScene& scene,
+                                         const Camera& camera,
+                                         const ClipPlane& plane,
+                                         const RenderTarget& target) {
+    if (target.width == 0u || target.height == 0u) {
+        return data::makeError<void>(1, "SliceRenderer: invalid target size");
+    }
+
+    auto programResult = clipProgram();
+    if (programResult.failed()) {
+        return data::makeError<void>(programResult.error().code,
+                                     programResult.error().message);
+    }
+
+    // Begin the pass through the ONE shared prologue (bind target → viewport
+    // → clear → depth off → blend off). A null framebuffer selects the
+    // window's on-screen default framebuffer; otherwise the offscreen FBO is
+    // bound. v1 FBOs are color-only (no depth attachment, SPEC §6 /
+    // docs/core.md), so the depth test is left off.
+    core::DrawContext ctx;
+    ctx.beginPass(target.framebuffer, target.width, target.height,
+                  target.clearColor.r, target.clearColor.g,
+                  target.clearColor.b, target.clearColor.a);
+
+    return clipInstances(scene, camera, plane, *programResult);
 }
 
 data::Result<void> SliceRenderer::render(const Scene& scene,
@@ -193,29 +183,7 @@ data::Result<void> SliceRenderer::drawLayer(const SliceScene& scene, const Camer
     if (programResult.failed()) {
         return data::makeError<void>(programResult.error().code, programResult.error().message);
     }
-    core::ShaderProgram* program = *programResult;
-    program->use();
-    program->setUniformMat4("uView", camera.view);
-    program->setUniformMat4("uProj", camera.proj);
-    program->setUniformVec3("uPlaneNormal", plane.normal);
-    program->setUniformVec3("uPlanePoint", plane.point);
-    for (const MeshInstance& instance : scene.meshes) {
-        if (!instance.material || instance.mesh.isNull()) {
-            continue;
-        }
-        auto geometry = geometryFor(instance.mesh);
-        if (geometry.failed()) {
-            return data::makeError<void>(geometry.error().code, geometry.error().message);
-        }
-        MeshGeometry* geometryPtr = *geometry;
-        program->setUniformMat4("uModel", instance.model);
-        program->setUniformVec4("uBaseColor", instance.material->baseColor());
-        auto draw = geometryPtr->draw();
-        if (draw.failed()) {
-            return draw;
-        }
-    }
-    return data::Result<void>(data::value);
+    return clipInstances(scene, camera, plane, *programResult);
 }
 
 data::Result<void> SliceRenderer::captureCrossSection(
@@ -246,7 +214,8 @@ data::Result<void> SliceRenderer::captureCrossSection(
         if (instance.mesh.isNull()) {
             continue;
         }
-        auto geometry = geometryFor(instance.mesh);
+        auto geometry =
+            resolveMeshGeometry(registry_, instance.mesh, "SliceRenderer");
         if (geometry.failed()) {
             return data::makeError<void>(geometry.error().code,
                                          geometry.error().message);
@@ -284,7 +253,8 @@ data::Result<void> SliceRenderer::captureCrossSection(
         if (instance.mesh.isNull()) {
             continue;
         }
-        auto geometry = geometryFor(instance.mesh);
+        auto geometry =
+            resolveMeshGeometry(registry_, instance.mesh, "SliceRenderer");
         if (geometry.failed()) {
             feedback->unbind();
             return data::makeError<void>(geometry.error().code,
@@ -293,7 +263,7 @@ data::Result<void> SliceRenderer::captureCrossSection(
         MeshGeometry* geometryPtr = *geometry;
 
         program->setUniformMat4("uModel", instance.model);
-        feedback->begin(GL_TRIANGLES);
+        feedback->begin(core::PrimitiveMode::Triangles);
         auto draw = geometryPtr->draw();
         feedback->end();
         if (draw.failed()) {

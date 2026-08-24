@@ -25,6 +25,17 @@
 
 namespace re::core {
 
+/// Primitive type a transform-feedback capture consumes (glBeginTransformFeedback's mode).
+///
+/// core/-owned named constants: higher layers must never spell raw GL enums
+/// (they would need the glad include, which is confined to core/ — guardrail
+/// gpu_api_ownership). begin() maps each value to its GL constant internally.
+enum class PrimitiveMode {
+    Points,        ///< GL_POINTS
+    Triangles,     ///< GL_TRIANGLES (MeshGeometry's indexed triangle draw)
+    TriangleStrip, ///< GL_TRIANGLE_STRIP (geometry-shader outputs)
+};
+
 /// RAII wrapper for a GL transform feedback object
 /// (GL_TRANSFORM_FEEDBACK).
 ///
@@ -60,11 +71,11 @@ class TransformFeedback {
     void bindBufferBase(std::uint32_t index,
                         const VertexBuffer& buffer) const noexcept;
 
-    /// Begin transform-feedback capture in `mode` (GL_TRIANGLES /
-    /// GL_TRIANGLE_STRIP / GL_POINTS etc.), matching the program's output
-    /// primitive type (glBeginTransformFeedback). Must be called while the
-    /// program is in use and this object is bound.
-    void begin(std::uint32_t mode) const noexcept;
+    /// Begin transform-feedback capture in `mode`, matching the program's
+    /// output primitive type (glBeginTransformFeedback; the GL constant is
+    /// mapped from the core-owned PrimitiveMode enum internally). Must be
+    /// called while the program is in use and this object is bound.
+    void begin(PrimitiveMode mode) const noexcept;
 
     /// End transform-feedback capture (glEndTransformFeedback).
     void end() const noexcept;

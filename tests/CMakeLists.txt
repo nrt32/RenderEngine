@@ -37,6 +37,7 @@ add_executable(${RE_TEST_TARGET}
     t12_plane_path_test.cpp
     t14_unified_asset_store_test.cpp
     t16_volume_slice_test.cpp
+    t17_renderer_consolidation_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

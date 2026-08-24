@@ -118,11 +118,18 @@ class MeshRenderer : public IRenderer {
     /// cached program (non-null on success).
     data::Result<core::ShaderProgram*> opaqueProgram();
 
-    /// Resolve `handle` to its GPU geometry through the shared asset registry
-    /// (SPEC §9 V2.5). Returns a typed error for a stale/dangling handle.
-    /// @note lifetime: non-owning view of registry-owned storage (the shared
-    /// slot's unique_ptr) — valid until the handle's slot is unregistered.
-    data::Result<MeshGeometry*> geometryFor(const AssetHandle& handle);
+    /// The ONE shared instance-draw loop behind both entry points: installs
+    /// `program` and draws every resolvable mesh of `scene`. With
+    /// `skipTransparent` (the direct render()/drawOpaque path) transparent
+    /// instances are left to the OIT pipeline; without it (the drawLayer path,
+    /// one layer of a View composition) EVERY resolvable instance is drawn —
+    /// transparency handling is orchestrated by the View, not re-decided per
+    /// layer. Returns a typed error if a handle fails to resolve or a draw
+    /// cannot be issued.
+    data::Result<void> drawInstances(const MeshScene& scene,
+                                     const Camera& camera,
+                                     core::ShaderProgram* program,
+                                     bool skipTransparent);
 
     /// Draw every opaque mesh instance directly to `target`.
     data::Result<void> drawOpaque(const MeshScene& scene, const Camera& camera,

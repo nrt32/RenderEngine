@@ -7,6 +7,7 @@ add_library(re_render STATIC
     asset_registry.cpp
     phong_material.cpp
     mesh_geometry.cpp
+    screen_quad.cpp
     mesh_renderer.cpp
     linked_list_oit.cpp
     plane_renderer.cpp

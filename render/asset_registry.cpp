@@ -12,6 +12,8 @@
 #include <string>
 #include <utility>
 
+#include "data/content_hash.hpp"
+
 namespace re::render {
 
 namespace {
@@ -24,99 +26,12 @@ constexpr int kGenerationMismatchCode = 2;
 constexpr int kFreedSlotCode = 3;
 constexpr int kNullAssetCode = 4;
 
-// FNV-1a hash of Mesh stable bytes (mirrors scene::computeContentHash's mesh
-// overload, but render must not include scene/ — broker is the only library
-// allowed to include both layers — so the byte-hash is duplicated locally;
-// consolidating these into one GL-free data/ header is planned follow-up
-// cleanup).
-uint64_t meshContentHash(const data::Mesh& mesh) noexcept {
-    uint64_t h = 1469598103934665603ULL;
-    uint64_t vCount = static_cast<uint64_t>(mesh.positions().size());
-    uint64_t iCount = static_cast<uint64_t>(mesh.indices().size());
-    const uint8_t* cb = reinterpret_cast<const uint8_t*>(&vCount);
-    for (std::size_t i = 0; i < sizeof(vCount); ++i) {
-        h ^= static_cast<uint64_t>(cb[i]);
-        h *= 1099511628211ULL;
-    }
-    cb = reinterpret_cast<const uint8_t*>(&iCount);
-    for (std::size_t i = 0; i < sizeof(iCount); ++i) {
-        h ^= static_cast<uint64_t>(cb[i]);
-        h *= 1099511628211ULL;
-    }
-    for (const auto& p : mesh.positions()) {
-        const uint8_t* xb = reinterpret_cast<const uint8_t*>(&p.x);
-        for (std::size_t i = 0; i < sizeof(float); ++i) {
-            h ^= static_cast<uint64_t>(xb[i]);
-            h *= 1099511628211ULL;
-        }
-        const uint8_t* yb = reinterpret_cast<const uint8_t*>(&p.y);
-        for (std::size_t i = 0; i < sizeof(float); ++i) {
-            h ^= static_cast<uint64_t>(yb[i]);
-            h *= 1099511628211ULL;
-        }
-        const uint8_t* zb = reinterpret_cast<const uint8_t*>(&p.z);
-        for (std::size_t i = 0; i < sizeof(float); ++i) {
-            h ^= static_cast<uint64_t>(zb[i]);
-            h *= 1099511628211ULL;
-        }
-    }
-    for (uint32_t idx : mesh.indices()) {
-        const uint8_t* ib = reinterpret_cast<const uint8_t*>(&idx);
-        for (std::size_t i = 0; i < sizeof(uint32_t); ++i) {
-            h ^= static_cast<uint64_t>(ib[i]);
-            h *= 1099511628211ULL;
-        }
-    }
-    return h;
-}
-
-// FNV-1a hash of VolumeDataset stable bytes — byte-identical to
-// scene::computeContentHash's VolumeDataset overload (dims as u32, then the
-// raw float32 voxels), so a volume registered through this store and through
-// the app-side scene registry carry the same content identity.
-uint64_t volumeContentHash(const data::VolumeDataset& vol) noexcept {
-    uint64_t h = 1469598103934665603ULL;
-    auto feedU32 = [&](uint32_t v) {
-        const uint8_t* b = reinterpret_cast<const uint8_t*>(&v);
-        for (std::size_t i = 0; i < sizeof(uint32_t); ++i) {
-            h ^= static_cast<uint64_t>(b[i]);
-            h *= 1099511628211ULL;
-        }
-    };
-    feedU32(vol.sizeX());
-    feedU32(vol.sizeY());
-    feedU32(vol.sizeZ());
-    for (float f : vol.voxels()) {
-        const uint8_t* b = reinterpret_cast<const uint8_t*>(&f);
-        for (std::size_t i = 0; i < sizeof(float); ++i) {
-            h ^= static_cast<uint64_t>(b[i]);
-            h *= 1099511628211ULL;
-        }
-    }
-    return h;
-}
-
-// FNV-1a hash of Image stable bytes — byte-identical to
-// scene::computeContentHash's Image overload (w/h/channels as i32, then the
-// pixel bytes).
-uint64_t imageContentHash(const data::Image& img) noexcept {
-    uint64_t h = 1469598103934665603ULL;
-    auto feedI32 = [&](int32_t v) {
-        const uint8_t* b = reinterpret_cast<const uint8_t*>(&v);
-        for (std::size_t i = 0; i < sizeof(int32_t); ++i) {
-            h ^= static_cast<uint64_t>(b[i]);
-            h *= 1099511628211ULL;
-        }
-    };
-    feedI32(img.width());
-    feedI32(img.height());
-    feedI32(img.channels());
-    for (uint8_t b : img.pixels()) {
-        h ^= static_cast<uint64_t>(b);
-        h *= 1099511628211ULL;
-    }
-    return h;
-}
+// FNV-1a content hashes of the CPU asset bytes are NOT defined here anymore:
+// the single GL-free definition lives in data/content_hash.hpp
+// (data::computeContentHash overloads), shared verbatim with the app-side
+// scene::AssetId identity so both layers agree on one asset's hash. Only the
+// material kind's hash stays local — it is defined on the RE-side
+// PhongMaterial VALUE and deliberately has no scene/ counterpart.
 
 // FNV-1a hash of a PhongMaterial's VALUE — every shading-relevant field in a
 // fixed order (baseColor xyzw, specular rgb, shininess, ambient, diffuse, as
@@ -311,7 +226,7 @@ data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
     // Content-hash dedup (primary): identical bytes alias even for distinct
     // pointers. Pointer-identity byObject_ is retained as dual-key shim
     // (diagnostics only); hash is the binding key from SceneStore::AssetId.
-    const uint64_t hash = meshContentHash(mesh);
+    const uint64_t hash = data::computeContentHash(mesh);
     auto hashIt = byHash_.find(hash);
     if (hashIt != byHash_.end()) {
         const AssetHandle& existing = hashIt->second;
@@ -458,7 +373,7 @@ data::Result<VolumeTextureHandle> AssetRegistry::registerVolume(
         return data::makeError<VolumeTextureHandle>(
             kNullAssetCode, "AssetRegistry(volume): null dataset shared_ptr");
     }
-    const uint64_t hash = volumeContentHash(*dataset);
+    const uint64_t hash = data::computeContentHash(*dataset);
     auto loc = volumes_.acquire(dataset, hash,
                                 /*claimRefs=*/1u, &createVolumeTexture);
     if (loc.failed()) {
@@ -486,7 +401,7 @@ data::Result<core::Texture3D*> AssetRegistry::lookupVolume(
         return data::makeError<core::Texture3D*>(
             kNullAssetCode, "AssetRegistry(volume): null dataset shared_ptr");
     }
-    const uint64_t hash = volumeContentHash(*dataset);
+    const uint64_t hash = data::computeContentHash(*dataset);
     // claimRefs = 0: the lazy lookup never changes reference counts — a miss
     // leaves the entry store-pinned until an owner claims/releases it.
     auto loc = volumes_.acquire(dataset, hash,
@@ -514,7 +429,7 @@ data::Result<ImageTextureHandle> AssetRegistry::registerImage(
         return data::makeError<ImageTextureHandle>(
             kNullAssetCode, "AssetRegistry(image): null image shared_ptr");
     }
-    const uint64_t hash = imageContentHash(*image);
+    const uint64_t hash = data::computeContentHash(*image);
     auto loc =
         images_.acquire(image, hash, /*claimRefs=*/1u, &createImageTexture);
     if (loc.failed()) {
@@ -541,7 +456,7 @@ data::Result<core::Texture2D*> AssetRegistry::lookupImage(
         return data::makeError<core::Texture2D*>(
             kNullAssetCode, "AssetRegistry(image): null image shared_ptr");
     }
-    const uint64_t hash = imageContentHash(*image);
+    const uint64_t hash = data::computeContentHash(*image);
     // claimRefs = 0 — see lookupVolume for the store-pinned-miss contract.
     auto loc =
         images_.acquire(image, hash, /*claimRefs=*/0u, &createImageTexture);
@@ -594,6 +509,23 @@ data::Result<std::uint32_t> AssetRegistry::materialRefs(
     const MaterialHandle& handle) const {
     return materials_.refsAt(handle.index, handle.generation,
                              handle.contentHash);
+}
+
+// ---------------------------------------------------------------------------
+// Shared mesh-geometry resolution (mesh-family renderers' former geometryFor).
+// ---------------------------------------------------------------------------
+
+data::Result<MeshGeometry*> resolveMeshGeometry(
+    const std::shared_ptr<AssetRegistry>& registry, const AssetHandle& handle,
+    std::string_view rendererName) {
+    if (!registry) {
+        // Typed error (code 4), never a null dereference: a renderer built
+        // with a null registry (possible only by explicit request — member
+        // init order can never produce one, T13) fails loudly per draw.
+        return data::makeError<MeshGeometry*>(
+            4, std::string(rendererName) + ": no asset registry injected");
+    }
+    return registry->resolve(handle);
 }
 
 } // namespace re::render

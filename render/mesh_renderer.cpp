@@ -42,32 +42,10 @@ data::Result<core::ShaderProgram*> MeshRenderer::opaqueProgram() {
     return data::makeValue<core::ShaderProgram*>(&*opaqueProgram_);
 }
 
-data::Result<MeshGeometry*> MeshRenderer::geometryFor(
-    const AssetHandle& handle) {
-    if (!registry_) {
-        // Typed error (code 4), never a null dereference: a renderer built
-        // with a null registry (possible only by explicit request — member
-        // init order can never produce one, T13) fails loudly per draw.
-        return data::makeError<MeshGeometry*>(
-            4, "MeshRenderer: no asset registry injected");
-    }
-    // The shared AssetRegistry is the single owner of GPU geometry (SPEC §9
-    // V2.5): resolving the handle returns the one GPU object registered for
-    // this CPU mesh, shared with every other mesh-family renderer.
-    return registry_->resolve(handle);
-}
-
-data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
-                                            const Camera& camera,
-                                            const RenderTarget& target) {
-    (void)target;
-    auto programResult = opaqueProgram();
-    if (programResult.failed()) {
-        return data::makeError<void>(programResult.error().code,
-                                     programResult.error().message);
-    }
-    core::ShaderProgram* program = *programResult;
-
+data::Result<void> MeshRenderer::drawInstances(const MeshScene& scene,
+                                               const Camera& camera,
+                                               core::ShaderProgram* program,
+                                               bool skipTransparent) {
     program->use();
     program->setUniformMat4("uView", camera.view);
     program->setUniformMat4("uProj", camera.proj);
@@ -79,12 +57,14 @@ data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
             // mesh pointer.
             continue;
         }
-        if (instance.material->isTransparent()) {
-            // Transparent meshes are composited by the OIT pipeline, not the
-            // opaque forward pass (FR-render.2/3). They are skipped here.
+        if (skipTransparent && instance.material->isTransparent()) {
+            // Opaque path only: transparent meshes are composited by the OIT
+            // pipeline, not this pass (FR-render.2/3). The drawLayer path
+            // passes skipTransparent=false — see drawInstances.
             continue;
         }
-        auto geometry = geometryFor(instance.mesh);
+        auto geometry = resolveMeshGeometry(registry_, instance.mesh,
+                                            "MeshRenderer");
         if (geometry.failed()) {
             return data::makeError<void>(geometry.error().code,
                                          geometry.error().message);
@@ -102,6 +82,20 @@ data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
     return data::Result<void>(data::value);
 }
 
+data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
+                                            const Camera& camera,
+                                            const RenderTarget& target) {
+    (void)target;
+    auto programResult = opaqueProgram();
+    if (programResult.failed()) {
+        return data::makeError<void>(programResult.error().code,
+                                     programResult.error().message);
+    }
+    // The direct opaque pass leaves transparent instances to the OIT pipeline.
+    return drawInstances(scene, camera, *programResult,
+                         /*skipTransparent=*/true);
+}
+
 data::Result<void> MeshRenderer::drawTransparent(const MeshScene& scene,
                                                  const Camera& camera) {
     if (transparency_ == nullptr) {
@@ -114,7 +108,8 @@ data::Result<void> MeshRenderer::drawTransparent(const MeshScene& scene,
         if (!instance.material->isTransparent()) {
             continue;
         }
-        auto geometry = geometryFor(instance.mesh);
+        auto geometry = resolveMeshGeometry(registry_, instance.mesh,
+                                            "MeshRenderer");
         if (geometry.failed()) {
             return data::makeError<void>(geometry.error().code,
                                          geometry.error().message);
@@ -150,22 +145,15 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
         }
     }
 
-    // Bind the target and prepare draw state. A null framebuffer means the
-    // window's on-screen default framebuffer (T12); otherwise bind the
-    // offscreen FBO. v1 FBOs are color-only (no depth attachment, SPEC §6 /
-    // docs/core.md), so the depth test is left off.
-    if (target.framebuffer == nullptr) {
-        core::bindDefaultFramebuffer();
-    } else {
-        target.framebuffer->bind();
-    }
-    core::setViewport(0, 0, static_cast<int>(target.width),
-                      static_cast<int>(target.height));
-    core::setClearColor(target.clearColor.r, target.clearColor.g,
-                        target.clearColor.b, target.clearColor.a);
-    core::clearColor();
-    core::disableDepthTest();
-    core::disableBlend();
+    // Begin the pass through the ONE shared prologue (bind target → viewport
+    // → clear → depth off → blend off). A null framebuffer selects the
+    // window's on-screen default framebuffer; otherwise the offscreen FBO is
+    // bound. v1 FBOs are color-only (no depth attachment, SPEC §6 /
+    // docs/core.md), so the depth test stays off.
+    core::DrawContext ctx;
+    ctx.beginPass(target.framebuffer, target.width, target.height,
+                  target.clearColor.r, target.clearColor.g,
+                  target.clearColor.b, target.clearColor.a);
 
     if (anyTransparent && transparency_ != nullptr) {
         // Engage the OIT pipeline (capture -> depth-sort -> composite): draw
@@ -217,32 +205,13 @@ data::Result<void> MeshRenderer::drawLayer(const MeshScene& scene, const Camera&
     if (programResult.failed()) {
         return data::makeError<void>(programResult.error().code, programResult.error().message);
     }
-    core::ShaderProgram* program = *programResult;
-    program->use();
-    program->setUniformMat4("uView", camera.view);
-    program->setUniformMat4("uProj", camera.proj);
-    for (const MeshInstance& instance : scene.meshes) {
-        if (!instance.material || instance.mesh.isNull()) {
-            continue;
-        }
-        // drawLayer draws EVERY resolvable instance unconditionally: it is
-        // one layer of a multi-layer view composition, so transparency
-        // handling (OIT) is orchestrated by the View, not re-decided per
-        // layer here. The direct single-item render() path owns its own
-        // opaque/OIT split — that split must not be duplicated in this loop.
-        auto geometry = geometryFor(instance.mesh);
-        if (geometry.failed()) {
-            return data::makeError<void>(geometry.error().code, geometry.error().message);
-        }
-        MeshGeometry* geometryPtr = *geometry;
-        program->setUniformMat4("uModel", instance.model);
-        program->setUniformVec4("uBaseColor", instance.material->baseColor());
-        auto draw = geometryPtr->draw();
-        if (draw.failed()) {
-            return draw;
-        }
-    }
-    return data::Result<void>(data::value);
+    // drawLayer draws EVERY resolvable instance unconditionally: it is one
+    // layer of a multi-layer view composition, so transparency handling (OIT)
+    // is orchestrated by the View, not re-decided per layer here. The direct
+    // single-item render() path owns its own opaque/OIT split via
+    // skipTransparent=true in drawOpaque — that split is not duplicated here.
+    return drawInstances(scene, camera, *programResult,
+                         /*skipTransparent=*/false);
 }
 
 } // namespace re::render

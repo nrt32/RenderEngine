@@ -55,8 +55,20 @@ void TransformFeedback::bindBufferBase(
                      buffer.id());
 }
 
-void TransformFeedback::begin(std::uint32_t mode) const noexcept {
-    glBeginTransformFeedback(static_cast<GLenum>(mode));
+void TransformFeedback::begin(PrimitiveMode mode) const noexcept {
+    GLenum glMode = GL_POINTS;
+    switch (mode) {
+        case PrimitiveMode::Points:
+            glMode = GL_POINTS;
+            break;
+        case PrimitiveMode::Triangles:
+            glMode = GL_TRIANGLES;
+            break;
+        case PrimitiveMode::TriangleStrip:
+            glMode = GL_TRIANGLE_STRIP;
+            break;
+    }
+    glBeginTransformFeedback(glMode);
 }
 
 void TransformFeedback::end() const noexcept {

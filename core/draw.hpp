@@ -262,6 +262,46 @@ class DrawContext {
         }
     }
 
+    /// Begin one draw pass into a target framebuffer — THE pass prologue
+    /// (renderer-consolidation deliverable: exactly ONE definition of the
+    /// bind-target + viewport + clear + disable-depth/blend sequence exists,
+    /// here; every direct renderer render() entry point calls this instead of
+    /// repeating the six state calls).
+    ///
+    /// Binds `framebuffer` as the draw target (a null pointer selects the
+    /// window's on-screen default framebuffer 0), sets the viewport to the
+    /// full `(0, 0, width, height)` rectangle, installs `clearR/G/B/A` as the
+    /// clear color and clears the color buffer, then leaves the depth test
+    /// and blending DISABLED — v1 framebuffers are color-only (docs/core.md),
+    /// so the depth test stays off, and exact-color gates require blending
+    /// off during the pass. Call order is fixed: bind → viewport → clear
+    /// color+clear → depth off → blend off.
+    ///
+    /// State transitions go through this instance's cached wrappers (a fresh
+    /// DrawContext is cold, so every call of a pass issues its raw GL call
+    /// exactly once; duplicate identical passes on the same context hit the
+    /// cache). Passes that must NOT clear — e.g. the OIT composite that blends
+    /// OVER existing opaque contents — do not call beginPass; they issue their
+    /// own narrower bind/viewport/state sequence explicitly.
+    ///
+    /// @note lifetime: borrowed for the duration of this call only — owned by
+    /// the caller (a ViewTarget inner FB or the window's default FB when
+    /// null), never retained by the context.
+    void beginPass(Framebuffer* /*borrow*/ framebuffer, std::uint32_t width,
+                   std::uint32_t height, float clearR, float clearG,
+                   float clearB, float clearA) noexcept {
+        if (framebuffer == nullptr) {
+            bindDefaultFramebuffer();
+        } else {
+            framebuffer->bind();
+        }
+        setViewport(0, 0, static_cast<int>(width), static_cast<int>(height));
+        setClearColor(clearR, clearG, clearB, clearA);
+        clearColor();
+        disableDepthTest();
+        disableBlend();
+    }
+
     /// Snapshot of per-instance spy counts.
     SpyCounts getSpyCounts() const noexcept { return spy_; }
     /// Reset spy counters to zero (cache intact).

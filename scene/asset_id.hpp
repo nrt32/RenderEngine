@@ -8,11 +8,20 @@
 // AssetId even when the CPU object lives at different addresses.
 //
 // data::Mesh stays pure — no AssetId field. SceneStore owns the mapping.
+//
+// Hash provenance: the FNV-1a byte-hash algorithm has exactly ONE definition,
+// in the GL-free header data/content_hash.hpp (both the app-side scene layer
+// and the RE-side render asset store must agree on an asset's content
+// identity, and neither may include the other — data/ is the shared GL-free
+// root). The re::scene functions below are thin forwarders kept so existing
+// scene-side callers keep their qualified spelling; the render-side registry
+// calls the re::data overloads directly.
 
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 
+#include "data/content_hash.hpp"
 #include "data/image.hpp"
 #include "data/mesh.hpp"
 #include "data/volume_dataset.hpp"
@@ -59,109 +68,32 @@ struct AssetIdHash {
 
 /// FNV-1a 64-bit hash of stable bytes (deterministic, pointer-independent).
 ///
-/// Skeleton for SHA-256-of-canonical-bytes per SPEC §10.1 — truncated to 64
-/// bits for the gate; SHA-256 correctness per System Overflow cache-key design
-/// is preserved as hierarchical `contentHash` property (hash at load time, not
-/// per-frame).
+/// Thin forwarder to the single definition in data/content_hash.hpp (see the
+/// file-header hash-provenance note): one algorithm, shared by scene and
+/// render asset identity.
 inline uint64_t hashStableBytes(const void* data, std::size_t size) noexcept {
-    const uint8_t* bytes = static_cast<const uint8_t*>(data);
-    uint64_t h = 1469598103934665603ULL; // FNV offset basis
-    for (std::size_t i = 0; i < size; ++i) {
-        h ^= static_cast<uint64_t>(bytes[i]);
-        h *= 1099511628211ULL; // FNV prime
-    }
-    return h;
+    return data::hashStableBytes(data, size);
 }
 
 /// Content hash for a Mesh — stable bytes are positions + indices (not pointer).
 ///
-/// Two Mesh allocations with identical vertex/index bytes produce identical
-/// hash regardless of heap address. Uses component-wise hashing to avoid
-/// glm::vec3 padding variance (12 bytes logical per vertex).
+/// Forwarder to the single definition in data/content_hash.hpp: two Mesh
+/// allocations with identical vertex/index bytes produce identical hashes
+/// regardless of heap address.
 inline uint64_t computeContentHash(const data::Mesh& mesh) noexcept {
-    uint64_t h = 1469598103934665603ULL;
-    // Feed position count + index count to separate empty vs non-empty cleanly.
-    uint64_t vCount = static_cast<uint64_t>(mesh.positions().size());
-    uint64_t iCount = static_cast<uint64_t>(mesh.indices().size());
-    // Hash counts as bytes
-    const uint8_t* cb = reinterpret_cast<const uint8_t*>(&vCount);
-    for (std::size_t i = 0; i < sizeof(vCount); ++i) {
-        h ^= static_cast<uint64_t>(cb[i]);
-        h *= 1099511628211ULL;
-    }
-    cb = reinterpret_cast<const uint8_t*>(&iCount);
-    for (std::size_t i = 0; i < sizeof(iCount); ++i) {
-        h ^= static_cast<uint64_t>(cb[i]);
-        h *= 1099511628211ULL;
-    }
-    for (const auto& p : mesh.positions()) {
-        const uint8_t* xb = reinterpret_cast<const uint8_t*>(&p.x);
-        for (std::size_t i = 0; i < sizeof(float); ++i) {
-            h ^= static_cast<uint64_t>(xb[i]);
-            h *= 1099511628211ULL;
-        }
-        const uint8_t* yb = reinterpret_cast<const uint8_t*>(&p.y);
-        for (std::size_t i = 0; i < sizeof(float); ++i) {
-            h ^= static_cast<uint64_t>(yb[i]);
-            h *= 1099511628211ULL;
-        }
-        const uint8_t* zb = reinterpret_cast<const uint8_t*>(&p.z);
-        for (std::size_t i = 0; i < sizeof(float); ++i) {
-            h ^= static_cast<uint64_t>(zb[i]);
-            h *= 1099511628211ULL;
-        }
-    }
-    for (uint32_t idx : mesh.indices()) {
-        const uint8_t* ib = reinterpret_cast<const uint8_t*>(&idx);
-        for (std::size_t i = 0; i < sizeof(uint32_t); ++i) {
-            h ^= static_cast<uint64_t>(ib[i]);
-            h *= 1099511628211ULL;
-        }
-    }
-    return h;
+    return data::computeContentHash(mesh);
 }
 
-/// Content hash for a VolumeDataset — dims + voxel floats.
+/// Content hash for a VolumeDataset — dims + voxel floats. Forwarder to the
+/// single definition in data/content_hash.hpp.
 inline uint64_t computeContentHash(const data::VolumeDataset& vol) noexcept {
-    uint64_t h = 1469598103934665603ULL;
-    auto feedU32 = [&](uint32_t v) {
-        const uint8_t* b = reinterpret_cast<const uint8_t*>(&v);
-        for (std::size_t i = 0; i < sizeof(uint32_t); ++i) {
-            h ^= static_cast<uint64_t>(b[i]);
-            h *= 1099511628211ULL;
-        }
-    };
-    feedU32(vol.sizeX());
-    feedU32(vol.sizeY());
-    feedU32(vol.sizeZ());
-    for (float f : vol.voxels()) {
-        const uint8_t* b = reinterpret_cast<const uint8_t*>(&f);
-        for (std::size_t i = 0; i < sizeof(float); ++i) {
-            h ^= static_cast<uint64_t>(b[i]);
-            h *= 1099511628211ULL;
-        }
-    }
-    return h;
+    return data::computeContentHash(vol);
 }
 
-/// Content hash for an Image — dims + channels + pixel bytes.
+/// Content hash for an Image — dims + channels + pixel bytes. Forwarder to
+/// the single definition in data/content_hash.hpp.
 inline uint64_t computeContentHash(const data::Image& img) noexcept {
-    uint64_t h = 1469598103934665603ULL;
-    auto feedI32 = [&](int32_t v) {
-        const uint8_t* b = reinterpret_cast<const uint8_t*>(&v);
-        for (std::size_t i = 0; i < sizeof(int32_t); ++i) {
-            h ^= static_cast<uint64_t>(b[i]);
-            h *= 1099511628211ULL;
-        }
-    };
-    feedI32(img.width());
-    feedI32(img.height());
-    feedI32(img.channels());
-    for (uint8_t b : img.pixels()) {
-        h ^= static_cast<uint64_t>(b);
-        h *= 1099511628211ULL;
-    }
-    return h;
+    return data::computeContentHash(img);
 }
 
 } // namespace re::scene

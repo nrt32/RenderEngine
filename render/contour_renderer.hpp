@@ -126,13 +126,6 @@ class ContourRenderer {
     /// the cached program (non-null on success).
     data::Result<core::ShaderProgram*> program();
 
-    /// Resolve `handle` to its GPU geometry through the shared asset registry
-    /// (SPEC §9 V2.5; shared with MeshRenderer/SliceRenderer). Returns a
-    /// typed error for a stale/dangling handle.
-    /// @note lifetime: non-owning view of registry-owned storage (the shared
-    /// slot's unique_ptr) — valid until the handle's slot is unregistered.
-    data::Result<MeshGeometry*> geometryFor(const AssetHandle& handle);
-
     /// Issue the outline draw for one object with `program` already in use
     /// and per-frame uniforms (view/proj/plane) already set.
     data::Result<void> drawOne(const ContourObject& object,

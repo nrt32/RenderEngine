@@ -177,6 +177,17 @@ class PlaneRenderer : public IRenderer {
     /// quadVao_ `optional<>` member) — valid while this renderer is.
     data::Result<core::VertexArray*> quadGeometry();
 
+    /// The ONE shared instance-draw loop behind both entry points
+    /// (render() after its pass prologue, drawLayer() as a View layer):
+    /// installs `program`, maps the shared unit quad onto each instance's
+    /// corner box + model transform (single copy of the basis-matrix math),
+    /// binds textures through the store, and issues one indexed draw per
+    /// instance using the shared kQuadTriangleIndices pattern.
+    data::Result<void> drawInstances(const PlaneScene& scene,
+                                     const Camera& camera,
+                                     core::ShaderProgram* program,
+                                     core::VertexArray* quadVao);
+
     /// Resolve `image`'s content in the shared asset store (lazy
     /// find-or-upload by content hash, no reference-count change — T14),
     /// returning a pointer to the store-owned texture (non-null on success;
@@ -192,7 +203,6 @@ class PlaneRenderer : public IRenderer {
     std::optional<core::VertexArray> quadVao_;
     std::optional<core::VertexBuffer> quadVbo_;
     std::optional<core::ElementBuffer> quadEbo_; // index buffer referenced by quadVao_
-    std::size_t quadIndexCount_{6u}; // two triangles
 };
 
 } // namespace re::render

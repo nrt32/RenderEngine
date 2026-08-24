@@ -142,13 +142,26 @@ global mutable). The instance owns its own dirty-flag cache + spy:
   `DrawContext` starts cold (no cross-frame bleed — instance isolation).
 - Spy is per-instance (`ctx.getSpyCounts()`, `ctx.resetSpyCounts()`, `ctx.invalidate()`),
   not global — test determinism via spy per context (not global `getDrawSpyCounts()`).
+- **`beginPass(framebuffer, width, height, r, g, b, a)`** — THE pass prologue
+  (renderer-consolidation deliverable): binds the target (null = window
+  default FB), sets the viewport, installs + applies the clear color, and
+  leaves depth test/blending disabled — in that fixed order. Every direct
+  renderer `render()` entry point and the View composition owner
+  (`View::render` — one clear per frame, layers never clear) begin their pass
+  through this ONE method
+  (the six-call sequence exists exactly once, here). Passes that must not
+  clear (OIT composite over opaque contents) do not call it. State
+  transitions go through the instance cache: a fresh context issues each
+  state call exactly once; identical repeat passes hit the cache.
 - Future `FrameContext{ DrawContext draw; Viewport viewport; ClearColor clearCol; }`
   (see `modules.md` RHI) will thread `DrawContext&` through `renderAll`/`drawLayer`
   so `core::Draw` façade delegates to `FrameContext::draw` (DIP). The global free-function
   API remains for V2 regression lock; new code migrates to `DrawContext` instance.
 
 Gate: `DrawContext` duplicate `setViewport` → exactly 1 `glViewport` (`t2_skeletons_test.cpp`);
-`invalidate()` resets cache+spy; two instances are independent (N>=1 consecutive green).
+`invalidate()` resets cache+spy; two instances are independent (N>=1 consecutive green);
+T17: exactly one `beginPass` definition in the tree, zero clear-prologue repeats under
+`render/`, `<glad/gl.h>` under `render/` == 0 (`t17_renderer_consolidation_test.cpp`).
 
 ### Logging
 

@@ -28,13 +28,11 @@
 #include <glm/vec4.hpp>
 #include <optional>
 
-#include "core/element_buffer.hpp"
 #include "core/shader_program.hpp"
 #include "core/storage_buffer.hpp"
 #include "core/texture2d.hpp"
-#include "core/vertex_array.hpp"
-#include "core/vertex_buffer.hpp"
 #include "render/itransparency_pipeline.hpp"
+#include "render/screen_quad.hpp"
 
 namespace re::render {
 
@@ -84,7 +82,9 @@ class LinkedListOIT final : public ITransparencyPipeline {
     /// Build (and cache) the composite program. Non-null on success.
     data::Result<core::ShaderProgram*> compositeProgram();
 
-    /// Build (and cache) the shared full-screen quad VAO. Non-null on success.
+    /// Build (and cache) the shared full-screen quad. Non-null on success.
+    /// @note lifetime: non-owning view of pipeline-owned storage (the
+    /// screenQuad_ `optional<>` member) — valid while this pipeline is.
     data::Result<core::VertexArray*> screenQuad();
 
     /// Reallocate (if needed) the head texture and node/counter SSBOs to fit
@@ -104,10 +104,7 @@ class LinkedListOIT final : public ITransparencyPipeline {
     std::optional<core::ShaderProgram> captureProgram_;
     std::optional<core::ShaderProgram> compositeProgram_;
 
-    std::optional<core::VertexArray> screenQuadVao_;
-    std::optional<core::VertexBuffer> screenQuadVbo_;
-    std::optional<core::ElementBuffer> screenQuadEbo_;
-    std::size_t screenQuadIndexCount_{6u};
+    std::optional<ScreenQuad> screenQuad_;
 
     std::optional<core::Texture2D> headTexture_;
     std::optional<core::ShaderStorageBuffer> nodeBuffer_;

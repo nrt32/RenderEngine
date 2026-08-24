@@ -10,7 +10,6 @@
 
 #include "render/volume_slice_renderer.hpp"
 
-#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <glm/glm.hpp>
@@ -27,16 +26,11 @@ namespace re::render {
 VolumeSliceRenderer::VolumeSliceRenderer(std::shared_ptr<AssetRegistry> assets)
     : assets_(std::move(assets)) {}
 
-// Full-screen quad vertices in NDC (x,y): two triangles sharing a diagonal.
 // The vertex stage is shared with the ray-cast program
 // (volume_raycast.vert.glsl emits the same vNdc passthrough), so only the
-// fragment stage below is specific to plane extraction.
-constexpr std::array<float, 8> kSliceQuadVerts = {
-    -1.0f, -1.0f, // corner 0
-    1.0f,  -1.0f, // corner 1
-    1.0f,  1.0f,  // corner 2
-    -1.0f, 1.0f,  // corner 3
-};
+// fragment stage is specific to plane extraction. The full-screen quad comes
+// from the shared ScreenQuad provider (render/screen_quad.*): one NDC vertex
+// table + build sequence for every whole-viewport technique.
 
 data::Result<core::ShaderProgram*> VolumeSliceRenderer::sliceProgram() {
     if (program_.has_value()) {
@@ -54,48 +48,15 @@ data::Result<core::ShaderProgram*> VolumeSliceRenderer::sliceProgram() {
 }
 
 data::Result<core::VertexArray*> VolumeSliceRenderer::screenQuad() {
-    if (quadVao_.has_value()) {
-        return data::makeValue<core::VertexArray*>(&*quadVao_);
+    if (!screenQuad_.has_value()) {
+        auto quad = ScreenQuad::create();
+        if (quad.failed()) {
+            return data::makeError<core::VertexArray*>(quad.error().code,
+                                                       quad.error().message);
+        }
+        screenQuad_ = std::move(*quad);
     }
-    auto vao = core::VertexArray::create();
-    if (vao.failed()) {
-        return data::makeError<core::VertexArray*>(vao.error().code,
-                                                   vao.error().message);
-    }
-    auto vbo = core::VertexBuffer::create();
-    if (vbo.failed()) {
-        return data::makeError<core::VertexArray*>(vbo.error().code,
-                                                   vbo.error().message);
-    }
-    auto ebo = core::ElementBuffer::create();
-    if (ebo.failed()) {
-        return data::makeError<core::VertexArray*>(ebo.error().code,
-                                                   ebo.error().message);
-    }
-
-    constexpr std::array<std::uint32_t, 6> kIndices = {0u, 1u, 2u, 0u, 2u, 3u};
-    constexpr std::size_t kStrideBytes = 2u * sizeof(float);
-
-    // The VAO captures both the GL_ARRAY_BUFFER (via setAttribute) and the
-    // GL_ELEMENT_ARRAY_BUFFER (via EBO bind) bindings, so both must be bound
-    // while the VAO is bound. The EBO must outlive the local scope because
-    // the VAO references it by name.
-    vao->bind();
-    vbo->bind();
-    vbo->upload(kSliceQuadVerts.data(), kSliceQuadVerts.size() * sizeof(float),
-                core::BufferUsage::StaticDraw);
-    ebo->bind();
-    ebo->upload(kIndices.data(), kIndices.size(),
-                core::BufferUsage::StaticDraw);
-    // Interleaved position-only layout: attribute 0 = 2 floats.
-    vao->setAttribute(0u, 2, /*normalized=*/false, kStrideBytes, 0u);
-    vao->unbind();
-
-    quadVbo_ = std::move(*vbo);
-    quadEbo_ = std::move(*ebo);
-    quadVao_ = std::move(*vao);
-    quadIndexCount_ = kIndices.size();
-    return data::makeValue<core::VertexArray*>(&*quadVao_);
+    return data::makeValue<core::VertexArray*>(&screenQuad_->vao());
 }
 
 data::Result<core::Texture3D*> VolumeSliceRenderer::textureFor(
@@ -147,7 +108,8 @@ data::Result<void> VolumeSliceRenderer::drawOne(
     program->setUniformInt("uVolume", 0); // sampler reads texture unit 0
     uploadTransferFunction(instance.transferFunction);
 
-    auto draw = core::drawElements(*quadVao_, quadIndexCount_);
+    auto draw = core::drawElements(screenQuad_->vao(),
+                                   kQuadTriangleIndices.size());
     if (draw.failed()) {
         return draw;
     }
@@ -202,24 +164,17 @@ data::Result<void> VolumeSliceRenderer::render(const VolumeSliceScene& scene,
                                      quadResult.error().message);
     }
 
-    // Bind the target and prepare draw state. A null framebuffer means the
-    // window's on-screen default framebuffer; otherwise bind the offscreen
-    // FBO. FBOs on this path are color-only (no depth attachment), so the
+    // Begin the pass through the ONE shared prologue (bind target → viewport
+    // → clear → depth off → blend off). A null framebuffer selects the
+    // window's on-screen default framebuffer; otherwise the offscreen FBO is
+    // bound. FBOs on this path are color-only (no depth attachment), so the
     // depth test stays off; blending stays off because the shader already
     // writes the final straight-RGBA slice color (and transparent black where
     // the plane misses the volume).
-    if (target.framebuffer == nullptr) {
-        core::bindDefaultFramebuffer();
-    } else {
-        target.framebuffer->bind();
-    }
-    core::setViewport(0, 0, static_cast<int>(target.width),
-                      static_cast<int>(target.height));
-    core::setClearColor(target.clearColor.r, target.clearColor.g,
-                        target.clearColor.b, target.clearColor.a);
-    core::clearColor();
-    core::disableDepthTest();
-    core::disableBlend();
+    core::DrawContext ctx;
+    ctx.beginPass(target.framebuffer, target.width, target.height,
+                  target.clearColor.r, target.clearColor.g,
+                  target.clearColor.b, target.clearColor.a);
 
     program->use();
     for (const VolumeSliceInstance& instance : scene.slices) {

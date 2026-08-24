@@ -51,17 +51,18 @@
 // wrappers, never raw GL calls (guardrail gpu_api_ownership). Single-threaded
 // (SPEC §5), not thread-safe.
 //
-// Hash note: the mesh/volume/image content hashes are computed locally in
-// asset_registry.cpp, byte-identical to `scene::computeContentHash`'s
-// overloads — render must not include scene/ (layer disposition: broker is the
-// only library that includes both), so the byte-hash definitions are
-// duplicated there until the planned consolidation into a shared GL-free
-// data/ header. The material kind's hash has no scene/ counterpart by design:
+// Hash note: the mesh/volume/image content hashes come from the single
+// GL-free definition in data/content_hash.hpp (`data::computeContentHash`
+// overloads) — the same functions the app-side scene::AssetId uses, so both
+// layers compute one asset's content identity identically without either
+// layer including the other (broker is the only scene+render library).
+// The material kind's hash is local to asset_registry.cpp by design:
 // it is defined on the RE-side PhongMaterial VALUE (RE-minimal, §12.4).
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -611,5 +612,23 @@ class AssetRegistry {
     GpuSlotTable<data::Image, core::Texture2D> images_;
     GpuSlotTable<PhongMaterial, IMaterial> materials_;
 };
+
+/// Shared mesh-geometry resolution for every mesh-family renderer
+/// (MeshRenderer, SliceRenderer, ContourRenderer — the former per-renderer
+/// `geometryFor` copy-paste, now ONE helper over the AssetRegistry).
+///
+/// A null `registry` (only possible by explicit construction request — the
+/// shared-ownership injection makes member-init-order nulls impossible, T13)
+/// fails with typed error code 4 naming `rendererName`; otherwise the handle
+/// resolves through `registry->resolve` (typed stale/dangling-handle errors,
+/// SPEC §5). The single owner of GPU geometry is the registry itself (SPEC §9
+/// V2.5): resolving a handle returns the one GPU object registered for that
+/// CPU mesh, shared across renderers and views.
+///
+/// @note lifetime: non-owning view of registry-owned storage (the shared
+/// slot's unique_ptr) — valid until the handle's slot is unregistered.
+data::Result<MeshGeometry*> resolveMeshGeometry(
+    const std::shared_ptr<AssetRegistry>& registry, const AssetHandle& handle,
+    std::string_view rendererName);
 
 } // namespace re::render

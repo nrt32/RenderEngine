@@ -138,12 +138,15 @@ class SliceRenderer : public IRenderer {
     /// returning a pointer to the transform-feedback object.
     data::Result<core::TransformFeedback*> captureFeedback();
 
-    /// Resolve `handle` to its GPU geometry through the shared asset registry
-    /// (SPEC §9 V2.5; shared with MeshRenderer). Returns a typed error for a
-    /// stale/dangling handle.
-    /// @note lifetime: non-owning view of registry-owned storage (the shared
-    /// slot's unique_ptr) — valid until the handle's slot is unregistered.
-    data::Result<MeshGeometry*> geometryFor(const AssetHandle& handle);
+    /// The ONE shared clip loop behind both entry points (render() after its
+    /// pass prologue, drawLayer() as a View layer): installs `program` and
+    /// draws every resolvable instance of `scene` clipped against `plane`
+    /// (single copy of the uniform + draw sequence). Slicing deliberately has
+    /// NO transparency path in v1 — see the note in the .cpp loop.
+    data::Result<void> clipInstances(const SliceScene& scene,
+                                     const Camera& camera,
+                                     const ClipPlane& plane,
+                                     core::ShaderProgram* program);
 
     std::shared_ptr<AssetRegistry> registry_;
 

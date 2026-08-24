@@ -1062,14 +1062,70 @@ Transverse display frame, ortho camera over `[0,2]²`:
 | MPR axes T/C/S on an asymmetric 8×6×4 volume | whole frame == `app::makeSliceImage` oracle within 1/255 per axis | Transverse holds Z, Coronal holds Y, Sagittal holds X; asymmetric dims make any permutation error fail |
 | Typed errors: null dataset / >8 TF points / 0-size target | codes `1` / `1` / `1` | SPEC §5 diagnostics, never crashes or silent empty output |
 
+### Shared renderer internals — one prologue, one quad, one hash, one geometryFor
+
+The technique renderers used to carry four families of copy-paste. Each now
+has exactly ONE definition (Sr. review "single internal implementation per
+renderer" rule, SPEC §6):
+
+- **Pass prologue** — binding the target framebuffer, setting the viewport,
+  clearing to the clear color, and disabling depth test + blending existed
+  verbatim in every direct `render()` entry point. It is now
+  **`core::DrawContext::beginPass(framebuffer, width, height, r, g, b, a)`**
+  (`core/draw.hpp`), called once by each of the six direct-render entry points
+  (`Mesh/Plane/Volume/Slice/Contour/VolumeSliceRenderer::render`) and by
+  `View::render` — the composition owner whose single clear replaces per-layer
+  clears. Call order
+  is fixed: bind (null framebuffer = window default FB) → viewport → clear
+  color + clear → depth off → blend off. The OIT composite sequence
+  (`LinkedListOIT::end`) deliberately does NOT call it: compositing must blend
+  OVER the already-drawn opaque contents, so nothing may be cleared there.
+- **Full-screen NDC quad** — the position-only two-triangle quad (corners
+  (-1,-1), (1,-1), (1,1), (-1,1); index pattern `{0,1,2, 0,2,3}`) lived twice
+  as `kScreenQuadVerts` (VolumeRenderer, LinkedListOIT) plus a third
+  byte-identical twin `kSliceQuadVerts` (VolumeSliceRenderer). All three now
+  own a **`render::ScreenQuad`** instance built by the single provider
+  `render/screen_quad.{hpp,cpp}`, which also owns the shared index-pattern
+  constant `kQuadTriangleIndices`. PlaneRenderer keeps its own interleaved
+  unit quad (position+UV+normal from `PlaneGeometry::unitQuadXY` — its shader
+  samples per-vertex UVs, an attribute schema the NDC quad does not carry) but
+  draws with the same shared index pattern.
+- **Mesh-geometry resolution** — the identical `geometryFor(handle)` members
+  of Mesh/Slice/ContourRenderer collapsed into ONE helper over the registry:
+  **`resolveMeshGeometry(registry, handle, rendererName)`**
+  (`render/asset_registry.hpp`). Null store → typed error code 4 naming the
+  renderer; otherwise the handle resolves to the one registry-owned
+  `MeshGeometry`.
+- **Content hash** — the FNV-1a byte-hash twins (`meshContentHash`,
+  `volumeContentHash`, `imageContentHash`) were deleted from
+  `render/asset_registry.cpp`; both layers resolve identity through the single
+  GL-free definition **`data/content_hash.hpp`**
+  (`data::computeContentHash(Mesh|VolumeDataset|Image)`, which
+  `scene::computeContentHash` forwards to). Only the PhongMaterial VALUE hash
+  stays local to the registry — material identity is defined on the RE-side
+  value (§12.4).
+- **GL constants via core/** — `SliceRenderer`'s capture pass began transform
+  feedback with the raw glad enum; it now passes
+  **`core::PrimitiveMode::Triangles`**, a core-owned enum mapped internally by
+  `core::TransformFeedback::begin`. `<glad/gl.h>` appears nowhere under
+  `render/`.
+
+Each renderer's direct `render()` and View-composited `drawLayer()` share one
+private body (per-renderer `drawInstances`/`clipInstances`; mesh takes a
+`skipTransparent` flag because the OIT split is owned by the direct path
+only). Zero pixel change is regression-locked by the FR-render gates.
+
 ## Guardrails observed
 
-- **GL ownership**: `render/` is GL-call-free. Raw draw-state calls
+- **GL ownership**: `render/` is GL-call-free — no raw `glXxx` call and no
+  `<glad/gl.h>` include appears under `render/` (mechanically pinned by the
+  T17 gate). Raw draw-state calls
   (`glViewport`, `glClear`, `glDrawElements`, `glBlitFramebuffer`, …) live in
   `core/draw.cpp`; raw
   readback (`glReadPixels`) lives in `core/read_pixels.cpp`; SSBO creation/
   binding/readback lives in `core/storage_buffer.cpp`; transform-feedback
-  creation/capture/readback lives in `core/transform_feedback.cpp`; image
+  creation/capture/readback lives in `core/transform_feedback.cpp` (its
+  primitive mode is named through core-owned `core::PrimitiveMode`); image
   binding + memory barriers live in `core/draw.cpp` (all under `core/`). The
   only readback consumers are tests (pixel reads,
   `LinkedListOIT::readCapturedFragmentCount`,

@@ -47,6 +47,7 @@
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
 #include "render/asset_registry.hpp"
+#include "render/screen_quad.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
 #include "volume/transfer_function.hpp"
 
@@ -151,8 +152,18 @@ class VolumeRenderer : public IRenderer {
     /// Ensure the shared full-screen quad geometry is uploaded, returning a
     /// pointer to the cached vertex array (non-null on success).
     /// @note lifetime: non-owning view of renderer-owned storage (the
-    /// screenQuadVao_ `optional<>` member) — valid while this renderer is.
+    /// screenQuad_ `optional<>` member) — valid while this renderer is.
     data::Result<core::VertexArray*> screenQuad();
+
+    /// The ONE shared instance-draw loop behind both entry points (render()
+    /// after its pass prologue, drawLayer() as a View layer): installs
+    /// `program`, binds each instance's store-owned 3D texture, uploads the
+    /// slab/uniform block (single copy of that math), and issues one
+    /// full-screen-quad draw per instance.
+    data::Result<void> drawInstances(const VolumeScene& scene,
+                                     const Camera& camera,
+                                     core::ShaderProgram* program,
+                                     core::VertexArray* quadVao);
 
     /// Resolve `dataset`'s content in the shared asset store (lazy
     /// find-or-upload by content hash, no reference-count change — T14),
@@ -169,11 +180,7 @@ class VolumeRenderer : public IRenderer {
 
     std::shared_ptr<AssetRegistry> assets_;
     std::optional<core::ShaderProgram> rayCastProgram_;
-    std::optional<core::VertexArray> screenQuadVao_;
-    std::optional<core::VertexBuffer> screenQuadVbo_;
-    std::optional<core::ElementBuffer>
-        screenQuadEbo_; // index buffer referenced by screenQuadVao_
-    std::size_t screenQuadIndexCount_{6u}; // two triangles
+    std::optional<ScreenQuad> screenQuad_;
 };
 
 } // namespace re::render

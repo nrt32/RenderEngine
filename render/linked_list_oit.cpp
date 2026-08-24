@@ -8,7 +8,6 @@
 #include "render/linked_list_oit.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <glm/glm.hpp>
@@ -40,13 +39,10 @@ constexpr std::uint32_t kHeadImageUnit = 2u;  // layout(r32ui, binding=2)
 // this value so an empty pixel's linked list terminates immediately.
 constexpr std::uint32_t kNullNode = 0xFFFFFFFFu;
 
-// Full-screen quad vertices in NDC (x,y): two triangles sharing a diagonal.
-constexpr std::array<float, 8> kScreenQuadVerts = {
-    -1.0f, -1.0f, // corner 0
-    1.0f,  -1.0f, // corner 1
-    1.0f,  1.0f,  // corner 2
-    -1.0f, 1.0f,  // corner 3
-};
+// The full-screen composite quad comes from the shared ScreenQuad provider
+// (render/screen_quad.*): one NDC vertex table + build sequence for every
+// whole-viewport technique (previously this pipeline carried its own
+// byte-identical copy).
 
 LinkedListOIT::LinkedListOIT(std::uint32_t maxFragmentsPerPixel)
     : maxFragmentsPerPixel_(
@@ -107,44 +103,15 @@ data::Result<core::ShaderProgram*> LinkedListOIT::compositeProgram() {
 }
 
 data::Result<core::VertexArray*> LinkedListOIT::screenQuad() {
-    if (screenQuadVao_.has_value()) {
-        return data::makeValue<core::VertexArray*>(&*screenQuadVao_);
+    if (!screenQuad_.has_value()) {
+        auto quad = ScreenQuad::create();
+        if (quad.failed()) {
+            return data::makeError<core::VertexArray*>(quad.error().code,
+                                                       quad.error().message);
+        }
+        screenQuad_ = std::move(*quad);
     }
-    auto vao = core::VertexArray::create();
-    if (vao.failed()) {
-        return data::makeError<core::VertexArray*>(vao.error().code,
-                                                   vao.error().message);
-    }
-    auto vbo = core::VertexBuffer::create();
-    if (vbo.failed()) {
-        return data::makeError<core::VertexArray*>(vbo.error().code,
-                                                   vbo.error().message);
-    }
-    auto ebo = core::ElementBuffer::create();
-    if (ebo.failed()) {
-        return data::makeError<core::VertexArray*>(ebo.error().code,
-                                                   ebo.error().message);
-    }
-
-    constexpr std::array<std::uint32_t, 6> kIndices = {0u, 1u, 2u, 0u, 2u, 3u};
-    const std::size_t strideBytes = 2u * sizeof(float);
-
-    vao->bind();
-    vbo->bind();
-    vbo->upload(kScreenQuadVerts.data(),
-                kScreenQuadVerts.size() * sizeof(float),
-                core::BufferUsage::StaticDraw);
-    ebo->bind();
-    ebo->upload(kIndices.data(), kIndices.size(),
-                core::BufferUsage::StaticDraw);
-    vao->setAttribute(0u, 2, /*normalized=*/false, strideBytes, 0u);
-    vao->unbind();
-
-    screenQuadVbo_ = std::move(*vbo);
-    screenQuadEbo_ = std::move(*ebo);
-    screenQuadVao_ = std::move(*vao);
-    screenQuadIndexCount_ = kIndices.size();
-    return data::makeValue<core::VertexArray*>(&*screenQuadVao_);
+    return data::makeValue<core::VertexArray*>(&screenQuad_->vao());
 }
 
 data::Result<void> LinkedListOIT::ensureCapacity(std::uint32_t width,
@@ -295,7 +262,10 @@ data::Result<void> LinkedListOIT::end(const Camera& camera,
 
     // Bind the target and composite over its current (opaque) contents. A null
     // framebuffer means the window's on-screen default framebuffer (T12);
-    // otherwise bind the offscreen FBO (mirrors MeshRenderer::render).
+    // otherwise bind the offscreen FBO. This sequence deliberately does NOT go
+    // through the shared beginPass prologue: compositing must blend OVER the
+    // already-drawn opaque contents, so nothing may be cleared here — only the
+    // narrower bind + viewport + depth-off + blend-on sequence is issued.
     if (target.framebuffer == nullptr) {
         core::bindDefaultFramebuffer();
     } else {
@@ -313,7 +283,7 @@ data::Result<void> LinkedListOIT::end(const Camera& camera,
     program->setUniformInt("uMaxNodes",
                            static_cast<std::int32_t>(maxFragmentsPerPixel_));
     const data::Result<void> draw =
-        core::drawElements(*quadVao, screenQuadIndexCount_);
+        core::drawElements(*quadVao, kQuadTriangleIndices.size());
 
     // Restore draw state regardless of the draw result (no state leak).
     core::disableBlend();

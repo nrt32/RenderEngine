@@ -39,24 +39,18 @@ data::Result<core::ShaderProgram*> ContourRenderer::program() {
     return data::makeValue<core::ShaderProgram*>(&*program_);
 }
 
-data::Result<MeshGeometry*> ContourRenderer::geometryFor(
-    const AssetHandle& handle) {
-    if (!registry_) {
-        return data::makeError<MeshGeometry*>(
-            4, "ContourRenderer: no asset registry injected");
-    }
-    // The shared AssetRegistry is the single owner of GPU geometry (SPEC §9
-    // V2.5): resolving the handle returns the one GPU object registered for
-    // this CPU mesh, shared with MeshRenderer and SliceRenderer.
-    return registry_->resolve(handle);
-}
-
 data::Result<void> ContourRenderer::drawOne(const ContourObject& object,
                                             core::ShaderProgram* program) {
     if (object.mesh.isNull()) {
         return data::makeError<void>(3, "ContourRenderer: null AssetHandle");
     }
-    auto geometry = geometryFor(object.mesh);
+    // The shared AssetRegistry is the single owner of GPU geometry (SPEC §9
+    // V2.5): resolving the handle returns the one GPU object registered for
+    // this CPU mesh, shared with MeshRenderer and SliceRenderer (the shared
+    // resolveMeshGeometry helper — one definition for all mesh-family
+    // renderers).
+    auto geometry =
+        resolveMeshGeometry(registry_, object.mesh, "ContourRenderer");
     if (geometry.failed()) {
         return data::makeError<void>(geometry.error().code,
                                      geometry.error().message);
@@ -64,8 +58,9 @@ data::Result<void> ContourRenderer::drawOne(const ContourObject& object,
     program->setUniformMat4("uModel", object.model);
     program->setUniformVec4("uColor", object.color);
     program->setUniformFloat("uHalfWidthPx", object.halfWidthPx);
-    // The draw stays GL_TRIANGLES (MeshGeometry's indexed triangle draw); the
-    // geometry shader converts each crossing triangle to its outline quad.
+    // The draw stays on triangle primitives (MeshGeometry's indexed triangle
+    // draw); the geometry shader converts each crossing triangle to its
+    // outline quad.
     return (*geometry)->draw();
 }
 
@@ -83,23 +78,17 @@ data::Result<void> ContourRenderer::render(const ContourScene& scene,
     }
     core::ShaderProgram* programPtr = *programResult;
 
-    // Bind the target and prepare draw state. A null framebuffer means the
+    // Begin the pass through the ONE shared prologue (bind target → viewport
+    // → clear → depth off → blend off). A null framebuffer selects the
     // window's on-screen default framebuffer (interactive samples); v1 FBOs
     // are color-only (no depth attachment, SPEC §6 / docs/core.md), so the
     // depth test is left off. Blending must be OFF so every stroke pixel is
-    // exactly uColor (the FR-app.3 readback compares exact bytes ±1/255).
-    if (target.framebuffer == nullptr) {
-        core::bindDefaultFramebuffer();
-    } else {
-        target.framebuffer->bind();
-    }
-    core::setViewport(0, 0, static_cast<int>(target.width),
-                      static_cast<int>(target.height));
-    core::setClearColor(target.clearColor.r, target.clearColor.g,
-                        target.clearColor.b, target.clearColor.a);
-    core::clearColor();
-    core::disableDepthTest();
-    core::disableBlend();
+    // exactly uColor (the FR-app.3 readback compares exact bytes ±1/255) —
+    // beginPass disables it.
+    core::DrawContext ctx;
+    ctx.beginPass(target.framebuffer, target.width, target.height,
+                  target.clearColor.r, target.clearColor.g,
+                  target.clearColor.b, target.clearColor.a);
 
     programPtr->use();
     programPtr->setUniformMat4("uView", camera.view);

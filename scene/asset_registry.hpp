@@ -26,14 +26,16 @@ namespace re::scene {
 /// Typed content-addressed asset registry — one per asset kind (SPEC §7 T7).
 ///
 /// Extensible via template parameter `T` (OCP via template, SRP per `T`).
-/// `T` must have `computeContentHash(const T&)` overload in `re::scene`.
-/// Ownership (T13): the registry holds a `std::shared_ptr<const T>` slot per
-/// registered asset — it CO-OWNS every asset it indexes, so a live handle can
-/// always resolve to live bytes and no caller-side owner can pull the asset
-/// out from under a resolved reference. Dedup is by `contentHash` (hash of
-/// stable bytes, not pointer), shared across Views/pages. Generational
-/// `AssetId` provides stale detection (typed error code 2 on generation+1,
-/// never crash). data::Mesh stays pure — no AssetId field.
+/// `T` must have a `data::computeContentHash(const T&)` overload in the
+/// GL-free data/content_hash.hpp (the ONE byte-hash definition shared with the
+/// render-side asset store). Ownership (T13): the registry holds a
+/// `std::shared_ptr<const T>` slot per registered asset — it CO-OWNS every
+/// asset it indexes, so a live handle can always resolve to live bytes and no
+/// caller-side owner can pull the asset out from under a resolved reference.
+/// Dedup is by `contentHash` (hash of stable bytes, not pointer), shared
+/// across Views/pages. Generational `AssetId` provides stale detection (typed
+/// error code 2 on generation+1, never crash). data::Mesh stays pure — no
+/// AssetId field.
 template <typename T>
 class AssetRegistry {
    public:
@@ -57,7 +59,11 @@ class AssetRegistry {
             return data::makeError<AssetId>(
                 4, "AssetRegistry: null asset shared_ptr");
         }
-        const uint64_t hash = computeContentHash(*asset);
+        // Qualified on purpose: the single hash definition lives in
+        // data/content_hash.hpp; an unqualified call here would be ambiguous
+        // (re::scene forwarders + argument-dependent lookup of the re::data
+        // overloads are both visible).
+        const uint64_t hash = data::computeContentHash(*asset);
         auto it = byHash_.find(hash);
         if (it != byHash_.end()) {
             const AssetId& existing = it->second;

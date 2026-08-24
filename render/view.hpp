@@ -5,8 +5,10 @@
 // One ViewTarget{Texture2D+Framebuffer} per ViewRect (rect.w×h) + Camera +
 // optional<ClipPlane> (2D vs 3D) + list<IRenderable> (VolumeSlice+MeshSlice for
 // 2D, Volume+Mesh for 3D). Each IRenderable is type-erased drawLayer(Camera,DrawContext&)
-// — View never knows the renderer. View::render() does bind+viewport+clear via
-// DrawContext then iterates drawLayer without clearing between layers.
+// — View never knows the renderer. View::render() begins its pass via the ONE
+// shared prologue core::DrawContext::beginPass (bind+viewport+clear+depth-off+
+// blend-off — T17 single-site rule), then iterates drawLayer without clearing
+// between layers.
 
 #include <memory>
 #include <optional>
@@ -100,8 +102,9 @@ class View {
     // --- render / blit ------------------------------------------------------
 
     /// Render all items into the View's own FBO. Assumes ensureTarget() already
-    /// succeeded; binds the FBO, sets viewport via ctx, clears to clearColor,
-    /// disables depth/blend, then calls each item's drawLayer(camera, ctx) without
+    /// succeeded; begins the pass through the shared core::DrawContext::beginPass
+    /// prologue (binds the FBO, sets the viewport, clears to clearColor, disables
+    /// depth/blend), then calls each item's drawLayer(camera, ctx) without
     /// clearing between layers. Returns typed error on target failure or any
     /// layer failure.
     data::Result<void> render(core::DrawContext& ctx);

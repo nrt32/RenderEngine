@@ -62,6 +62,7 @@
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
 #include "render/asset_registry.hpp"
+#include "render/screen_quad.hpp"
 #include "render/types.hpp" // Camera / RenderTarget / ClipPlane
 #include "volume/transfer_function.hpp"
 
@@ -164,7 +165,7 @@ class VolumeSliceRenderer {
     /// Ensure the shared full-screen quad geometry is uploaded, returning a
     /// pointer to the cached vertex array (non-null on success).
     /// @note lifetime: non-owning view of renderer-owned storage (the
-    /// quadVao_ `optional<>` member) — valid while this renderer is.
+    /// screenQuad_ `optional<>` member) — valid while this renderer is.
     data::Result<core::VertexArray*> screenQuad();
 
     /// Resolve `dataset`'s content in the shared asset store (lazy
@@ -190,11 +191,7 @@ class VolumeSliceRenderer {
 
     std::shared_ptr<AssetRegistry> assets_;
     std::optional<core::ShaderProgram> program_;
-    std::optional<core::VertexArray> quadVao_;
-    std::optional<core::VertexBuffer> quadVbo_;
-    std::optional<core::ElementBuffer>
-        quadEbo_;                    // index buffer referenced by quadVao_
-    std::size_t quadIndexCount_{6u}; // two triangles
+    std::optional<ScreenQuad> screenQuad_;
 };
 
 } // namespace re::render

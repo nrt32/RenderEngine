@@ -8,7 +8,6 @@
 #include "render/volume_renderer.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <glm/glm.hpp>
@@ -34,14 +33,6 @@ VolumeRenderer::VolumeRenderer(std::shared_ptr<AssetRegistry> assets)
 // size in the GLSL). A volume::TransferFunction with more points is
 // rejected with a typed error.
 constexpr std::size_t kMaxTfPoints = 8u;
-
-// Full-screen quad vertices in NDC (x,y): two triangles sharing a diagonal.
-constexpr std::array<float, 8> kScreenQuadVerts = {
-    -1.0f, -1.0f, // corner 0
-    1.0f,  -1.0f, // corner 1
-    1.0f,  1.0f,  // corner 2
-    -1.0f, 1.0f,  // corner 3
-};
 
 std::pair<glm::vec3, glm::vec3> VolumeRenderer::worldAabb(
     const VolumeInstance& instance) {
@@ -78,49 +69,15 @@ data::Result<core::ShaderProgram*> VolumeRenderer::rayCastProgram() {
 }
 
 data::Result<core::VertexArray*> VolumeRenderer::screenQuad() {
-    if (screenQuadVao_.has_value()) {
-        return data::makeValue<core::VertexArray*>(&*screenQuadVao_);
+    if (!screenQuad_.has_value()) {
+        auto quad = ScreenQuad::create();
+        if (quad.failed()) {
+            return data::makeError<core::VertexArray*>(quad.error().code,
+                                                       quad.error().message);
+        }
+        screenQuad_ = std::move(*quad);
     }
-    auto vao = core::VertexArray::create();
-    if (vao.failed()) {
-        return data::makeError<core::VertexArray*>(vao.error().code,
-                                                   vao.error().message);
-    }
-    auto vbo = core::VertexBuffer::create();
-    if (vbo.failed()) {
-        return data::makeError<core::VertexArray*>(vbo.error().code,
-                                                   vbo.error().message);
-    }
-    auto ebo = core::ElementBuffer::create();
-    if (ebo.failed()) {
-        return data::makeError<core::VertexArray*>(ebo.error().code,
-                                                   ebo.error().message);
-    }
-
-    constexpr std::array<std::uint32_t, 6> kIndices = {0u, 1u, 2u, 0u, 2u, 3u};
-    const std::size_t strideBytes = 2u * sizeof(float);
-
-    // The VAO captures both the GL_ARRAY_BUFFER (via setAttribute) and the
-    // GL_ELEMENT_ARRAY_BUFFER (via EBO bind) bindings, so both must be bound
-    // while the VAO is bound (mirrors PlaneRenderer::quadGeometry). The EBO
-    // must outlive the local scope because the VAO references it by name.
-    vao->bind();
-    vbo->bind();
-    vbo->upload(kScreenQuadVerts.data(),
-                kScreenQuadVerts.size() * sizeof(float),
-                core::BufferUsage::StaticDraw);
-    ebo->bind();
-    ebo->upload(kIndices.data(), kIndices.size(),
-                core::BufferUsage::StaticDraw);
-    // Interleaved position-only layout: attribute 0 = 2 floats.
-    vao->setAttribute(0u, 2, /*normalized=*/false, strideBytes, 0u);
-    vao->unbind();
-
-    screenQuadVbo_ = std::move(*vbo);
-    screenQuadEbo_ = std::move(*ebo);
-    screenQuadVao_ = std::move(*vao);
-    screenQuadIndexCount_ = kIndices.size();
-    return data::makeValue<core::VertexArray*>(&*screenQuadVao_);
+    return data::makeValue<core::VertexArray*>(&screenQuad_->vao());
 }
 
 data::Result<core::Texture3D*> VolumeRenderer::textureFor(
@@ -149,50 +106,10 @@ void VolumeRenderer::uploadTransferFunction(
     rayCastProgram_->setUniformVec4Array("uTfColors", colors.data(), count);
 }
 
-data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
-                                          const Camera& camera,
-                                          const RenderTarget& target) {
-    if (assets_ == nullptr) {
-        // Constructed with a null store (member-init-order safety): fail with
-        // a typed error instead of dereferencing (mirrors MeshRenderer).
-        return data::makeError<void>(4, "VolumeRenderer: no shared asset store");
-    }
-    if (target.width == 0u || target.height == 0u) {
-        return data::makeError<void>(1, "VolumeRenderer: invalid target size");
-    }
-
-    auto programResult = rayCastProgram();
-    if (programResult.failed()) {
-        return data::makeError<void>(programResult.error().code,
-                                     programResult.error().message);
-    }
-    core::ShaderProgram* program = *programResult;
-
-    auto quadResult = screenQuad();
-    if (quadResult.failed()) {
-        return data::makeError<void>(quadResult.error().code,
-                                     quadResult.error().message);
-    }
-    core::VertexArray* quadVao = *quadResult;
-
-    // Bind the target and prepare draw state. A null framebuffer means the
-    // window's on-screen default framebuffer (T12); otherwise bind the
-    // offscreen FBO. v1 FBOs are color-only (no depth attachment), so the depth
-    // test is left off; blending is off because the shader already writes the
-    // final premultiplied composited color.
-    if (target.framebuffer == nullptr) {
-        core::bindDefaultFramebuffer();
-    } else {
-        target.framebuffer->bind();
-    }
-    core::setViewport(0, 0, static_cast<int>(target.width),
-                      static_cast<int>(target.height));
-    core::setClearColor(target.clearColor.r, target.clearColor.g,
-                        target.clearColor.b, target.clearColor.a);
-    core::clearColor();
-    core::disableDepthTest();
-    core::disableBlend();
-
+data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
+                                                 const Camera& camera,
+                                                 core::ShaderProgram* program,
+                                                 core::VertexArray* quadVao) {
     program->use();
     program->setUniformMat4("uViewProj", camera.proj * camera.view);
     program->setUniformInt("uVolume", 0); // sampler reads texture unit 0
@@ -228,12 +145,53 @@ data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
         program->setUniformFloat("uStepLength", kDefaultStepLength);
         uploadTransferFunction(instance.transferFunction);
 
-        auto draw = core::drawElements(*quadVao, screenQuadIndexCount_);
+        auto draw =
+            core::drawElements(*quadVao, kQuadTriangleIndices.size());
         if (draw.failed()) {
             return draw;
         }
     }
     return data::Result<void>(data::value);
+}
+
+data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
+                                          const Camera& camera,
+                                          const RenderTarget& target) {
+    if (assets_ == nullptr) {
+        // Constructed with a null store (member-init-order safety): fail with
+        // a typed error instead of dereferencing (mirrors MeshRenderer).
+        return data::makeError<void>(4, "VolumeRenderer: no shared asset store");
+    }
+    if (target.width == 0u || target.height == 0u) {
+        return data::makeError<void>(1, "VolumeRenderer: invalid target size");
+    }
+
+    auto programResult = rayCastProgram();
+    if (programResult.failed()) {
+        return data::makeError<void>(programResult.error().code,
+                                     programResult.error().message);
+    }
+    core::ShaderProgram* program = *programResult;
+
+    auto quadResult = screenQuad();
+    if (quadResult.failed()) {
+        return data::makeError<void>(quadResult.error().code,
+                                     quadResult.error().message);
+    }
+    core::VertexArray* quadVao = *quadResult;
+
+    // Begin the pass through the ONE shared prologue (bind target → viewport
+    // → clear → depth off → blend off). A null framebuffer selects the
+    // window's on-screen default framebuffer; otherwise the offscreen FBO is
+    // bound. v1 FBOs are color-only (no depth attachment), so the depth test
+    // is left off; blending is off because the shader already writes the
+    // final premultiplied composited color.
+    core::DrawContext ctx;
+    ctx.beginPass(target.framebuffer, target.width, target.height,
+                  target.clearColor.r, target.clearColor.g,
+                  target.clearColor.b, target.clearColor.a);
+
+    return drawInstances(scene, camera, program, quadVao);
 }
 
 data::Result<void> VolumeRenderer::render(const Scene& scene,
@@ -262,43 +220,11 @@ data::Result<void> VolumeRenderer::drawLayer(const VolumeScene& scene, const Cam
     if (programResult.failed()) {
         return data::makeError<void>(programResult.error().code, programResult.error().message);
     }
-    core::ShaderProgram* program = *programResult;
     auto quadResult = screenQuad();
     if (quadResult.failed()) {
         return data::makeError<void>(quadResult.error().code, quadResult.error().message);
     }
-    core::VertexArray* quadVao = *quadResult;
-    program->use();
-    program->setUniformMat4("uViewProj", camera.proj * camera.view);
-    program->setUniformInt("uVolume", 0);
-    for (const VolumeInstance& instance : scene.volumes) {
-        if (!instance.dataset) {
-            continue;
-        }
-        if (instance.transferFunction.size() > kMaxTfPoints) {
-            return data::makeError<void>(1, "VolumeRenderer: transfer function has more than " + std::to_string(kMaxTfPoints) + " control points");
-        }
-        auto texture = textureFor(instance.dataset);
-        if (texture.failed()) {
-            return data::makeError<void>(texture.error().code, texture.error().message);
-        }
-        core::Texture3D* texPtr = *texture;
-        texPtr->bind(0u);
-        const auto [boxMin, boxMax] = worldAabb(instance);
-        const glm::mat4 invModel = glm::inverse(instance.model);
-        const glm::vec3 size(static_cast<float>(instance.dataset->sizeX()), static_cast<float>(instance.dataset->sizeY()), static_cast<float>(instance.dataset->sizeZ()));
-        program->setUniformVec3("uBoxMin", boxMin);
-        program->setUniformVec3("uBoxMax", boxMax);
-        program->setUniformMat4("uInvModel", invModel);
-        program->setUniformVec3("uSize", size);
-        program->setUniformFloat("uStepLength", kDefaultStepLength);
-        uploadTransferFunction(instance.transferFunction);
-        auto draw = core::drawElements(*quadVao, screenQuadIndexCount_);
-        if (draw.failed()) {
-            return draw;
-        }
-    }
-    return data::Result<void>(data::value);
+    return drawInstances(scene, camera, *programResult, *quadResult);
 }
 
 } // namespace re::render

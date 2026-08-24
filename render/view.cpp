@@ -39,13 +39,12 @@ data::Result<void> View::render(core::DrawContext& ctx) {
     if (!target_.has_value()) {
         return data::makeError<void>(2, "View: target not created (call ensureTarget)");
     }
-    // ReView already bind+viewport+clear — single place for clear, layers never clear.
-    target_->framebuffer().bind();
-    ctx.setViewport(0, 0, static_cast<int>(target_->width()), static_cast<int>(target_->height()));
-    ctx.setClearColor(clearColor_.r, clearColor_.g, clearColor_.b, clearColor_.a);
-    ctx.clearColor();
-    ctx.disableDepthTest();
-    ctx.disableBlend();
+    // Begin the pass through the ONE shared prologue (T17: core::DrawContext::
+    // beginPass — the six-call bind+viewport+clear+depth-off+blend-off sequence
+    // exists exactly once, in core/draw.hpp). The View is the composition
+    // owner: it clears exactly once here, and layers never clear.
+    ctx.beginPass(&target_->framebuffer(), target_->width(), target_->height(),
+                  clearColor_.r, clearColor_.g, clearColor_.b, clearColor_.a);
 
     for (auto& item : items_) {
         auto res = item->drawLayer(camera_, ctx);
