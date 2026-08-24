@@ -238,37 +238,7 @@ Pure-redesign iteration (no new FRs). Priority order **redesign-first** per `ope
 
 **G** — suite green (N>=3), audit green; MPR 2D views GPU-driven; `makeSliceImage` retained only as test oracle.
 
-## T17: OIT sample — opaque + transparent meshes with depth overlap (no quads)
-
-**D** — Current `app/oit_sample.cpp` uses **three coplanar-normal transparent quads** (one shared golden quad mesh, alphas 0.55, stacked z=+0.5/0/−0.5, camera at (0,0,3)) — no opaque geometry at all, and quads only. Replace with a scene of **actual meshes**: ≥2 opaque meshes (e.g., golden box + bunny.obj or teapot.obj from `data/meshes/`) interleaved with ≥2 transparent meshes (e.g., two nested glass-like boxes/spheres built procedurally or from `data/meshes/`), arranged so that along the view direction each transparent mesh overlaps both opaque meshes and each other (e.g., opaque objects at different depths inside/between two enclosing transparent shells). This exercises the real OIT contract: opaque pass renders first, transparent fragments capture into the per-pixel linked list, depth-sorted composite blends over the opaque result — including the case the current sample never tests (opaque behind/in-front-of transparency). **Depends on T21**: correct opaque self-occlusion needs a depth buffer on the render target (today v1 FBOs are color-only — architecture-review finding "no depth attachment anywhere"; T21 adds the optional depth attachment + per-view depth-test flag this sample consumes).
-
-**FR:** `FR-render.2/3` — center-region pixels match the analytic depth-ordered premultiplied blend of [opaque occluder]→[near transparent]→[far transparent] chain within 1/255; opaque pixels under no transparency stay alpha 255; adding the transparent meshes flips the pipeline on (spy count == number of transparent meshes).
-
-**T** — gate asserts (explainable): known arrangement with closed-form expected composite at ≥3 probe pixels (fully-opaque region, near-transparent-over-opaque region, far-transparent-over-near-over-opaque region); no quad primitives (`grep -c "unitQuadXY\|makeQuadMesh" app/oit_sample.cpp` == 0); pipeline spy engaged exactly for the transparent set; suite green N>=3.
-
-**G** — suite green (N>=3), audit green, OIT sample updated instructions text matching the new scene. **Depends on:** T21.
-
-## T18: Broker becomes the only app path — complete mapper inventory (volume/plane/contour)
-
-**D** — Two related review findings fixed together: (1) `ViewSynchronizer::sync` **silently drops volumes** — a matched `VolumeObject` inserts a locally-defined `Noop : render::IRenderable` (`view_synchronizer.cpp:202-218`) and references a `PlaneMapper` that does not exist anywhere in `broker/`; (2) the broker façade has **zero app consumers** — every sample includes `render/` directly (`mpr_sample.cpp:54-64`, `volume_sample.cpp:32`, …), violating the documented ACL (`broker/README.md:7`: app never includes render/). Work: implement the missing mappers (`PlaneMapper : IMapper<scene::PlaneDesc, render::ClipPlane>` with `Space::VoxelIndex→World` conversion via dataset dims/model, plus `VolumeSliceObjectMapper` producing a real GPU slice draw once T16's extraction exists — until then `VolumeObjectMapper` must produce a working `VolumeRenderer` layer, never a Noop); route ALL samples through `IViewBridge` (`sync/renderAll/presentAll`) and delete direct `render/` includes from `app/*.cpp`; material hand-off stays stubbed only until T14 lands the material slot (`MeshObjectMapper.cpp:21` placeholder gets its real store then).
-
-**FR:** no pixel change for mesh path (regression lock); volume path gains parity with direct-`VolumeRenderer` output within 1/255 (readback probe).
-
-**T** — gate asserts: `grep -R "#include \"render/" app/ --include=*.cpp` → 0 hits; sync of a scene containing `MeshObject+VolumeObject+PlaneObject` produces ≥2 non-Noop layers whose FBO readback matches the direct-renderer oracles within 1/255 (N>=3); `grep -c "Noop" broker/` == 0; PlaneMapper unit test converts voxel-index plane z=35 → world point z=35.5 exactly.
-
-**G** — suite green (N>=3), audit green (`broker_app_reach` now enforceable against live samples), ACL rule un-commented/enforced if it was review-only.
-
-## T19: Persistence honesty — activate write-only scaffolding, unify StableKey
-
-**D** — Review found the persistence mechanism is asserted by tests but not actually driving behavior: `SceneStore/ViewStore::dirtyFieldsSince` return hardcoded field sets ignoring the `dirtyLog_` they maintain (`store.cpp:138-144`, `:204-208`); `tombstoneGen_` is written on erase but never read (no stale-handle detection enforcement, `store.cpp:89`); `view_synchronizer.cpp:49-51` contains a fake `executor_->parallelFor` exercise whose results are discarded alongside `auto sceneDirty = …; (void)sceneDirty;` (:100-103); and identity is defined twice with divergent shapes — `StableKey{version,layoutId,viewId}` in `view_compositor.hpp:34-49` vs a version-less twin in `view_synchronizer.hpp:75-88`. Work: make `dirtyFieldsSince` compute from `dirtyLog_` (bounded drain per the documented contract); enforce tombstones in `resolve()` (stale id after erase → typed error); delete the fake parallel section and consumed-or-removed `(void)` discards; extract ONE `StableKey` into a shared broker header used by synchronizer+compositor; give `CameraMapper` an id-keyed multi-entry cache (current single-slot thrashes with >1 camera, `camera_mapper.hpp:42-45` vs `invalidate(id)` ignoring id at `:59`).
-
-**FR:** none behavioral beyond correctness — existing persistence gates (T6) must stay green while their inputs become genuinely computed.
-
-**T** — gate asserts: mutate only camera → `dirtyFieldsSince` returns `{Camera}` exactly (not the hardcoded 4-field set); erase object then `resolve(oldId)` → typed error (code 2 stale); `grep -c "parallelFor" broker/` == 0; single `StableKey` definition (`grep -rc "struct StableKey" broker/` == 1); two cameras alternating pans each get cache hits (spy/gen counters prove no cross-camera thrash).
-
-**G** — suite green, audit green, `no_dump_sync` still enforced.
-
-## T20: Renderer consolidation — one prologue, one quad, one hash, no glad leak
+## T17: Renderer consolidation — one prologue, one quad, one hash, no glad leak
 
 **D** — Deduplicate the copy-paste across the four technique renderers (review §"Duplication debt"): (1) bind-target+viewport+clear+disable-depth/blend prologue repeated verbatim 4× (`mesh_renderer.cpp:149-160`, `plane_renderer.cpp:241-252`, `slice_renderer.cpp:113-128`, `volume_renderer.cpp:185-201`) → extract one internal pass-setup helper (or fold into `core::DrawContext::beginPass`); (2) each `drawLayer` duplicates its own `render()` body minus prologue (`mesh_renderer.cpp:203-236` vs `:69-95`; plane basis-matrix math duplicated nearly line-for-line at `plane_renderer.cpp:284-297` vs `:351-360`; volume uniform block `:212-237` vs `:283-300`; slice clip loop `:130-156` vs `:175-211`) → merge via private shared implementation taking a "clear" flag; (3) full-screen/unit quad VAO built 3× with identical index pattern (`plane_renderer.cpp:119-176`, `volume_renderer.cpp:73-117`, `linked_list_oit.cpp:105-144`, NDC verts defined twice `:32-37`/`:40-45`) → one shared internal quad provider; (4) `geometryFor(handle)` identical in `mesh_renderer.cpp:42-52` and `slice_renderer.cpp:86-96` → shared helper over `AssetRegistry`; (5) `meshContentHash` deliberately duplicates `scene::computeContentHash` (`asset_registry.cpp:19-20`) → move the byte-hash into a GL-free header both layers include (e.g., `data/content_hash.hpp`) so there is one definition; (6) `slice_renderer.cpp:6` includes `<glad/gl.h>` and uses `GL_TRIANGLES` (`:288`) despite "render/ is GL-call-free" headers → route through a core/ constant/wrapper.
 
@@ -278,15 +248,45 @@ Pure-redesign iteration (no new FRs). Priority order **redesign-first** per `ope
 
 **G** — suite green (N>=3 for readback gates), audit green.
 
-## T21: Depth-buffer support — optional depth attachment + per-view depth state
+## T18: Depth-buffer support — optional depth attachment + per-view depth state
 
-**D** — Architecture-review finding: v1 framebuffers are color-only everywhere (`view_target.hpp`, `RenderTarget` docs), forcing painter's-order workarounds (MPR box face-ordering comment in `makeBoxMesh`) and blocking correct OIT-with-opaque-meshes (T17). Add an optional depth attachment: `core::Texture2D` depth format (or renderbuffer via a small core/ wrapper) attachable by `ViewTarget` when constructed with `DepthMode::Enabled`; `render::View` gains a per-view `depthTest` flag driving `enable/disableDepthTest` in the pass prologue (T20 helper); default stays color-only so every existing analytic gate is untouched; OIT capture/composite explicitly disable depth as today. Document that color-only remains the deterministic-gate default (llvmpipe-safe) and enabled-depth views assert completeness with the depth attachment.
+**D** — Architecture-review finding: v1 framebuffers are color-only everywhere (`view_target.hpp`, `RenderTarget` docs), forcing painter's-order workarounds (MPR box face-ordering comment in `makeBoxMesh`) and blocking correct OIT-with-opaque-meshes (T19). Add an optional depth attachment: `core::Texture2D` depth format (or renderbuffer via a small core/ wrapper) attachable by `ViewTarget` when constructed with `DepthMode::Enabled`; `render::View` gains a per-view `depthTest` flag driving `enable/disableDepthTest` in the pass prologue (T17 helper); default stays color-only so every existing analytic gate is untouched; OIT capture/composite explicitly disable depth as today. Document that color-only remains the deterministic-gate default (llvmpipe-safe) and enabled-depth views assert completeness with the depth attachment.
 
 **FR:** new acceptance — with depth enabled, two overlapping opaque meshes at different z render the nearer mesh's color at the overlap pixel (analytic arrangement), whereas color-only renders the later-drawn one; existing gates unchanged.
 
 **T** — gate asserts (N>=3): depth-on target completeness check passes; near-mesh-wins overlap probe within 1/255; depth-off default leaves all prior FBO gates green; `LinkedListOIT` end-to-end still green with depth-on targets.
 
-**G** — suite green (N>=3), audit green. **Feeds:** T17 (required), MPR 3D view cleanup (follow-up allowed to drop face-ordering hack).
+**G** — suite green (N>=3), audit green. **Feeds:** T19 (required), MPR 3D view cleanup (follow-up allowed to drop face-ordering hack).
+
+## T19: OIT sample — opaque + transparent meshes with depth overlap (no quads)
+
+**D** — Current `app/oit_sample.cpp` uses **three coplanar-normal transparent quads** (one shared golden quad mesh, alphas 0.55, stacked z=+0.5/0/−0.5, camera at (0,0,3)) — no opaque geometry at all, and quads only. Replace with a scene of **actual meshes**: ≥2 opaque meshes (e.g., golden box + bunny.obj or teapot.obj from `data/meshes/`) interleaved with ≥2 transparent meshes (e.g., two nested glass-like boxes/spheres built procedurally or from `data/meshes/`), arranged so that along the view direction each transparent mesh overlaps both opaque meshes and each other (e.g., opaque objects at different depths inside/between two enclosing transparent shells). This exercises the real OIT contract: opaque pass renders first, transparent fragments capture into the per-pixel linked list, depth-sorted composite blends over the opaque result — including the case the current sample never tests (opaque behind/in-front-of transparency). **Depends on T18**: correct opaque self-occlusion needs a depth buffer on the render target (today v1 FBOs are color-only — architecture-review finding "no depth attachment anywhere"; T18 adds the optional depth attachment + per-view depth-test flag this sample consumes).
+
+**FR:** `FR-render.2/3` — center-region pixels match the analytic depth-ordered premultiplied blend of [opaque occluder]→[near transparent]→[far transparent] chain within 1/255; opaque pixels under no transparency stay alpha 255; adding the transparent meshes flips the pipeline on (spy count == number of transparent meshes).
+
+**T** — gate asserts (explainable): known arrangement with closed-form expected composite at ≥3 probe pixels (fully-opaque region, near-transparent-over-opaque region, far-transparent-over-near-over-opaque region); no quad primitives (`grep -c "unitQuadXY\|makeQuadMesh" app/oit_sample.cpp` == 0); pipeline spy engaged exactly for the transparent set; suite green N>=3.
+
+**G** — suite green (N>=3), audit green, OIT sample updated instructions text matching the new scene. **Depends on:** T18.
+
+## T20: Broker becomes the only app path — complete mapper inventory (volume/plane/contour)
+
+**D** — Two related review findings fixed together: (1) `ViewSynchronizer::sync` **silently drops volumes** — a matched `VolumeObject` inserts a locally-defined `Noop : render::IRenderable` (`view_synchronizer.cpp:202-218`) and references a `PlaneMapper` that does not exist anywhere in `broker/`; (2) the broker façade has **zero app consumers** — every sample includes `render/` directly (`mpr_sample.cpp:54-64`, `volume_sample.cpp:32`, …), violating the documented ACL (`broker/README.md:7`: app never includes render/). Work: implement the missing mappers (`PlaneMapper : IMapper<scene::PlaneDesc, render::ClipPlane>` with `Space::VoxelIndex→World` conversion via dataset dims/model, plus `VolumeSliceObjectMapper` producing a real GPU slice draw once T16's extraction exists — until then `VolumeObjectMapper` must produce a working `VolumeRenderer` layer, never a Noop); route ALL samples through `IViewBridge` (`sync/renderAll/presentAll`) and delete direct `render/` includes from `app/*.cpp`; material hand-off stays stubbed only until T14 lands the material slot (`MeshObjectMapper.cpp:21` placeholder gets its real store then).
+
+**FR:** no pixel change for mesh path (regression lock); volume path gains parity with direct-`VolumeRenderer` output within 1/255 (readback probe).
+
+**T** — gate asserts: `grep -R "#include \"render/" app/ --include=*.cpp` → 0 hits; sync of a scene containing `MeshObject+VolumeObject+PlaneObject` produces ≥2 non-Noop layers whose FBO readback matches the direct-renderer oracles within 1/255 (N>=3); `grep -c "Noop" broker/` == 0; PlaneMapper unit test converts voxel-index plane z=35 → world point z=35.5 exactly.
+
+**G** — suite green (N>=3), audit green (`broker_app_reach` now enforceable against live samples), ACL rule un-commented/enforced if it was review-only.
+
+## T21: Persistence honesty — activate write-only scaffolding, unify StableKey
+
+**D** — Review found the persistence mechanism is asserted by tests but not actually driving behavior: `SceneStore/ViewStore::dirtyFieldsSince` return hardcoded field sets ignoring the `dirtyLog_` they maintain (`store.cpp:138-144`, `:204-208`); `tombstoneGen_` is written on erase but never read (no stale-handle detection enforcement, `store.cpp:89`); `view_synchronizer.cpp:49-51` contains a fake `executor_->parallelFor` exercise whose results are discarded alongside `auto sceneDirty = …; (void)sceneDirty;` (:100-103); and identity is defined twice with divergent shapes — `StableKey{version,layoutId,viewId}` in `view_compositor.hpp:34-49` vs a version-less twin in `view_synchronizer.hpp:75-88`. Work: make `dirtyFieldsSince` compute from `dirtyLog_` (bounded drain per the documented contract); enforce tombstones in `resolve()` (stale id after erase → typed error); delete the fake parallel section and consumed-or-removed `(void)` discards; extract ONE `StableKey` into a shared broker header used by synchronizer+compositor; give `CameraMapper` an id-keyed multi-entry cache (current single-slot thrashes with >1 camera, `camera_mapper.hpp:42-45` vs `invalidate(id)` ignoring id at `:59`).
+
+**FR:** none behavioral beyond correctness — existing persistence gates (T6) must stay green while their inputs become genuinely computed.
+
+**T** — gate asserts: mutate only camera → `dirtyFieldsSince` returns `{Camera}` exactly (not the hardcoded 4-field set); erase object then `resolve(oldId)` → typed error (code 2 stale); `grep -c "parallelFor" broker/` == 0; single `StableKey` definition (`grep -rc "struct StableKey" broker/` == 1); two cameras alternating pans each get cache hits (spy/gen counters prove no cross-camera thrash).
+
+**G** — suite green, audit green, `no_dump_sync` still enforced.
 
 ## T22: Error-model hardening — namespaced codes, safe Result accessors
 
@@ -308,34 +308,6 @@ Pure-redesign iteration (no new FRs). Priority order **redesign-first** per `ope
 
 **G** — suite green, audit green.
 
-## Definition of Done (end-of-loop evidence, finalized at V2-T8 — archived)
-
-- [x] All 8 V2 task gates green (see `COMPLETED_TASKS.md` V2 `V2-T1..V2-T8`); full suite green on a clean tree at the last V2 task.
-- [x] GPU/readback tests (V2-T2, V2-T6) verified with **N>=3 consecutive green runs** (archived — `tools/logs/` purged 2026-08-23).
-- [x] Mechanical audit green (`tools/audit.sh`) with `AUDIT_SOURCE_DIRS="io data volume core render app utils tests"` plus `scene`/`broker`/`utils` as landed.
-- [x] ASan+UBSan clean on all test binaries (no leaks, no UB).
-- [x] Documentation map complete: `docs/render.md`, `docs/core.md`, `AGENTS.md`, `docs/spec/env.md`, `tools/env.sh`, `TASKS.md` preamble — exactly as listed per task.
-- [x] Sample smoke set (mesh/plane/volume/slice/oit/mpr) still green.
-
-## Definition of Done (end-of-loop evidence, finalized at T12 — pure-redesign; T10 stretch)
-
-V2 DoD above **plus** (checked at `T12` — `T10` is stretch/deferred):
-
-- [ ] `scene/` value library `re::scene` `STATIC` exists with `camera.hpp`/`view.hpp`/`object.hpp` + `SceneStore` (`AssetId` per `T7`) — no `App` prefix, `scene/` links to `data/`+`volume/`+`glm` only (§3.1, `disposition_scene`).
-- [ ] `broker/` `STATIC` exists with `IMapper`/`ICachedMapper` ISP-split + `Broker` `type_index` registry (OCP, no `enum` switch) + `IViewBridge` composing `ViewSynchronizer`+`ViewCompositor` (SRP) — one file per mapper, no god `Translator` (§11.2.1, `broker_per_type`).
-- [ ] `DrawContext` instance replaces `core/draw.cpp` global cache — `DrawContext{Viewport,ClearColor,Depth,Blend}` per `FrameContext`, spy per context (SRP, test determinism — see `T2`).
-- [ ] `render::View` (`ReView`) per screen section + heterogeneous `list<IRenderable>` (`VolumeSlice+MeshSlice` for `2D`, `Volume+Mesh` for `3D`) — `ViewRenderer` deleted; `ReView` holds `ViewTarget{Texture2D+Framebuffer}` + `vector<IRenderable>` (`drawLayer`) (see `T5`, §3.2).
-- [ ] `scene::Camera` (`pan/rotate/zoom/orbit`) sends only `viewMatrix()`(+`proj`+`pos`) via `CameraMapper` to `render::Camera` with per-field `viewGen`/`projGen` (see `T4`, §3.1).
-- [ ] Persistence by `CompositeKey{Version,LayoutId,Id,Gen,Hash}` — `Camera::rotate` dirties only `CameraMapper`, `2D→3D` toggle same `ViewId` keeps `ReView` identity, size resize recreates only `ViewTarget` inner `FBO` (see `T6`, §10.3/10.4).
-- [ ] `SceneStore`-owned `AssetId{generation,contentHash}` via `AssetRegistry<T>` template — same `data::Mesh` deduped to one `AssetId`+one `Handle`, content-hash alias, `data::Mesh` stays pure (see `T7`, §7 addendum).
-- [ ] RE-minimal `render/re_scene/` inventory `docs/re_scene_inventory.md` exists — every `Re*` field rationale `derived|uniform-ready|handle`, no verbatim `app::MaterialDesc` copy (`asset_indirection`).
-- [ ] `T8` note: `IMaterial→Phong` single path kept (PBR/`Slice`/`Contour` + `ILight` deferred — Phong-only non-goal §1) — `TransferFunction` stays beside `VolumeMaterial` (see `T8`, §12.5).
-- [ ] `render::ContourRenderer` GPU contour (`contour.geom.glsl`) via `ContourMapper` — `app/mpr_contour` CPU `meshPlaneContour`/`overlayContour` gone, `FR-app.3` 2 px band still green via GPU readback (see `T11`, §3, geometry shader)
-- [ ] `render::PlaneRenderer` owns all textured-plane draws — no `app/` CPU `PlaneGeometry` quad parsing outside `render/` (see `T12`, §3, `FR-render.5`)
-- [ ] Full audit green including `disposition_scene`, `disposition_render`, `broker_per_type`, `isp_mapper_forbid`, `no_dump_sync`, `asset_indirection`, `broker_app_reach` (plus `scene`/`broker`/`utils` in `AUDIT_SOURCE_DIRS` `io data volume scene core broker render app utils tests`). `rhi_ownership`/`require_only` remain stretch (`T10` deferred — `core|` anchor stays; `core/rhi/gl|` lands with V3.2a skeleton).
-- [ ] `ASan+UBSan` clean on all test binaries (no leaks, no UB, `GALLIUM_DRIVER=llvmpipe` `MESA_GL_VERSION_OVERRIDE=4.6`).
-- [ ] `GPU/readback` gates (`T5` 1280×480 blit, `T6` persistence) verified `N>=3` consecutive green (`tools/logs/*.gate.log` records).
-- [ ] `5+1` sample smoke (`mesh/plane/volume/slice/oit/mpr`) still green on `GALLIUM_DRIVER=llvmpipe` `MESA_GL_VERSION_OVERRIDE=4.6` (portable 450 floor).
 
 ## Definition of Done — review follow-ups (T13–T23, user-mandated + architecture review)
 
@@ -343,10 +315,10 @@ V2 DoD above **plus** (checked at `T12` — `T10` is stretch/deferred):
 - [ ] `T14`: unified typed asset store covers mesh + volume + image (+ material slot with real dedup replacing the `material=nullptr` placeholder); per-renderer pointer-keyed texture caches deleted; same-dataset-two-renderers gate proves one GPU texture.
 - [ ] `T15`: comment sweep landed — every SPEC/task tag is accompanied by self-contained rationale (incl. the false "deduped RE material handle" claim until T14 makes it true); bare-tag pattern rule green or explicitly allowlisted.
 - [ ] `T16`: GPU volume-plane extraction shipped; `plane_sample` demonstrates an extracted volume plane (not a gradient quad); MPR 2D views interactive on the GPU path with CPU oracle retained for tests.
-- [ ] `T17` (needs `T21`): OIT sample = ≥2 opaque + ≥2 transparent real meshes with view-direction overlap, depth-buffer-backed target, analytic composite probes green N>=3.
-- [ ] `T18`: all samples route through `IViewBridge`; volume/plane layers are real (no Noop); `PlaneMapper` exists with voxel→world conversion test.
-- [ ] `T19`: dirty tracking computed from `dirtyLog_`; tombstoned ids resolve to typed errors; single `StableKey`; no fake parallel code; multi-camera mapper cache.
-- [ ] `T20`: renderer prologue/quad/hash/geometryFor deduplicated; zero pixel drift on all renderer gates; `<glad/gl.h>` gone from render/.
-- [ ] `T21`: optional depth attachment + per-view depth flag; near-mesh-wins overlap gate; color-only default untouched.
+- [ ] `T17` (renderer consolidation): prologue/quad/hash/geometryFor deduplicated; zero pixel drift on all renderer gates; `<glad/gl.h>` gone from render/.
+- [ ] `T18` (depth): optional depth attachment + per-view depth flag; near-mesh-wins overlap gate; color-only default untouched.
+- [ ] `T19` (needs `T18`): OIT sample = ≥2 opaque + ≥2 transparent real meshes with view-direction overlap, depth-buffer-backed target, analytic composite probes green N>=3.
+- [ ] `T20`: all samples route through `IViewBridge`; volume/plane layers are real (no Noop); `PlaneMapper` exists with voxel→world conversion test.
+- [ ] `T21`: dirty tracking computed from `dirtyLog_`; tombstoned ids resolve to typed errors; single `StableKey`; no fake parallel code; multi-camera mapper cache.
 - [ ] `T22`: domain-tagged error codes; debug-trap on failed `Result` dereference; dead accessors removed.
 - [ ] `T23`: resize callback + live-aspect samples; simulated-resize projection gate.
