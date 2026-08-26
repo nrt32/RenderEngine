@@ -137,6 +137,13 @@ ownership_raw_ptr_scene	forbid_inside	scene|(const[[:space:]]+)?[A-Z][A-Za-z0-9_
 ownership_raw_ptr_broker	forbid_inside	broker|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]	broker/ must not declare unmarked raw pointers — mark documented borrows `Type* /*borrow*/ name` + @note lifetime: owner, or use smart/handle types
 ownership_raw_ptr_app	forbid_inside	app|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]	app/ must not declare unmarked raw pointers — mark documented borrows `Type* /*borrow*/ name` + @note lifetime: owner, or use smart/handle types
 
+# --- Evidence rule + regression lock (review-gated, generic) --------------------
+# R4 evidence_rule — every gate test asserts an explainable constant (analytic value, golden corpus hit, spec-derived invariant — never non-empty/non-black/>0); reviewer verifies 1/255, 1e-6, 152MB cost etc. Mechanical floor is the per-task grep counts; the rule itself is review-gated.
+# R3 regression_lock — prior task tests never weakened to make room for new code (review verifies).
+# Placeholders keep audit green while documenting the review gate (never match).
+# evidence_rule_placeholder	forbid_grep	__never_matches_evidence_rule__
+# regression_lock_placeholder	forbid_grep	__never_matches_regression_lock__
+
 # --- Build hygiene (generic, reinforce here) -----------------------------------
 # (built-in checks already cover warning-suppression flags/pragmas)
 
