@@ -48,27 +48,27 @@ V3 has **no new FRs** (2026-08-23 direction) — every active `T1..T19` is a rev
 
 | FR | Description (tolerance) | Regression T (V3) | Active T (T1..T4 draft) | Original gate | Acceptance constant |
 |---|---|---|---|---|---|
-| FR-io.1 | OBJ loader — vertex/index/AABB vs golden | T17 (via T5 infra) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T4 | bunny `v` hand-count, `AABB` exact |
-| FR-io.2 | NRRD loader — dims + corner voxels | T15 (via T13) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T5 | dims ≤128³, corner values exact |
-| FR-io.3 | Image loader (stb) — dims + corner/center | T17 (via T13 VG) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T4 | `w*h*ch` + probe pixels |
-| FR-io.4 | Loaders reject malformed → typed error | T12 (VG5) + T13 (BudgetExceeded) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T4/T5 | `ErrorDomain::Io` code, `errno ERANGE` |
-| FR-data.1 | Mesh face normal analytic | T17 (via T7) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T4 | cross-product within 1e-6 |
-| FR-data.2 | Mesh AABB exact | T17 (via T7) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T4 | golden `min/max` exact |
-| FR-data.3 | VolumeDataset trilinear vs 8 corners | T7 (preserved via T6 helpers) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T5 | interpolant within 1e-6 |
-| FR-vol.1 | TransferFunction control points → RGBA | T18 (TF clamp) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T6 | exact at points, ramp 1e-6 |
-| FR-vol.2 | Ray-cast compositing front-to-back | T10 (via T8 OIT docs) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T6 | alpha-blend within 1e-6 |
-| FR-vol.3 | Ray/AABB step positions analytic | T10 (via T8) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T6 | step positions analytic |
-| FR-core.1 | RAII GL objects no errors/leaks | T4/T5 + T11 sanitizers | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T3 | `GL_NO_ERROR` + ASan clean |
-| FR-core.2 | ShaderProgram diagnostics `ERROR: 0:7` | T12 (VG1) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T3 | golden substring `glibberish` line 7 |
-| FR-render.1 | MeshRenderer center pixel vs analytic | T10 (RI5 hoist) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T7 | center pixel within 1/255 |
-| FR-render.2 | OIT depth-sorted composite | T8 (cost table) + T17 | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T10 | 1/255 at 3 probes, spy count |
-| FR-render.3 | OIT auto-engage on transparent | T8 + T14 (variant collapse) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T7/T10 | `isTransparent` + spy |
-| FR-render.4 | SliceRenderer verts on plane ε=1e-4 | T10 (RI2 eps) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T11 | distance ≤ ε |
-| FR-render.5 | PlaneRenderer textured quad 1/255 | T7 (via T17) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T8 | corner/center within 1/255 |
-| FR-render.6 | VolumeRenderer ray-cast synthetic 1/255 | T6/T7 (asset handles) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T9 | center pixel analytic 1/255 |
-| FR-app.1 | Samples exit 0 + no sanitizer (smoke) | T15 (GlfwRuntime) + T17 | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T12/T13 | exit code 0, timeout |
-| FR-app.2 | MPR 2×2 grid 1280×960 / 640×480 + axis convention | T12 (via T13) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T14 | viewport dims exact, per-axis probe |
-| FR-app.3 | MPR contour 90% within 2 px + 3D view | T17 (contour GPU, via T12 overlay) + T12 (View/overlay) | T1..T4 via R3 (layer→FR-render.5/6, smoke→FR-app.1, overlay→T3, camera→T4) | V1 T15 | 90% within 2 px, 1/255 at probe (`tests/t*_contour*`) |
+| FR-io.1 | OBJ loader — vertex/index/AABB vs golden | T17 (via T5 infra) | T1 (layer technique-priority keeps Mesh load green) | V1 T4 | bunny `v` hand-count, `AABB` exact |
+| FR-io.2 | NRRD loader — dims + corner voxels | T15 (via T13) | R3 (NRRD dims ≤128³, T13 in previous iteration, preserved) | V1 T5 | dims ≤128³, corner values exact |
+| FR-io.3 | Image loader (stb) — dims + corner/center | T17 (via T13 VG) | R3 (image dims, preserved) | V1 T4 | `w*h*ch` + probe pixels |
+| FR-io.4 | Loaders reject malformed → typed error | T12 (VG5) + T13 (BudgetExceeded) | R3 (typed ErrorDomain::Io, T12 VG5 in previous, preserved) | V1 T4/T5 | `ErrorDomain::Io` code, `errno ERANGE` |
+| FR-data.1 | Mesh face normal analytic | T17 (via T7) | T1 (layer does not alter face normal) | V1 T4 | cross-product within 1e-6 |
+| FR-data.2 | Mesh AABB exact | T17 (via T7) | T1 (AABB untouched) | V1 T4 | golden `min/max` exact |
+| FR-data.3 | VolumeDataset trilinear vs 8 corners | T7 (preserved via T6 helpers) | T1 (trilinear via helpers preserved) | V1 T5 | interpolant within 1e-6 |
+| FR-vol.1 | TransferFunction control points → RGBA | T18 (TF clamp) | R3 (TF control points, T18 in previous, preserved) | V1 T6 | exact at points, ramp 1e-6 |
+| FR-vol.2 | Ray-cast compositing front-to-back | T10 (via T8 OIT docs) | R3 (compositing preserved) | V1 T6 | alpha-blend within 1e-6 |
+| FR-vol.3 | Ray/AABB step positions analytic | T10 (via T8) | R3 (ray/AABB preserved) | V1 T6 | step positions analytic |
+| FR-core.1 | RAII GL objects no errors/leaks | T4/T5 + T11 sanitizers | T1 (CompositeKey+REContext via T2 harness not GL) | V1 T3 | `GL_NO_ERROR` + ASan clean |
+| FR-core.2 | ShaderProgram diagnostics `ERROR: 0:7` | T12 (VG1) | R3 (shader ERROR:0:7 preserved, T12 VG1 in previous) | V1 T3 | golden substring `glibberish` line 7 |
+| FR-render.1 | MeshRenderer center pixel vs analytic | T10 (RI5 hoist) | T1 (Mesh layer priority 3 vs Volume 0, 1/255) | V1 T7 | center pixel within 1/255 |
+| FR-render.2 | OIT depth-sorted composite | T8 (cost table) + T17 | T1 (OIT contour layer 5 vs mesh 3 + technique priority) | V1 T10 | 1/255 at 3 probes, spy count |
+| FR-render.3 | OIT auto-engage on transparent | T8 + T14 (variant collapse) | T1 (isTransparent + layer cull + mask) | V1 T7/T10 | `isTransparent` + spy |
+| FR-render.4 | SliceRenderer verts on plane ε=1e-4 | T10 (RI2 eps) | T1 (MeshSlice layer 4 vs Contour 5) | V1 T11 | distance ≤ ε |
+| FR-render.5 | PlaneRenderer textured quad 1/255 | T7 (via T17) | T1 (Plane layer 2, technique priority 2) | V1 T8 | corner/center within 1/255 |
+| FR-render.6 | VolumeRenderer ray-cast synthetic 1/255 | T6/T7 (asset handles) | T1 (Volume layer 0, technique priority 0) | V1 T9 | center pixel analytic 1/255 |
+| FR-app.1 | Samples exit 0 + no sanitizer (smoke) | T15 (GlfwRuntime) + T17 | T2 (bounded 20-frame smoke exit 0, FR-app.1) | V1 T12/T13 | exit code 0, timeout |
+| FR-app.2 | MPR 2×2 grid 1280×960 / 640×480 + axis convention | T12 (via T13) | R3 (MPR 2×2 grid preserved, T1 layerMask not grid) | V1 T14 | viewport dims exact, per-axis probe |
+| FR-app.3 | MPR contour 90% within 2 px + 3D view | T17 (contour GPU, via T12 overlay) + T12 (View/overlay) | T1 (contour L5 vs slice L1, 90% within 2px) | V1 T15 | 90% within 2 px, 1/255 at probe (`tests/t*_contour*`) |
 
 ---
 
