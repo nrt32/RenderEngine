@@ -50,7 +50,7 @@
 #include <optional>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/element_buffer.hpp"
 #include "core/framebuffer.hpp"
 #include "core/shader_program.hpp"
@@ -154,10 +154,10 @@ class PlaneRenderer : public IRenderer {
                                const RenderTarget& target) override;
 
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
-    /// assuming ReView already performed bind+viewport+clear via the same
-    /// DrawContext. Does not clear — second layer must not clear away the first.
-    data::Result<void> drawLayer(const PlaneScene& scene, const Camera& camera,
-                                 core::DrawContext& ctx);
+    /// assuming ReView already performed bind+viewport+clear via REContext::current()
+    /// (T2 global per-GL-context, 2 layers sharing viewport issue 1 glViewport).
+    /// Does not clear — second layer must not clear away the first.
+    data::Result<void> drawLayer(const PlaneScene& scene, const Camera& camera);
 
     /// The shared asset store textures resolve through (non-null after a valid
     /// construction; null only if constructed with nullptr — renders then fail

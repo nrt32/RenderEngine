@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/shader_program.hpp"
 
 namespace re::render {
@@ -148,7 +148,7 @@ data::Result<void> SliceRenderer::render(const SliceScene& scene,
     // bound. Direct single-scene renders keep the deterministic depth-off
     // painter's-order pass — a target's optional depth attachment is consumed
     // only through the per-view opt-in (render::View::setDepthTest).
-    core::DrawContext ctx;
+    auto& ctx = core::REContext::current();
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,
                   target.clearColor.b, target.clearColor.a);
@@ -171,15 +171,13 @@ data::Result<void> SliceRenderer::render(const Scene& scene,
     return render(slice, camera, slice.plane, target);
 }
 
-data::Result<void> SliceRenderer::drawLayer(const SliceScene& scene, const Camera& camera,
-                                            core::DrawContext& ctx) {
-    return drawLayer(scene, camera, scene.plane, ctx);
+data::Result<void> SliceRenderer::drawLayer(const SliceScene& scene, const Camera& camera) {
+    return drawLayer(scene, camera, scene.plane);
 }
 
-data::Result<void> SliceRenderer::drawLayer(const SliceScene& scene, const Camera& camera,
-                                            const ClipPlane& plane, core::DrawContext& ctx) {
+data::Result<void> SliceRenderer::drawLayer(const SliceScene& scene, const Camera& camera, const ClipPlane& plane) {
     // ReView already bind+viewport+clear via ctx; does not clear between layers.
-    (void)ctx;
+    // T2: (void)ctx removed — REContext::current() is the global per-GL-context single writer
     auto programResult = clipProgram();
     if (programResult.failed()) {
         return data::makeError<void>(programResult.error().code, programResult.error().message);

@@ -6,11 +6,14 @@
 #include <string>
 #include <utility>
 
+#include "core/load_core_gl.hpp"
+#include "core/re_context.hpp"
+
 // GLFW is the windowing / context-creation backend.
+// Define GLFW_INCLUDE_NONE so GLFW does not include GL/gl.h (conflicts with glad).
+#define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
-
-#include "core/load_core_gl.hpp"
 
 namespace re::core {
 
@@ -58,7 +61,23 @@ Window::~Window() {
 
 void Window::release() noexcept {
     if (window_ != nullptr) {
-        glfwMakeContextCurrent(nullptr);
+        // T2: clear per-GL-context REContext mirror before destroying the window.
+        // Each GLFWwindow* maps to its own REContextState (viewport, clearColor,
+        // depthTest, blend, blendFunc, cull, FBO/VAO/program/image units); clearing
+        // here prevents stale map entries and ensures a later window with the same
+        // address gets a cold cache (no cross-context bleed). Worker threads with
+        // private contexts get private mirrors via thread_local — no lock on the
+        // per-frame path. Only clear the current GL context and REContext if this
+        // window is the one currently bound (otherwise we would unbind a different
+        // window's context that was restored before this destructor ran).
+        const bool isCurrent = glfwGetCurrentContext() == window_;
+        REContext::clearWindow(window_);
+        if (isCurrent) {
+            glfwMakeContextCurrent(nullptr);
+            // Also clear the thread_local current if it pointed at this window's state
+            // (fallback will be used until next makeCurrent).
+            REContext::setCurrentWindow(nullptr);
+        }
         glfwDestroyWindow(window_);
         window_ = nullptr;
         glfwTerminate();
@@ -89,7 +108,14 @@ void Window::requestClose() noexcept {
 
 void Window::makeContextCurrent() const noexcept {
     if (window_ != nullptr) {
-        glfwMakeContextCurrent(window_);
+        // T2: global per-GL-context REContext — thread_local current() follows
+        // the GLFW window that is made current. The mapping GLFWwindow* →
+        // REContextState keeps viewport, clearColor, depthTest, blend, blendFunc,
+        // cull, FBO/VAO/program/image units per context. No auto-guess; the
+        // caller must make the context current before issuing draw calls, and
+        // invalidation at boundaries (SampleHarness post-ImGui, invalidate())
+        // is explicit.
+        REContext::makeCurrent(window_);
     }
 }
 
@@ -135,6 +161,12 @@ data::Result<Window> Window::create(int width, int height,
                    (desc != nullptr ? desc : "unknown"));
     }
 
+    // T2: set REContext current to this window's mirror before loading GL.
+    // Each GLFWwindow* owns its own state (viewport etc.) via the
+    // REContext::current() thread_local mapping; worker threads get private
+    // mirrors with no lock. loadCoreGl() will also sync via glfwGetCurrentContext
+    // once glad is loaded, but we seed it here so pre-load GL calls are tracked.
+    REContext::setCurrentWindow(window);
     glfwMakeContextCurrent(window);
 
     Window win(window);

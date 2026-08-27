@@ -108,6 +108,17 @@ class OffscreenContext {
     /// Human-readable name for a ContextBackend (for logs / diagnostics).
     static const char* backendName(ContextBackend backend) noexcept;
 
+    /// Make this context current on the calling thread and set
+    /// REContext::current() to its per-GL-context mirror (T2). Each
+    /// GLFWwindow* maps to its own REContextState (viewport etc.); EGL
+    /// surfaceless uses the per-thread fallback. Worker threads with private
+    /// contexts get private mirrors with no lock.
+    void makeCurrent() const noexcept;
+
+    /// Access underlying GLFW window handle (for REContext switching tests).
+    /// Null when backend is not Glfw.
+    GLFWwindow* glfwHandle() const noexcept { return window_; }
+
    private:
     explicit OffscreenContext(ContextBackend backend) noexcept;
 

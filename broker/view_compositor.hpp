@@ -107,13 +107,15 @@ class ViewCompositor {
    private:
     /// Run the OIT capture+composite stage for `rv`'s pending transparent
     /// instances into its own target. No-op when nothing is pending or the
-    /// stack has no pipeline.
+    /// stack has no pipeline. Uses REContext::current() (T2 global per-GL-context,
+    /// thread_local GLFWwindow* → REContextState) for the depth-state handoff
+    /// (depth OFF during capture/composite via the same global current the view
+    /// pass used).
     /// @note lifetime: `rv` is a non-owning view over this compositor's
     /// views_ storage (the ReView being dispatched); consumed synchronously
     /// within the renderAll call, never retained.
     data::Result<void> captureTransparents(StableKey key,
-                                           render::View* /*borrow*/ rv,
-                                           core::DrawContext& ctx);
+                                           render::View* /*borrow*/ rv);
 
     std::shared_ptr<Broker> broker_;
     std::shared_ptr<RenderStack> stack_;

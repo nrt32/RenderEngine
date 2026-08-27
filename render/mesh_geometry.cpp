@@ -11,7 +11,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 
 namespace re::render {
 

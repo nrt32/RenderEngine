@@ -10,12 +10,13 @@
 // state), any pending transparent mesh instances are captured through the
 // stack's OIT pipeline and composited back-to-front over the opaque result
 // INSIDE the same view target — begin() → one drawTransparent per instance →
-// end(). The depth test is handed back OFF through the same DrawContext the
-// pass enabled it with, matching every established LinkedListOIT flow.
+// end(). The depth test is handed back OFF through REContext::current() (T2
+// global per-GL-context, thread_local GLFWwindow* → REContextState) matching
+// every established LinkedListOIT flow; per-frame local ctx deleted.
 
 #include "broker/view_compositor.hpp"
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "render/asset_registry.hpp"
 #include "render/linked_list_oit.hpp"
 #include "render/view.hpp"
@@ -90,8 +91,7 @@ std::size_t ViewCompositor::transparentCount(uint64_t layoutId, uint64_t viewId)
     return it == transparentPending_.end() ? 0u : it->second.size();
 }
 
-data::Result<void> ViewCompositor::captureTransparents(
-    StableKey key, render::View* /*borrow*/ rv, core::DrawContext& ctx) {
+data::Result<void> ViewCompositor::captureTransparents(StableKey key, render::View* /*borrow*/ rv) {
     auto pending = transparentPending_.find(key);
     if (pending == transparentPending_.end() || pending->second.empty()) {
         return data::Result<void>(data::value);
@@ -106,7 +106,7 @@ data::Result<void> ViewCompositor::captureTransparents(
     // Hand the depth state back to the established pipeline configuration
     // (depth OFF during capture AND composite) through the SAME ctx the view
     // pass used — exact transition regardless of global draw-state caches.
-    ctx.disableDepthTest();
+    core::REContext::current().disableDepthTest();
 
     render::RenderTarget target;
     target.framebuffer = &rv->target()->framebuffer();
@@ -141,12 +141,15 @@ data::Result<void> ViewCompositor::renderAll() {
     for (auto& kv : views_) {
         auto* rv = kv.second.get();
         if (!rv) continue;
-        core::DrawContext ctx;
-        auto r = rv->renderWithEnsure(ctx);
+        // T2: global per-GL-context REContext (thread_local GLFWwindow* → REContextState).
+        // View::render uses REContext::current() internally so 2 layers sharing
+        // viewport within the same GL context issue 1 glViewport (dedup). No
+        // per-frame local ctx instance.
+        auto r = rv->renderWithEnsure();
         if (r.failed()) return r;
         // OIT capture/composite over this view's opaque result (no-op when
         // nothing pending or no pipeline wired).
-        auto c = captureTransparents(kv.first, rv, ctx);
+        auto c = captureTransparents(kv.first, rv);
         if (c.failed()) return c;
     }
     return data::Result<void>(data::value);

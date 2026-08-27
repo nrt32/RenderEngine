@@ -17,7 +17,7 @@
 #include <utility>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/shader_program.hpp"
 #include "volume/color.hpp"
 
@@ -172,7 +172,7 @@ data::Result<void> VolumeSliceRenderer::render(const VolumeSliceScene& scene,
     // only via the per-view opt-in), so the depth test stays off; blending
     // stays off because the shader already writes the final straight-RGBA
     // slice color (and transparent black where the plane misses the volume).
-    core::DrawContext ctx;
+    auto& ctx = core::REContext::current();
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,
                   target.clearColor.b, target.clearColor.a);
@@ -187,12 +187,10 @@ data::Result<void> VolumeSliceRenderer::render(const VolumeSliceScene& scene,
     return data::Result<void>(data::value);
 }
 
-data::Result<void> VolumeSliceRenderer::drawLayer(const VolumeSliceScene& scene,
-                                                  const Camera& camera,
-                                                  core::DrawContext& ctx) {
+data::Result<void> VolumeSliceRenderer::drawLayer(const VolumeSliceScene& scene, const Camera& camera) {
     // ReView already bind+viewport+clear via ctx; layers must not clear
     // between each other, so the context is intentionally untouched here.
-    (void)ctx;
+    // T2: (void)ctx removed — REContext::current() is the global per-GL-context single writer
     if (assets_ == nullptr) {
         return data::makeError<void>(4,
                                      "VolumeSliceRenderer: no shared asset "

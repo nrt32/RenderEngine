@@ -7,7 +7,7 @@
 
 #include "render/view.hpp"
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "render/view_target.hpp"
 
 namespace re::render {
@@ -53,22 +53,25 @@ data::Result<void> View::ensureTarget() {
     return data::Result<void>(data::value);
 }
 
-data::Result<void> View::render(core::DrawContext& ctx) {
+data::Result<void> View::render() {
     if (!target_.has_value()) {
         return data::makeError<void>(2, "View: target not created (call ensureTarget)");
     }
-    // Begin the pass through the ONE shared prologue (the bind+viewport+clear+
-    // depth-state+blend-off sequence exists exactly once, in core/draw.hpp).
-    // The per-view depthTest flag drives the prologue's depth branch: enabled
-    // (+ depth cleared to 1.0) for occlusion-capable views, disabled for the
-    // default color-only painter's-order pass. The View is the composition
-    // owner: it clears exactly once here, and layers never clear.
+    // T2: global per-GL-context REContext (thread_local GLFWwindow* → REContextState).
+    // Begin the pass through the ONE shared prologue (bind+viewport+clear+
+    // depth-state+blend-off exists exactly once, in core/re_context.hpp). The
+    // per-view depthTest flag drives the depth branch: enabled (+ depth cleared to
+    // 1.0) for occlusion views, disabled for default color-only painter's-order.
+    // View is composition owner: it clears exactly once here, layers never clear.
+    // 2 layers sharing viewport within same GL context issue 1 glViewport (dedup
+    // via the global current's cache). Per-frame local ctx instances deleted.
+    auto& ctx = core::REContext::current();
     ctx.beginPass(&target_->framebuffer(), target_->width(), target_->height(),
                   clearColor_.r, clearColor_.g, clearColor_.b, clearColor_.a,
                   depthTest_);
 
     for (auto& item : items_) {
-        auto res = item->drawLayer(camera_, ctx);
+        auto res = item->drawLayer(camera_);
         if (res.failed()) {
             return res;
         }

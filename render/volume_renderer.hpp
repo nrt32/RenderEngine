@@ -37,7 +37,7 @@
 #include <utility>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/element_buffer.hpp"
 #include "core/framebuffer.hpp"
 #include "core/shader_program.hpp"
@@ -126,10 +126,10 @@ class VolumeRenderer : public IRenderer {
                                const RenderTarget& target) override;
 
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
-    /// assuming ReView already performed bind+viewport+clear via the same
-    /// DrawContext. Does not clear — second layer must not clear away the first.
-    data::Result<void> drawLayer(const VolumeScene& scene, const Camera& camera,
-                                 core::DrawContext& ctx);
+    /// assuming ReView already performed bind+viewport+clear via REContext::current()
+    /// (T2 global per-GL-context, 2 layers sharing viewport issue 1 glViewport).
+    /// Does not clear — second layer must not clear away the first.
+    data::Result<void> drawLayer(const VolumeScene& scene, const Camera& camera);
 
     /// The world-space AABB of `instance`: the min/max of its model-space unit
     /// cube [0,1]^3 transformed by the instance's model matrix (exact for

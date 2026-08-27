@@ -45,6 +45,7 @@ add_executable(${RE_TEST_TARGET}
     t22_error_model_test.cpp
     t23_resize_test.cpp
     t1_hierarchy_gate_test.cpp
+    t2_re_context_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

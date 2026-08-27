@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/shader_program.hpp"
 #include "render/mesh_geometry.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget

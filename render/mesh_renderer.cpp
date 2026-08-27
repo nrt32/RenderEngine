@@ -12,7 +12,7 @@
 #include <glm/vec4.hpp>
 #include <string>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/shader_program.hpp"
 
 namespace re::render {
@@ -156,7 +156,7 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
     // the capture draws immediately after this depth-off prologue, and end()
     // issues its own explicit core::disableDepthTest() — so both behave
     // identically on color-only and depth-enabled targets.
-    core::DrawContext ctx;
+    auto& ctx = core::REContext::current();
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,
                   target.clearColor.b, target.clearColor.a);
@@ -202,11 +202,10 @@ data::Result<void> MeshRenderer::render(const Scene& scene,
     return render(**meshScene, camera, target);
 }
 
-data::Result<void> MeshRenderer::drawLayer(const MeshScene& scene, const Camera& camera,
-                                           core::DrawContext& ctx) {
+data::Result<void> MeshRenderer::drawLayer(const MeshScene& scene, const Camera& camera) {
     // ReView already bind+viewport+clear via ctx; single-item render() keeps clear.
     // This layer draws without clearing — second layer must not clear away the first.
-    (void)ctx;
+    // T2: (void)ctx removed — REContext::current() is the global per-GL-context single writer
     auto programResult = opaqueProgram();
     if (programResult.failed()) {
         return data::makeError<void>(programResult.error().code, programResult.error().message);

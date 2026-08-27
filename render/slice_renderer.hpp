@@ -30,7 +30,7 @@
 #include <optional>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/framebuffer.hpp"
 #include "core/shader_program.hpp"
 #include "core/transform_feedback.hpp"
@@ -96,16 +96,16 @@ class SliceRenderer : public IRenderer {
                                const RenderTarget& target) override;
 
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
-    /// assuming ReView already performed bind+viewport+clear via the same
-    /// DrawContext. Does not clear — second layer must not clear away the first.
-    /// Clips against the plane carried by the scene (slice.plane) for the
-    /// IRenderer path; the explicit-plane overload uses the passed plane.
-    data::Result<void> drawLayer(const SliceScene& scene, const Camera& camera,
-                                 core::DrawContext& ctx);
+    /// assuming ReView already performed bind+viewport+clear via REContext::current()
+    /// (T2 global per-GL-context, 2 layers sharing viewport issue 1 glViewport).
+    /// Does not clear — second layer must not clear away the first. Clips against
+    /// the plane carried by the scene (slice.plane) for the IRenderer path; the
+    /// explicit-plane overload uses the passed plane.
+    data::Result<void> drawLayer(const SliceScene& scene, const Camera& camera);
     /// Explicit-plane layer variant (used when View's ClipPlane supplies the
     /// plane, not the scene).
     data::Result<void> drawLayer(const SliceScene& scene, const Camera& camera,
-                                 const ClipPlane& plane, core::DrawContext& ctx);
+                                 const ClipPlane& plane);
 
     /// Capture the on-plane cross-section vertices emitted by the geometry
     /// shader for `scene` clipped against `plane` into `out` (world-space

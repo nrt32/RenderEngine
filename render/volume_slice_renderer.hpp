@@ -52,7 +52,7 @@
 #include <utility>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/element_buffer.hpp"
 #include "core/framebuffer.hpp"
 #include "core/shader_program.hpp"
@@ -145,10 +145,11 @@ class VolumeSliceRenderer {
 
     /// Draw one layer into the currently-bound framebuffer (ReView's
     /// ViewTarget), assuming ReView already performed bind+viewport+clear via
-    /// the same DrawContext. Does not clear — a second layer (e.g. a contour
+    /// REContext::current() (T2 global per-GL-context, 2 layers sharing viewport
+    /// issue 1 glViewport). Does not clear — a second layer (e.g. a contour
     /// overlay) must not erase the first.
     data::Result<void> drawLayer(const VolumeSliceScene& scene,
-                                 const Camera& camera, core::DrawContext& ctx);
+                                 const Camera& camera);
 
     /// The shared asset store textures resolve through (non-null after a
     /// valid construction; null only if constructed with nullptr — renders

@@ -10,6 +10,8 @@
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 
+#include "core/re_context.hpp"
+
 #include <cstdlib>
 #include <string>
 #include <utility>
@@ -135,6 +137,19 @@ int SampleHarness::run(int maxFrames) {
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        // T2: explicit invalidation of the global per-GL-context REContext at
+        // the SampleHarness post-ImGui boundary. ImGui's OpenGL3 backend
+        // changes GL state (program, VAO, blend, viewport/scissor, texture
+        // bindings) behind the engine's back; the REContext mirror (viewport,
+        // clearColor, depthTest, blend, blendFunc, cull, FBO/VAO/program/image
+        // units) would otherwise be stale for the next frame's View::render
+        // prologue. No auto-guess — invalidation is explicit at this boundary,
+        // and invalidate() is public for tests that need the same guarantee.
+        // Each window (GLFWwindow handle) owns its own mirror via
+        // REContext::current() thread_local mapping (worker threads get private
+        // mirrors with no lock; shared resources out-of-scope, SPEC §3 T2).
+        core::REContext::current().invalidate();
 
         window_.swapBuffers();
         ++frames;

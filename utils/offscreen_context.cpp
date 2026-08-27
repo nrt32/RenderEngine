@@ -8,16 +8,18 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+
+#include "core/re_context.hpp"
 
 // GLFW is the primary context-creation backend (every OS).
+#define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
 // EGL surfaceless is the no-display fallback on Linux (Mesa).
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <spdlog/spdlog.h>
-
-#include <utility>
 
 namespace re::utils {
 
@@ -85,9 +87,37 @@ const char* OffscreenContext::backendName(ContextBackend backend) noexcept {
     }
 }
 
+void OffscreenContext::makeCurrent() const noexcept {
+    if (backend_ == ContextBackend::Glfw && window_ != nullptr) {
+        // T2: global per-GL-context REContext — thread_local current follows the
+        // GLFW window that is made current (GLFWwindow handle → REContextState
+        // mirror holding viewport, clearColor, depthTest, blend, blendFunc, cull,
+        // FBO/VAO/program/image units). Each window owns its own state; worker
+        // threads with private contexts get private mirrors with no lock; shared
+        // resources out-of-scope (GL share groups) — explicit invalidation at
+        // boundaries, no auto-guess.
+        core::REContext::makeCurrent(window_);
+    } else if (backend_ == ContextBackend::Egl && eglContext_ != nullptr) {
+        eglMakeCurrent(static_cast<EGLDisplay>(eglDisplay_), EGL_NO_SURFACE,
+                       EGL_NO_SURFACE, static_cast<EGLContext>(eglContext_));
+        core::REContext::setCurrentWindow(nullptr);
+    }
+}
+
 void OffscreenContext::release() noexcept {
     if (backend_ == ContextBackend::Glfw && window_ != nullptr) {
-        glfwMakeContextCurrent(nullptr);
+        // T2: clear per-GL-context REContext mirror for this window before destroy.
+        // Each GLFWwindow* maps to its own REContextState (viewport etc.); clearing
+        // prevents stale entries and ensures a later window at same address is cold.
+        // Only clear the current GL context and REContext thread_local if this
+        // window is the one currently bound — otherwise we would unbind the
+        // fixture's context that another test restored before this destructor ran.
+        const bool isCurrent = glfwGetCurrentContext() == window_;
+        core::REContext::clearWindow(window_);
+        if (isCurrent) {
+            core::REContext::setCurrentWindow(nullptr);
+            glfwMakeContextCurrent(nullptr);
+        }
         glfwDestroyWindow(window_);
         window_ = nullptr;
     } else if (backend_ == ContextBackend::Egl && eglContext_ != nullptr) {
@@ -176,6 +206,12 @@ data::Result<OffscreenContext> OffscreenContext::createGlfw() {
                    (desc != nullptr ? desc : "unknown"));
     }
 
+    // T2: global per-GL-context REContext — set thread_local current to this
+    // window's mirror before any GL call. Each GLFWwindow* owns its own state
+    // (viewport, clearColor, depthTest, blend, blendFunc, cull, FBO/VAO/program/
+    // image units) via REContext::current() thread_local mapping; worker threads
+    // with private contexts get private mirrors with no lock.
+    core::REContext::setCurrentWindow(window);
     glfwMakeContextCurrent(window);
 
     OffscreenContext ctx(ContextBackend::Glfw);
@@ -255,6 +291,11 @@ data::Result<OffscreenContext> OffscreenContext::createEgl() {
         return data::makeError<OffscreenContext>(
             9, "EGL fallback: eglMakeCurrent failed");
     }
+
+    // T2: EGL surfaceless has no GLFWwindow — use per-thread fallback REContext.
+    // The global per-GL-context contract still holds: each EGL context is a
+    // distinct GL context with its own mirror on this thread (thread_local).
+    core::REContext::setCurrentWindow(nullptr);
 
     OffscreenContext ctx(ContextBackend::Egl);
     ctx.eglDisplay_ = display;

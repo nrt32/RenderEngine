@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/shader_program.hpp"
 
 namespace re::render {
@@ -87,7 +87,7 @@ data::Result<void> ContourRenderer::render(const ContourScene& scene,
     // so every stroke pixel is exactly uColor (the FR-app.3 readback compares
     // exact bytes ±1/255) —
     // beginPass disables it.
-    core::DrawContext ctx;
+    auto& ctx = core::REContext::current();
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,
                   target.clearColor.b, target.clearColor.a);
@@ -109,9 +109,7 @@ data::Result<void> ContourRenderer::render(const ContourScene& scene,
     return data::Result<void>(data::value);
 }
 
-data::Result<void> ContourRenderer::drawLayer(const ContourObject& object,
-                                              const Camera& camera,
-                                              core::DrawContext& ctx) {
+data::Result<void> ContourRenderer::drawLayer(const ContourObject& object, const Camera& camera) {
     auto programResult = program();
     if (programResult.failed()) {
         return data::makeError<void>(programResult.error().code,
@@ -120,15 +118,17 @@ data::Result<void> ContourRenderer::drawLayer(const ContourObject& object,
     core::ShaderProgram* programPtr = *programResult;
 
     // The thick-line expansion works in viewport pixels; ReView already set
-    // the viewport on this context (View::render), so read it from the cache
-    // — render/ never issues raw GL queries (guardrail gpu_api_ownership).
+    // the viewport on the global REContext::current() (T2: thread_local
+    // GLFWwindow* → REContextState, 2 layers sharing viewport issue 1
+    // glViewport), so read it from the current's cache — render/ never issues
+    // raw GL queries (guardrail gpu_api_ownership).
     int vpX = 0;
     int vpY = 0;
     int vpW = 0;
     int vpH = 0;
-    if (!ctx.viewportRect(vpX, vpY, vpW, vpH) || vpW <= 0 || vpH <= 0) {
+    if (!core::REContext::current().viewportRect(vpX, vpY, vpW, vpH) || vpW <= 0 || vpH <= 0) {
         return data::makeError<void>(
-            2, "ContourRenderer::drawLayer: DrawContext has no viewport "
+            2, "ContourRenderer::drawLayer: REContext has no viewport "
                "(View::render must setViewport before layers)");
     }
 
@@ -142,11 +142,9 @@ data::Result<void> ContourRenderer::drawLayer(const ContourObject& object,
     return drawOne(object, programPtr);
 }
 
-data::Result<void> ContourRenderer::drawLayer(const ContourScene& scene,
-                                              const Camera& camera,
-                                              core::DrawContext& ctx) {
+data::Result<void> ContourRenderer::drawLayer(const ContourScene& scene, const Camera& camera) {
     for (const ContourObject& object : scene.contours) {
-        auto drawn = drawLayer(object, camera, ctx);
+        auto drawn = drawLayer(object, camera);
         if (drawn.failed()) {
             return drawn;
         }

@@ -4,11 +4,13 @@
 //
 // One ViewTarget{Texture2D+Framebuffer} per ViewRect (rect.w×h) + Camera +
 // optional<ClipPlane> (2D vs 3D) + list<IRenderable> (VolumeSlice+MeshSlice for
-// 2D, Volume+Mesh for 3D). Each IRenderable is type-erased drawLayer(Camera,DrawContext&)
+// 2D, Volume+Mesh for 3D). Each IRenderable is type-erased drawLayer(Camera)
 // — View never knows the renderer. View::render() begins its pass via the ONE
-// shared prologue core::DrawContext::beginPass (bind+viewport+clear+depth-
-// state+blend-off — T17 single-site rule), then iterates drawLayer without
-// clearing between layers.
+// shared prologue core::REContext::current().beginPass (bind+viewport+clear+
+// depth-state+blend-off — T17 single-site rule) using the global per-GL-context
+// REContext (T2: thread_local GLFWwindow* → REContextState, 2 layers sharing
+// state issue 1 glViewport), then iterates drawLayer without clearing between
+// layers. Per-frame local ctx instances deleted (T2).
 //
 // Depth handling is per-view and opt-in (architecture review 2026-08-23): a
 // view whose depthTest flag is true renders into a ViewTarget created with
@@ -22,7 +24,7 @@
 #include <optional>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/framebuffer.hpp"
 #include "data/result.hpp"
 #include "render/i_renderable.hpp"
@@ -36,11 +38,13 @@ namespace re::render {
 /// Owns one ViewTarget{Texture2D+Framebuffer} sized rect.w×h, a Camera,
 /// an optional ClipPlane (2D when present, 3D when nullopt), and a
 /// heterogeneous list of IRenderables. Each renderer contributes a drawLayer
-/// that assumes the View already bound its FBO and cleared via DrawContext.
-/// The View composes layers without clearing between them; single-item
-/// render::Renderer::render() keeps its own clear for direct tests.
-/// The per-view `depthTest` flag opts the view into a depth-enabled target +
-/// depth-tested pass; the default stays color-only + depth-off.
+/// that assumes the View already bound its FBO and cleared via
+/// REContext::current() (T2 global per-GL-context, thread_local GLFWwindow* →
+/// REContextState, 2 layers dedup to 1 glViewport). The View composes layers
+/// without clearing between them; single-item render::Renderer::render() uses
+/// the same global current (per-frame local ctx deleted). The per-view
+/// `depthTest` flag opts the view into a depth-enabled target + depth-tested
+/// pass; the default stays color-only + depth-off.
 class View {
    public:
     /// Construct with a window-section rect (origin bottom-left, GL convention).
@@ -104,10 +108,12 @@ class View {
     void addRenderable(std::unique_ptr<IRenderable> item) { items_.push_back(std::move(item)); }
 
     /// Convenience: type-erased add for a typed scene + renderer that exposes
-    /// drawLayer(SceneT,Camera,DrawContext&). Enforces Renderable at compile
-    /// time. The renderer reference is SHARED (T13): the item co-owns the
-    /// renderer, so a stored View can never outlive the renderer it draws
-    /// with (no declaration-order or teardown-order hazard).
+    /// drawLayer(SceneT,Camera). Enforces Renderable at compile time. The
+    /// renderer reference is SHARED (T13): the item co-owns the renderer, so a
+    /// stored View can never outlive the renderer it draws with. T2: drawLayer
+    /// no longer takes DrawContext/REContext — the global REContext::current()
+    /// (thread_local GLFWwindow* → REContextState) is the single writer, so 2
+    /// layers sharing viewport issue 1 glViewport (per-frame local ctx deleted).
     template <typename SceneT, typename RendererT>
     void addItem(SceneT scene, std::shared_ptr<RendererT> renderer) {
         struct Impl final : public IRenderable {
@@ -115,8 +121,8 @@ class View {
             std::shared_ptr<RendererT> renderer_;
             Impl(SceneT s, std::shared_ptr<RendererT> r)
                 : scene_(std::move(s)), renderer_(std::move(r)) {}
-            data::Result<void> drawLayer(const Camera& cam, core::DrawContext& ctx) override {
-                return renderer_->drawLayer(scene_, cam, ctx);
+            data::Result<void> drawLayer(const Camera& cam) override {
+                return renderer_->drawLayer(scene_, cam);
             }
         };
         addRenderable(std::make_unique<Impl>(std::move(scene), std::move(renderer)));
@@ -128,20 +134,29 @@ class View {
     // --- render / blit ------------------------------------------------------
 
     /// Render all items into the View's own FBO. Assumes ensureTarget() already
-    /// succeeded; begins the pass through the shared core::DrawContext::beginPass
-    /// prologue (binds the FBO, sets the viewport, clears to clearColor, then
-    /// sets the depth state — enabled + depth-cleared iff this view's
-    /// depthTest flag is true, disabled otherwise — and disables blending),
-    /// then calls each item's drawLayer(camera, ctx) without clearing between
-    /// layers. Returns typed error on target failure or any layer failure.
-    data::Result<void> render(core::DrawContext& ctx);
+    /// succeeded; begins the pass through the shared core::REContext::current().beginPass
+    /// prologue (T2 global per-GL-context, thread_local GLFWwindow* → REContextState:
+    /// binds the FBO, sets viewport, clears to clearColor, then sets depth state
+    /// — enabled + depth-cleared iff depthTest true, disabled otherwise — and
+    /// disables blending), then calls each item's drawLayer(camera) without
+    /// clearing between layers. 2 layers sharing viewport issue 1 glViewport
+    /// (dedup via the global current's cache). Returns typed error on failure.
+    data::Result<void> render();
+
+    /// Deprecated compat shim: old code passed a per-frame DrawContext/REContext.
+    /// New code uses REContext::current() (T2 global per-GL-context, DrawContext is
+    /// alias to REContext). The passed context is ignored — the global current is
+    /// the single writer. One overload suffices because DrawContext == REContext.
+    data::Result<void> render(core::REContext& /*ctx*/) { return render(); }
 
     /// Convenience: ensureTarget() then render().
-    data::Result<void> renderWithEnsure(core::DrawContext& ctx) {
+    data::Result<void> renderWithEnsure() {
         auto e = ensureTarget();
         if (e.failed()) return e;
-        return render(ctx);
+        return render();
     }
+    /// Deprecated compat shim for old View tests that still pass a context.
+    data::Result<void> renderWithEnsure(core::REContext& /*ctx*/) { return renderWithEnsure(); }
 
     /// Blit the View's FBO into its pinned window rect on destination
     /// (nullptr = the window's default framebuffer 0) via core::blit. The copy
@@ -153,10 +168,14 @@ class View {
     data::Result<void> blitTo(core::Framebuffer* /*borrow*/ destination) const;
 
     /// Helpers for multi-view composition: render then blit.
-    data::Result<void> renderAndBlit(core::DrawContext& ctx, core::Framebuffer* destination) {
-        auto r = renderWithEnsure(ctx);
+    data::Result<void> renderAndBlit(core::Framebuffer* destination) {
+        auto r = renderWithEnsure();
         if (r.failed()) return r;
         return blitTo(destination);
+    }
+    /// Deprecated compat shim (DrawContext == REContext, one overload).
+    data::Result<void> renderAndBlit(core::REContext& /*ctx*/, core::Framebuffer* destination) {
+        return renderAndBlit(destination);
     }
 
    private:

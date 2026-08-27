@@ -8,6 +8,8 @@
 
 #include <glad/gl.h>
 
+#include "core/re_context.hpp"
+
 namespace re::core {
 
 bool GlContextInfo::isCoreProfile() const noexcept {
@@ -36,6 +38,15 @@ data::Result<GlContextInfo> loadCoreGl(GlLoadProc getProcAddr) {
     info.major = static_cast<int>(major);
     info.minor = static_cast<int>(minor);
     info.profileMask = static_cast<std::uint32_t>(profile);
+
+    // T2: global per-GL-context REContext — make the current thread's
+    // REContext mirror point at the GLFW window that is current (if any).
+    // Each GLFWwindow* maps to its own REContextState (viewport, clearColor,
+    // depthTest, blend, blendFunc, cull, FBO/VAO/program/image units). Worker
+    // threads with private contexts get private mirrors via thread_local with
+    // no lock; shared resources out-of-scope (GL share groups).
+    REContext::syncFromGLFW();
+
     return data::makeValue<GlContextInfo>(info);
 }
 

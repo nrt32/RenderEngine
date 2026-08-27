@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/element_buffer.hpp"
 #include "core/shader_program.hpp"
 #include "core/vertex_array.hpp"
@@ -233,7 +233,7 @@ data::Result<void> PlaneRenderer::render(const PlaneScene& scene,
     // painter's-order pass (a target's optional depth attachment is consumed
     // only via the per-view opt-in), so the depth test is left off; blending
     // is off (textures are sampled with alpha and written straight).
-    core::DrawContext ctx;
+    auto& ctx = core::REContext::current();
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,
                   target.clearColor.b, target.clearColor.a);
@@ -255,10 +255,9 @@ data::Result<void> PlaneRenderer::render(const Scene& scene,
     return render(**planeScene, camera, target);
 }
 
-data::Result<void> PlaneRenderer::drawLayer(const PlaneScene& scene, const Camera& camera,
-                                            core::DrawContext& ctx) {
+data::Result<void> PlaneRenderer::drawLayer(const PlaneScene& scene, const Camera& camera) {
     // ReView already bind+viewport+clear via ctx; does not clear between layers.
-    (void)ctx;
+    // T2: (void)ctx removed — REContext::current() is the global per-GL-context single writer
     if (assets_ == nullptr) {
         return data::makeError<void>(4, "PlaneRenderer: no shared asset store");
     }

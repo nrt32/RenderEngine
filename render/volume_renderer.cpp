@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/shader_program.hpp"
 #include "volume/color.hpp"
 
@@ -188,7 +188,7 @@ data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
     // only via the per-view opt-in), so the depth test is left off; blending
     // is off because the shader already writes the final premultiplied
     // composited color.
-    core::DrawContext ctx;
+    auto& ctx = core::REContext::current();
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,
                   target.clearColor.b, target.clearColor.a);
@@ -211,10 +211,9 @@ data::Result<void> VolumeRenderer::render(const Scene& scene,
     return render(**volumeScene, camera, target);
 }
 
-data::Result<void> VolumeRenderer::drawLayer(const VolumeScene& scene, const Camera& camera,
-                                             core::DrawContext& ctx) {
+data::Result<void> VolumeRenderer::drawLayer(const VolumeScene& scene, const Camera& camera) {
     // ReView already bind+viewport+clear via ctx; does not clear between layers.
-    (void)ctx;
+    // T2: (void)ctx removed — REContext::current() is the global per-GL-context single writer
     if (assets_ == nullptr) {
         return data::makeError<void>(4, "VolumeRenderer: no shared asset store");
     }

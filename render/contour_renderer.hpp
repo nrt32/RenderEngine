@@ -36,7 +36,7 @@
 #include <optional>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/framebuffer.hpp"
 #include "core/shader_program.hpp"
 #include "data/result.hpp"
@@ -101,18 +101,18 @@ class ContourRenderer {
 
     /// Draw ONE contour object into the currently-bound framebuffer (ReView's
     /// ViewTarget), assuming ReView already performed bind+viewport+clear via
-    /// the same DrawContext (layer semantics of View::render — no clear here,
-    /// so a second layer does not erase the first). The viewport pixel size
-    /// for the thick-line expansion is read from `ctx` (the context View
-    /// already configured); a cold context (no setViewport yet) is a typed
-    /// error. Blending must already be disabled for exact stroke colors (View
-    /// disables it before its layers).
+    /// REContext::current() (T2 global per-GL-context, thread_local GLFWwindow* →
+    /// REContextState). The viewport pixel size for the thick-line expansion is
+    /// read from REContext::current().viewportRect() (the global current View
+    /// already configured); a cold current (no setViewport yet) is a typed error.
+    /// Blending must already be disabled for exact stroke colors (View disables
+    /// it before its layers).
     data::Result<void> drawLayer(const ContourObject& object,
-                                 const Camera& camera, core::DrawContext& ctx);
+                                 const Camera& camera);
 
     /// Layer variant drawing every object of `scene` in order.
     data::Result<void> drawLayer(const ContourScene& scene,
-                                 const Camera& camera, core::DrawContext& ctx);
+                                 const Camera& camera);
 
     /// The shared asset registry objects' handles resolve through (non-null
     /// after a valid construction; null only if constructed with nullptr —

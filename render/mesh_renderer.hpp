@@ -27,7 +27,7 @@
 #include <optional>
 #include <vector>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "core/shader_program.hpp"
 #include "data/result.hpp"
 #include "render/asset_registry.hpp"
@@ -92,11 +92,12 @@ class MeshRenderer : public IRenderer {
                                const RenderTarget& target) override;
 
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
-    /// assuming ReView already performed bind+viewport+clear via the same
-    /// DrawContext. Does not clear — second layer must not clear away the first.
-    /// Returns typed error for stale handle or draw failure.
-    data::Result<void> drawLayer(const MeshScene& scene, const Camera& camera,
-                                 core::DrawContext& ctx);
+    /// assuming ReView already performed bind+viewport+clear via REContext::current()
+    /// (T2 global per-GL-context, thread_local GLFWwindow* → REContextState, 2 layers
+    /// sharing viewport issue 1 glViewport — per-frame local ctx deleted). Does not
+    /// clear — second layer must not clear away the first. Returns typed error for
+    /// stale handle or draw failure.
+    data::Result<void> drawLayer(const MeshScene& scene, const Camera& camera);
 
     /// The injected transparency pipeline (may be null). The returned
     /// shared_ptr is a non-owning OBSERVER handle in spirit — it shares the
