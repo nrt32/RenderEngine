@@ -17,4 +17,5 @@ target_include_directories(re_volume PUBLIC
 target_link_libraries(re_volume PUBLIC
     glm::glm
     re_project_warnings
+    re_project_sanitizers
 )

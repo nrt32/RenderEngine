@@ -21,4 +21,5 @@ target_link_libraries(re_io PUBLIC
     re_data
     stb
     re_project_warnings
+    re_project_sanitizers
 )

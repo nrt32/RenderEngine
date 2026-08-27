@@ -32,6 +32,7 @@ target_link_libraries(re_render PUBLIC
     glm::glm
     spdlog::spdlog
     re_project_warnings
+    re_project_sanitizers
 )
 
 # Shaders live as .glsl files under render/shaders/ (SPEC §9 V2.6). The

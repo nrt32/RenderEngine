@@ -29,6 +29,7 @@ target_link_libraries(re_core PUBLIC
     spdlog::spdlog
     glm::glm
     re_project_warnings
+    re_project_sanitizers
 )
 
 # GL loader + windowing are private to core/ — no downstream header needs

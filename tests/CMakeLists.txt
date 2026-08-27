@@ -63,6 +63,7 @@ target_link_libraries(${RE_TEST_TARGET}
         re_render
         re_app
         re_project_warnings
+        re_project_sanitizers
         GTest::gtest
         GTest::gtest_main
 )
@@ -87,15 +88,6 @@ target_compile_definitions(${RE_TEST_TARGET} PRIVATE
     RE_TEST_BIN_DIR="${CMAKE_BINARY_DIR}"
 )
 
-# Sanitizers on the test binary: ASan + UBSan (SPEC §5, "Memory/sanitizers").
-target_compile_options(${RE_TEST_TARGET} PRIVATE
-    -fsanitize=address,undefined
-    -fno-omit-frame-pointer
-)
-target_link_options(${RE_TEST_TARGET} PRIVATE
-    -fsanitize=address,undefined
-)
-
 # RenderEngine sources are built with warnings-as-errors via re_project_warnings
 # (linked above); keep the test binary clean under -Werror.
 
@@ -117,18 +109,12 @@ target_link_libraries(re_tests_death
     PRIVATE
         re_data
         re_project_warnings
+        re_project_sanitizers
         GTest::gtest
         GTest::gtest_main
 )
 target_compile_definitions(re_tests_death PRIVATE
     TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-target_compile_options(re_tests_death PRIVATE
-    -fsanitize=address,undefined
-    -fno-omit-frame-pointer
-)
-target_link_options(re_tests_death PRIVATE
-    -fsanitize=address,undefined
 )
 add_test(NAME re_tests_death COMMAND re_tests_death)
 set_tests_properties(re_tests_death PROPERTIES

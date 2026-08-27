@@ -34,6 +34,10 @@ target_compile_options(re_project_warnings INTERFACE
     -Werror
 )
 
+# Sanitizers — ASan+UBSan on all nine re_* libs via INTERFACE re_project_sanitizers
+# (SPEC §5, T11). See cmake/sanitizers.cmake for the option-gated Debug-only flags.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/sanitizers.cmake)
+
 # ---------------------------------------------------------------------------
 # Third-party dependencies — pinned via FetchContent GIT_TAG (SPEC §2/§6).
 # Every GIT_TAG is a release tag or commit SHA (never a branch name).

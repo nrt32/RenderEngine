@@ -54,6 +54,7 @@ target_link_libraries(re_app PUBLIC
     re_broker
     spdlog::spdlog
     re_project_warnings
+    re_project_sanitizers
 )
 
 # ---------------------------------------------------------------------------
@@ -80,6 +81,7 @@ if(RE_BUILD_SAMPLES OR RE_BUILD_TESTS)
             glm::glm
             spdlog::spdlog
             re_project_warnings
+            re_project_sanitizers
         )
         # All samples drive rendering through the broker façade (AppContext +
         # IViewBridge, SPEC §11 ACL: app never includes render/). MPR also
@@ -90,16 +92,6 @@ if(RE_BUILD_SAMPLES OR RE_BUILD_TESTS)
         # §7). Pointed at the SOURCE tree, not the build tree.
         target_compile_definitions(${sample_target} PRIVATE
             RE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-        )
-        # Sanitizers on the sample binaries, matching the test binaries: the
-        # gate (FR-app.1) verifies the samples exit cleanly with no sanitizer
-        # reports (SPEC §5).
-        target_compile_options(${sample_target} PRIVATE
-            -fsanitize=address,undefined
-            -fno-omit-frame-pointer
-        )
-        target_link_options(${sample_target} PRIVATE
-            -fsanitize=address,undefined
         )
     endforeach()
 endif()

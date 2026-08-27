@@ -22,6 +22,7 @@ target_link_libraries(re_utils PUBLIC
     glfw
     spdlog::spdlog
     re_project_warnings
+    re_project_sanitizers
 )
 
 # EGL is used by the surfaceless fallback in offscreen_context.cpp.

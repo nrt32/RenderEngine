@@ -11,4 +11,4 @@ target_link_libraries(re_scene PUBLIC re_data re_volume)
 target_link_libraries(re_scene PUBLIC glm::glm)
 target_include_directories(re_scene PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 # Headers are interface; ensure header-only types are visible via INTERFACE.
-target_link_libraries(re_scene PUBLIC re_project_warnings)
+target_link_libraries(re_scene PUBLIC re_project_warnings re_project_sanitizers)
