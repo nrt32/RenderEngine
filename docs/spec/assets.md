@@ -22,6 +22,7 @@ small raw NRRD for commit.
 | Utah teapot (OBJ) | `https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/teapot.obj` (SHA256 `1b5396fedd74b577e32cef41146582c2f2e1a050d5b4915193c0ac1ad4187ed4`) | Public domain | `data/meshes/teapot.obj` | sample mesh/slice rendering |
 | CT chest sample volume | `https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e` (published SHA256 `4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e`, file `CT-chest.nrrd`) | CC-BY-SA 4.0 (Medical Decathlon) | `data/volumes/sample_ct.nrrd` | downsample ≤128³ → raw NRRD; used by volume/MPR samples + tests |
 | Golden fixtures | Hand-authored small meshes/volumes/images | Project-owned | `data/fixtures/` | committed, tiny, used by io/data tests (hand-counted acceptance constants) |
+| Font atlas golden (T3) | Generated via `SampleHarness` headless FBO capture (`expectPixel` probe) | Project-owned | `data/fixtures/font_atlas_golden.rgba` | committed, tiny, SHA256 pinned via `sha256sum data/fixtures/font_atlas_golden.rgba` (or allow `tools/comment_context.allow` waiver until T3) |
 | Procedural geometry | Generated in code at runtime | n/a | n/a | deterministic tests; no file dependency |
 
 **Fetch method (two-phase: SETUP stages, T2 commits):** because assets are
