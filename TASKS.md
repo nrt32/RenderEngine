@@ -44,7 +44,7 @@ Active backlog is the **pure-redesign V3 iteration** (no new FRs — OpenGL/C++/
 
 ### FR → T traceability (regression — no new FRs, V3 preserves V1/V2 gates)
 
-V3 has **no new FRs** (2026-08-23 direction) — every active `T1..T19` is a review follow-up preserving the 20 FRs below via regression lock R3. `COMPLETED_TASKS.md` V1 `T1..T16` + V2 `V2-T1..V2-T8` are the original gates; the table below links each FR to its **regression T** (last T that touched that path) and its **original V1/V2 gate** for audit. **Active draft `T1..T4` (next iteration):** `FR:none new` — each preserves the FRs via `R3` suite-green regression (no weakening); explicit `Active T` column below shows where the draft re-verifies the path (e.g. `T1` layerMask preserves `FR-render.5/6` volume/plane technique order, `T2` bounded run preserves `FR-app.1` smoke). Suite green = all 20 FR constants still asserted via full-suite regression gate per R3; no T weakens an FR gate. Original V1 gates remain the binding acceptance per `COMPLETED_TASKS.md`. **R4 evidence rule (spec-review #5):** every `T` — even infra `T3` broker pair-key (`broker.get<MeshObject,ReWrongType>()==nullptr` typed miss, `hash_combine(type_index(AppT),type_index(ReT))` distinct entries) — asserts an **explainable analytic count** (typed null vs UB, `grep -c` 0/1, spy 2→1, `640×480=152 MB` via `w*h*16*32`, `sample(0.5)==0.5±1e-6`), never `non-empty/non-black/>0`; `T3` is infra with `FR:none` but its `nullptr` vs type-punning invariant is the analytic evidence.
+V3 has **no new FRs** (2026-08-23 direction) — every active `T1..T19` is a review follow-up preserving the 20 FRs below via regression lock R3. `COMPLETED_TASKS.md` V1 `T1..T16` + V2 `V2-T1..V2-T8` are the original gates; the table below links each FR to its **regression T** (last T that touched that path) and its **original V1/V2 gate** for audit. **Active draft `T1..T4` (next iteration):** `FR:none new` — each preserves the FRs via `R3` suite-green regression (no weakening); explicit `Active T` column below shows where the draft re-verifies the path (e.g. `T1` layerMask preserves `FR-render.5/6` volume/plane technique order, `T2` bounded run preserves `FR-app.1` smoke). Suite green = all 20 FR constants still asserted via full-suite regression gate per R3; no T weakens an FR gate. Original V1 gates remain the binding acceptance per `COMPLETED_TASKS.md`. **R4 evidence rule (spec-review #5):** every `T` — even infra `T3` `FpsCounter` (`fps==1/delta` within `1e-3` + overlay `1/255` probe) — asserts an **explainable analytic count** (typed null vs UB, `grep -c` 0/1, spy 2→1, `640×480=152 MB` via `w*h*16*32`, `sample(0.5)==0.5±1e-6`), never `non-empty/non-black/>0`; `T3` `fps==1/delta` is the analytic evidence.
 
 | FR | Description (tolerance) | Regression T (V3) | Active T (T1..T4 draft) | Original gate | Acceptance constant |
 |---|---|---|---|---|---|
@@ -82,10 +82,10 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 | Task | Spec alias | Docs updated in the same commit |
 |---|---|---|
-| T1 | §3.1/§10 | `docs/spec/modules.md` (`View` `layerMask` + `SceneObject` `layer`), `scene/layer.hpp`, `broker/view_synchronizer.hpp` |
+| T1 | §3.1/§10 | `docs/spec/modules.md` (`View` `layerMask` + `SceneObject` `layer`), `scene/layer.hpp`, `scene/view.hpp`, `scene/object.hpp`, `scene/composite_key.hpp`, `docs/spec/persistence.md` (`CompositeKey{layer,layerMask}` + `FieldId::Layer` + `dirtyFieldsSince`) |
 | T2 | §8 | `app/sample_harness.*` (`runInteractive`/`runBounded` dual mode), `docs/samples.md` (run modes) |
 | T3 | §5 | `app/fps_counter.*` + `app/sample_harness.*` (overlay `FpsCounter`), `docs/samples.md` (FPS) |
-| T4 | §3.1/§11 | `app/camera_controller.*` (`CameraController` + `CameraBindings`), `docs/samples.md` (controls) |
+| T4 | §3.1/§11 | `app/camera_controller.*` (`CameraController` + `CameraBindings`), `app/sample_harness.*` (poll+`WantCaptureMouse` + `View::mutateCamera`), `docs/samples.md` (controls) |
 
 > **Naming:** next backlog `T1..T4` — `COMPLETED_TASKS.md` V4 `T1..T19` archived.
 
@@ -117,7 +117,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **D** — `app/FpsCounter` (`std::chrono::steady_clock`, 0.5s sliding window) owned by `SampleHarness`, ticked each frame before overlay; overlay adds `Text("FPS: %.1f (%.1f ms)", fps, ms)` always-on (single-site harness change covers all 6 samples).
 
-**T** — suite green (automated): headless `RE_SAMPLE_MAX_FRAMES=20` smoke still exits 0; unit test `FpsCounter` sliding average over 0.5s window equals `1/delta` within 1e-3 (analytic, not visual); headless FBO capture of `SampleHarness` overlay region `expectPixel(overlayRect, Text("FPS"))` probe matches font-atlas sample within 1/255 (proves text is rasterized, not just string present); `grep -c "FpsCounter" app/` == 1 definition.
+**T** — suite green (automated): headless `RE_SAMPLE_MAX_FRAMES=20` smoke still exits 0; unit test `FpsCounter` sliding average over 0.5s window equals `1/delta` within 1e-3 (analytic, not visual); headless FBO capture of `SampleHarness` overlay region probe `expectPixel(overlayRect{10,10,120,20}, Text("FPS"))` matches golden `data/fixtures/font_atlas_golden.rgba` sample within 1/255 (proves text is rasterized); `grep -c "FpsCounter" app/` == 1 definition.
 
 **G** — suite green, audit green. **Depends:** `T2` (harness `runInteractive`/`WantCaptureMouse` guard).
 
@@ -125,7 +125,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **D** — `app/CameraController` + `CameraBindings{ rotateButton=LMB, panButton=RMB, zoomButton=MMB/wheel, modifiers, rotateSpeed, panSpeed, zoomSpeed }` plain struct. Harness polls `glfwGetMouseButton/CursorPos/Scroll` each frame before `renderFrame`, forwards to controller when `!ImGui::GetIO().WantCaptureMouse`; controller calls `View::mutateCamera([&](Camera& c){ c.rotate(...); })` so `viewGen` bumps and broker re-translates only dirty fields. Wired in `mesh/slice/volume/oit/mpr-3D` (plane + MPR 2D orthographic slice views skip it).
 
-**T** — drag `rotate` updates `viewMatrix` deterministically (±1e-6 vs analytic orbit); `WantCaptureMouse` guard prevents camera move while dragging ImGui slider; gate bounded run with no input still green. **Depends:** `T2` (harness).
+**T** — drag `rotate` updates `viewMatrix` deterministically (±1e-6 vs analytic orbit); `WantCaptureMouse=true` guard: `drag(10px)` with `WantCaptureMouse=true` leaves `viewMatrix` unchanged within `1e-6` vs pre-drag (delta 0 ±1e-6) and `position` unchanged, while same drag with `WantCaptureMouse=false` yields analytic `orbit(10px)` within `1e-6`; gate runs `N>=3` via offscreen fixture (3× `ctest Passed`); `grep -c "CameraController" app/camera_controller.hpp` == 1; gate bounded run with no input still green. **Depends:** `T2` (harness).
 
 **G** — suite green, audit green.
 

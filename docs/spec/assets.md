@@ -44,7 +44,7 @@ echo "4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e  /tmp/CT-
 python3 tools/convert_nrrd.py /tmp/CT-chest.nrrd data/volumes/sample_ct.nrrd  # downsample ≤128³, raw NRRD, python3 >=3.10 stdlib only
 ```
 
-**Reproducibility:** `tools/convert_nrrd.py` is pinned to the repo commit (in-repo, stdlib-only, `python3 >=3.10`; no pip deps, no external hash) — verification is `python3 --version` and stdlib-only check plus `sha256sum tools/convert_nrrd.py` pin (reproducibility gate: re-running `python3 tools/convert_nrrd.py /tmp/CT-chest.nrrd` yields byte-identical `data/volumes/sample_ct.nrrd` SHA `816375cdcbb...` — deterministic downsample, no numpy randomness); the derived `data/volumes/sample_ct.nrrd` SHA `816375cdcbb...` is the binding artifact. `data/README.md` (sources, URLs, licenses, checksums) is also a T2 deliverable (see T2 doc-map).
+**Reproducibility:** `tools/convert_nrrd.py` is pinned to the repo commit (in-repo, stdlib-only, `python3 >=3.10`; no pip deps, no external hash) — verification is `python3 --version` and stdlib-only check plus `sha256sum tools/convert_nrrd.py` pin (reproducibility gate: re-running `python3 tools/convert_nrrd.py /tmp/CT-chest.nrrd` yields byte-identical `data/volumes/sample_ct.nrrd` SHA `816375cdcbb3a00abb87fcbd14075f78287aaf7e05eb751082b5c900f2df7865` — deterministic downsample, no numpy randomness); the derived `data/volumes/sample_ct.nrrd` SHA `816375cdcbb3a00abb87fcbd14075f78287aaf7e05eb751082b5c900f2df7865` is the binding artifact. `data/README.md` (sources, URLs, licenses, checksums) is also a T2 deliverable (see T2 doc-map).
 
 **Verified SHA256s of the committed files (T2):**
 - `data/meshes/bunny.obj` — `1eb35d1e21ce99e5ce911353b6be278990713448dd9e8f5c9387f9de39b32205` (matches source)
