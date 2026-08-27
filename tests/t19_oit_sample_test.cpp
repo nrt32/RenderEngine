@@ -31,7 +31,7 @@
 //       through any pixel center (edges land at fractional center indices),
 //       so the count is exact rather than tolerance-bounded.
 //   (4) Mechanical floor: app/oit_sample.cpp contains neither quad-primitive
-//       builder name (`unitQuadXY`, `makeQuadMesh`) — the sample scene is
+//       builder name (`unitQuadXY`, `makeQuad (helper)`) — the sample scene is
 //       built exclusively from real meshes — and its instructions/title
 //       text describes the new scene (mentions the glass boxes and the
 //       bunny, no longer the removed three-quad arrangement).
@@ -96,6 +96,7 @@
 #include "render/mesh_renderer.hpp"
 #include "render/view.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 #include "utils/pixel_reader.hpp"
 
 namespace re::tests {
@@ -135,26 +136,8 @@ constexpr std::uint32_t kExpectedCapturedFragments = 5632u;
 
 /// Read back one RGBA8 pixel of `framebuffer` at (x, y) via utils::PixelReader
 /// (the raw readback stays under core/).
-std::vector<std::uint8_t> readPixel(core::Framebuffer& framebuffer,
-                                    std::uint32_t x, std::uint32_t y) {
-    framebuffer.bind();
-    std::vector<std::uint8_t> pixels;
-    re::utils::PixelReader reader;
-    auto read = reader.read(x, y, 1u, 1u, pixels);
-    EXPECT_TRUE(read.ok()) << read.error().message;
-    EXPECT_EQ(pixels.size(), 4u);
-    framebuffer.unbind();
-    return pixels;
-}
 
 /// Assert an RGBA8 pixel equals the given bytes within 1/255.
-void expectPixel(const std::vector<std::uint8_t>& p, int r, int g, int b, int a,
-                 const char* where) {
-    EXPECT_NEAR(p[0], r, kColorTolerance) << "R at " << where;
-    EXPECT_NEAR(p[1], g, kColorTolerance) << "G at " << where;
-    EXPECT_NEAR(p[2], b, kColorTolerance) << "B at " << where;
-    EXPECT_NEAR(p[3], a, kColorTolerance) << "A at " << where;
-}
 
 /// A recording stub pipeline: counts the lifecycle calls MeshRenderer makes
 /// so a test can assert when/how the transparency pipeline engages.
@@ -556,8 +539,8 @@ TEST(T19OitSample, SampleSourceHasNoQuadPrimitivesAndUpdatedText) {
     // sample (comments included) — the scene is real meshes only.
     EXPECT_EQ(countOccurrences(source, "unitQuadXY"), 0)
         << "no unitQuadXY in app/oit_sample.cpp";
-    EXPECT_EQ(countOccurrences(source, "makeQuadMesh"), 0)
-        << "no makeQuadMesh in app/oit_sample.cpp";
+    EXPECT_EQ(countOccurrences(source, "makeQuad (helper)"), 0)
+        << "no makeQuad (helper) in app/oit_sample.cpp";
 
     // The instructions text describes the NEW scene (gate G): the glass
     // boxes and the bunny are named; the removed three-quad arrangement is

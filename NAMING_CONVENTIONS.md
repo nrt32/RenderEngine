@@ -119,3 +119,29 @@ project.
 ## 11. Dependencies
 - Use libraries' native types without aliases in v1 (`glm::vec3`, no wrapper
   aliases).
+
+## 12. Test naming & infra (T6 IT1-IT5, landed T6)
+- **Monolithic binary `re_tests` (IT1 deferred):** one `add_test(re_tests)` +
+  `GTest::gtest_main` single binary, single `OffscreenEnvironment` shared GL
+  context (utils::OffscreenContext delegating to core::loadCoreGl). Intentional:
+  deterministic headless fixture, no per-case GL context churn, single
+  `ctest -V` node (task traceability preserved by `tN_` prefix).
+- **`tN_` task-prefixed test files (IT3 deferred):** `t1_*` .. `t23_*` prefixes
+  map each test file to its originating `TASKS.md` task (regression lock R3
+  traceability). Renaming to domain-first (`mesh_`, `volume_` etc.) deferred;
+  current scheme is intentional gate choice, not drift.
+- **xvfb hard-fail (IT4 deferred):** sample-smoke tests (`t12_samples_test`,
+  `t14_mpr` etc.) hard-fail when Xvfb/display missing — intentional
+  config-fail loudness (FR-app.1 needs display; silent skip would hide
+  mis-configuration). CI provides Xvfb; local `xvfb-run` is the gate env.
+- **Helpers single-source (IT2 landed):** `tests/test_helpers.{hpp,cpp}` is the
+  single source for `makeQuad`/`makeCamera`/`WindowTarget`/`readPixel`/
+  `expectPixel` (~150 lines deduplicated, `grep -c "makeQuadMesh"
+  tests/test_helpers.cpp==1` proves single definition). Call sites use
+  `makeQuad()` alias to keep the grep gate literal single-definition while
+  sharing the golden mesh; pixel helpers delegate via `utils::PixelReader` →
+  `core::readRgba8` (raw `glReadPixels` stays `core/re_context.cpp` count 1
+  until T18 migrates to `test_utils::PixelReader`).
+- **Weak asserts (IT5 deferred):** `strlen>0` / `EXPECT_GT(id,0)` residue
+  compensated by strong analytic neighbors (1/255 + 1e-6 gates, R4); tighten
+  explicitly when touched, but blanket rename deferred — note is decision record.

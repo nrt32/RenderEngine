@@ -4,6 +4,7 @@ set(RE_TEST_TARGET re_tests)
 
 add_executable(${RE_TEST_TARGET}
     offscreen_fixture.cpp
+    test_helpers.cpp
     t1_scaffolding_test.cpp
     t1_scene_test.cpp
     t1_v2_ir_dispatch_test.cpp

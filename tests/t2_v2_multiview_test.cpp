@@ -35,6 +35,7 @@
 #include "render/types.hpp"
 #include "render/view.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 #include "utils/pixel_reader.hpp"
 
 namespace re::tests {
@@ -66,17 +67,6 @@ constexpr std::uint8_t kExpectedBB = 77u;
 
 constexpr int kColorTolerance = 1;
 
-data::Mesh makeQuadMesh() {
-    std::vector<glm::vec3> positions = {
-        glm::vec3(-1.0f, -1.0f, 0.0f),
-        glm::vec3(1.0f, -1.0f, 0.0f),
-        glm::vec3(1.0f, 1.0f, 0.0f),
-        glm::vec3(-1.0f, 1.0f, 0.0f),
-    };
-    std::vector<std::uint32_t> indices = {0u, 1u, 2u, 0u, 2u, 3u};
-    return data::Mesh::fromTriangles(std::move(positions), std::move(indices));
-}
-
 data::Image makeSolidImage() {
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(kViewWidth) * kViewHeight * 4u, 0u);
     for (std::size_t i = 0u; i + 3u < bytes.size(); i += 4u) {
@@ -88,46 +78,9 @@ data::Image makeSolidImage() {
     return data::Image(static_cast<int>(kViewWidth), static_cast<int>(kViewHeight), 4, std::move(bytes));
 }
 
-render::Camera makeCamera() {
-    render::Camera camera;
-    camera.position = glm::vec3(0.0f, 0.0f, 5.0f);
-    camera.view = glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
-    return camera;
-}
 
-struct WindowTarget {
-    core::Texture2D color;
-    core::Framebuffer framebuffer;
-    WindowTarget(core::Texture2D c, core::Framebuffer f) : color(std::move(c)), framebuffer(std::move(f)) {}
-};
 
-WindowTarget makeWindow() {
-    auto color = core::Texture2D::create();
-    auto framebuffer = core::Framebuffer::create();
-    EXPECT_TRUE(color.ok()) << color.error().message;
-    EXPECT_TRUE(framebuffer.ok()) << framebuffer.error().message;
-    std::vector<std::uint8_t> zeros(static_cast<std::size_t>(kWindowWidth) * kWindowHeight * 4u, 0u);
-    color->bind(0u);
-    color->upload(static_cast<std::uint32_t>(kWindowWidth), static_cast<std::uint32_t>(kWindowHeight), zeros.data());
-    color->unbind(0u);
-    framebuffer->bind();
-    framebuffer->attachColor(*color);
-    EXPECT_TRUE(framebuffer->isComplete());
-    framebuffer->unbind();
-    return WindowTarget(std::move(*color), std::move(*framebuffer));
-}
 
-std::vector<std::uint8_t> readPixel(core::Framebuffer& framebuffer, std::uint32_t x, std::uint32_t y) {
-    framebuffer.bind();
-    std::vector<std::uint8_t> pixels;
-    re::utils::PixelReader reader;
-    auto read = reader.read(x, y, 1u, 1u, pixels);
-    EXPECT_TRUE(read.ok()) << read.error().message;
-    EXPECT_EQ(pixels.size(), 4u);
-    framebuffer.unbind();
-    return pixels;
-}
 
 void expectViewAColor(const std::vector<std::uint8_t>& pixel, const char* where) {
     EXPECT_NEAR(pixel[0], kExpectedAR, kColorTolerance) << "R at " << where;
@@ -151,7 +104,7 @@ struct TwoViewFixture {
         std::make_shared<render::AssetRegistry>()};
     std::shared_ptr<render::PhongMaterial> materialA{
         std::make_shared<render::PhongMaterial>(kViewABaseColor)};
-    data::Mesh quadA{makeQuadMesh()};
+    data::Mesh quadA{makeQuad()};
     render::MeshScene sceneA;
     std::shared_ptr<data::Image> imageB{
         std::make_shared<data::Image>(makeSolidImage())};

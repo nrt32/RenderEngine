@@ -34,20 +34,10 @@
 #include "scene/store.hpp"
 #include "scene/view.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 #include "utils/pixel_reader.hpp"
 
 namespace re::tests {
-
-static data::Mesh makeQuadMesh() {
-    std::vector<glm::vec3> positions = {
-        glm::vec3(-1.0f, -1.0f, 0.0f),
-        glm::vec3(1.0f, -1.0f, 0.0f),
-        glm::vec3(1.0f, 1.0f, 0.0f),
-        glm::vec3(-1.0f, 1.0f, 0.0f),
-    };
-    std::vector<uint32_t> indices = {0u, 1u, 2u, 0u, 2u, 3u};
-    return data::Mesh::fromTriangles(std::move(positions), std::move(indices));
-}
 
 static render::Camera makeOrthoCamera() {
     render::Camera c;
@@ -76,7 +66,7 @@ TEST(T1Hierarchy, FactoryCreateTeapotSucceeds) {
 TEST(T1Hierarchy, SceneStorePartitionedKindIndexOkind) {
     scene::SceneStore store;
     // Add one of each core kind plus teapot
-    auto quad = std::make_shared<data::Mesh>(makeQuadMesh());
+    auto quad = std::make_shared<data::Mesh>(makeQuad());
     scene::MeshObject mo;
     mo.mesh = quad;
     uint64_t mid = store.addMeshObject(mo);
@@ -136,7 +126,7 @@ TEST(T1Hierarchy, TeapotRendersThroughBridgeCenterPixelAnalytic) {
     stack->mesh = std::make_shared<render::MeshRenderer>(registry, nullptr);
 
     scene::SceneStore store;
-    auto quad = std::make_shared<data::Mesh>(makeQuadMesh());
+    auto quad = std::make_shared<data::Mesh>(makeQuad());
     scene::TeapotObject teapot;
     teapot.mesh = quad;
     teapot.presentation.phong.baseColor = glm::vec4(0.2f, 0.4f, 0.8f, 1.0f);

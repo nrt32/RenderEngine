@@ -62,6 +62,7 @@
 #include "scene/plane_desc.hpp"
 #include "scene/translate_context.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 #include "utils/pixel_reader.hpp"
 
 namespace re::tests {
@@ -94,27 +95,6 @@ RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
     EXPECT_TRUE(framebuffer->isComplete());
     framebuffer->unbind();
     return RenderedTarget{std::move(*color), std::move(*framebuffer)};
-}
-
-std::vector<std::uint8_t> readPixel(core::Framebuffer& framebuffer,
-                                    std::uint32_t x, std::uint32_t y) {
-    framebuffer.bind();
-    std::vector<std::uint8_t> pixels;
-    re::utils::PixelReader reader;
-    auto read = reader.read(x, y, 1u, 1u, pixels);
-    EXPECT_TRUE(read.ok()) << read.error().message;
-    EXPECT_EQ(pixels.size(), 4u);
-    framebuffer.unbind();
-    return pixels;
-}
-
-data::Mesh makeQuadMesh() {
-    std::vector<glm::vec3> positions = {
-        glm::vec3(-0.5f, -0.5f, 0.0f), glm::vec3(0.5f, -0.5f, 0.0f),
-        glm::vec3(0.5f, 0.5f, 0.0f),   glm::vec3(-0.5f, 0.5f, 0.0f)};
-    std::vector<uint32_t> indices = {0u, 1u, 2u, 0u, 2u, 3u};
-    return data::Mesh::fromTriangles(std::move(positions),
-                                     std::move(indices));
 }
 
 /// Constant-value 4x4x4 dataset (uniform voxels => closed-form ray-cast).
@@ -286,7 +266,7 @@ TEST(T20BrokerPath, BridgedSceneLayersMatchDirectRendererOracles) {
     constexpr int kRuns = 3; // R10: N>=3 consecutive green runs
 
     // Shared CPU assets.
-    auto quad = std::make_shared<const data::Mesh>(makeQuadMesh());
+    auto quad = std::make_shared<const data::Mesh>(makeQuad());
     auto dataset =
         std::make_shared<const data::VolumeDataset>(makeUniformDataset(0.75f));
     auto tf = makeOpaqueGreenTf();
@@ -478,7 +458,7 @@ TEST(T20BrokerPath, MaterialHandOffIsRealAndValueDeduped) {
 // ---------------------------------------------------------------------------
 
 TEST(T20BrokerPath, TransparentInstancesRouteToOitCaptureStage) {
-    auto quad = std::make_shared<const data::Mesh>(makeQuadMesh());
+    auto quad = std::make_shared<const data::Mesh>(makeQuad());
 
     broker::AppContext ctx(
         broker::AppContext::Params{.enableOIT = true,

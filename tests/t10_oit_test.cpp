@@ -55,6 +55,7 @@
 #include "render/mesh_renderer.hpp"
 #include "render/phong_material.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 
 namespace re::tests {
 namespace {
@@ -93,28 +94,8 @@ constexpr std::uint32_t kExpectedCapturedFragments =
 // ---------------------------------------------------------------------------
 
 /// Build a golden +Z-facing quad mesh covering [-1,1]^2 at z=0 (two triangles).
-data::Mesh makeQuadMesh() {
-    std::vector<glm::vec3> positions = {
-        glm::vec3(-1.0f, -1.0f, 0.0f), // v0
-        glm::vec3(1.0f, -1.0f, 0.0f),  // v1
-        glm::vec3(1.0f, 1.0f, 0.0f),   // v2
-        glm::vec3(-1.0f, 1.0f, 0.0f),  // v3
-    };
-    std::vector<std::uint32_t> indices = {0u, 1u, 2u, 0u, 2u, 3u};
-    return data::Mesh::fromTriangles(std::move(positions), std::move(indices));
-}
-
 /// The default camera: eye at (0,0,5) looking down -Z at the origin, with an
 /// orthographic projection mapping NDC [-1,1]^2 onto the full viewport.
-render::Camera makeCamera() {
-    render::Camera camera;
-    camera.position = glm::vec3(0.0f, 0.0f, 5.0f);
-    camera.view = glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f),
-                              glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
-    return camera;
-}
-
 /// Build a color-only FBO render target of `w` x `h` pixels with clear color
 /// transparent black.
 struct RenderedTarget {
@@ -142,15 +123,6 @@ RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
 }
 
 /// Read back a single pixel from the currently-bound framebuffer at (x, y).
-std::vector<std::uint8_t> readPixel(std::uint32_t x, std::uint32_t y) {
-    std::vector<std::uint8_t> pixels;
-    re::utils::PixelReader reader;
-    auto read = reader.read(x, y, 1u, 1u, pixels);
-    EXPECT_TRUE(read.ok()) << read.error().message;
-    EXPECT_EQ(pixels.size(), 4u);
-    return pixels;
-}
-
 /// A recording stub pipeline: records begin/drawTransparent/end calls so a test
 /// can assert how MeshRenderer drives the (swappable) pipeline interface.
 class RecordingPipeline final : public render::ITransparencyPipeline {
@@ -206,7 +178,7 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
     // z=-1 (near is closer to the camera at z=5). Both instances share ONE
     // registered handle: the same CPU quad is one GPU object in the shared
     // registry (SPEC §9 V2.5).
-    data::Mesh quad = makeQuadMesh();
+    data::Mesh quad = makeQuad();
     auto registry = std::make_shared<render::AssetRegistry>();
     const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
@@ -274,7 +246,7 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
 // ---------------------------------------------------------------------------
 
 TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
-    data::Mesh quad = makeQuadMesh();
+    data::Mesh quad = makeQuad();
     auto registry = std::make_shared<render::AssetRegistry>();
     const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
@@ -363,7 +335,7 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
 // ---------------------------------------------------------------------------
 
 TEST(T10Oit, PipelineInterfaceIsSwappable) {
-    data::Mesh quad = makeQuadMesh();
+    data::Mesh quad = makeQuad();
     auto registry = std::make_shared<render::AssetRegistry>();
     const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;

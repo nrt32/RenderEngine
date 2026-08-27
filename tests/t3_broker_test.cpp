@@ -46,6 +46,7 @@
 #include "scene/object.hpp"
 #include "scene/translate_context.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 #include "utils/pixel_reader.hpp"
 
 namespace re::tests {
@@ -58,17 +59,6 @@ static data::Mesh makeTriangleMesh() {
     };
     std::vector<uint32_t> idx = {0, 1, 2};
     return data::Mesh::fromTriangles(pos, idx);
-}
-
-static data::Mesh makeQuadMesh() {
-    std::vector<glm::vec3> positions = {
-        glm::vec3(-1.0f, -1.0f, 0.0f),
-        glm::vec3(1.0f, -1.0f, 0.0f),
-        glm::vec3(1.0f, 1.0f, 0.0f),
-        glm::vec3(-1.0f, 1.0f, 0.0f),
-    };
-    std::vector<uint32_t> indices = {0u, 1u, 2u, 0u, 2u, 3u};
-    return data::Mesh::fromTriangles(std::move(positions), std::move(indices));
 }
 
 static render::Camera makeOrthoCamera() {
@@ -216,7 +206,7 @@ TEST(T3Broker, ForwardingRenderStillGreen) {
     auto* mapper = broker.get<broker::MeshObjectMapper>();
     ASSERT_NE(mapper, nullptr);
 
-    auto quad = std::make_shared<data::Mesh>(makeQuadMesh());
+    auto quad = std::make_shared<data::Mesh>(makeQuad());
     scene::MeshObject appObj;
     appObj.id = 42;
     // Shared-reference ownership: the object stores its asset as a

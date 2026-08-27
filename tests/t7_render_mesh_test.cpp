@@ -39,6 +39,7 @@
 #include "render/mesh_renderer.hpp"
 #include "render/phong_material.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 
 namespace re::tests {
 namespace {
@@ -72,28 +73,8 @@ constexpr int kColorTolerance = 1;
 
 /// Build a golden +Z-facing quad mesh covering [-1,1]^2 at z=0 (two triangles).
 /// Vertex normals are all (0,0,1), so a front-facing fragment shades to 1.
-data::Mesh makeQuadMesh() {
-    std::vector<glm::vec3> positions = {
-        glm::vec3(-1.0f, -1.0f, 0.0f), // v0
-        glm::vec3(1.0f, -1.0f, 0.0f),  // v1
-        glm::vec3(1.0f, 1.0f, 0.0f),   // v2
-        glm::vec3(-1.0f, 1.0f, 0.0f),  // v3
-    };
-    std::vector<std::uint32_t> indices = {0u, 1u, 2u, 0u, 2u, 3u};
-    return data::Mesh::fromTriangles(std::move(positions), std::move(indices));
-}
-
 /// The default camera: eye at (0,0,5) looking down -Z at the origin, with an
 /// orthographic projection mapping NDC [-1,1]^2 onto the full viewport.
-render::Camera makeCamera() {
-    render::Camera camera;
-    camera.position = glm::vec3(0.0f, 0.0f, 5.0f);
-    camera.view = glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f),
-                              glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
-    return camera;
-}
-
 /// An injectable transparency-pipeline spy: records
 /// begin()/end()/drawTransparent() calls so a test can assert the pipeline was
 /// NOT engaged for an opaque scene.
@@ -158,7 +139,7 @@ TEST(T7RenderMesh, OpaqueQuadCenterPixelMatchesBaseColor) {
         std::make_shared<render::PhongMaterial>(kBaseColor);
     ASSERT_FALSE(material->isTransparent());
 
-    data::Mesh quad = makeQuadMesh();
+    data::Mesh quad = makeQuad();
     // The scene carries the mesh's AssetHandle, not mesh bytes: the renderer
     // resolves it through the shared asset registry at draw time (RE-minimal
     // hand-off; the shared handle means registry and scene co-own the slot).
@@ -221,7 +202,7 @@ TEST(T7RenderMesh, OpaqueSceneAlphaIsOneAndPipelineStaysOff) {
         std::make_shared<render::PhongMaterial>(kBaseColor);
     ASSERT_FALSE(material->isTransparent());
 
-    data::Mesh quad = makeQuadMesh();
+    data::Mesh quad = makeQuad();
     auto registry = std::make_shared<render::AssetRegistry>();
     const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;

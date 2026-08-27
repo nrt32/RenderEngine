@@ -67,6 +67,7 @@
 #include "render/view.hpp"
 #include "render/view_target.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 #include "utils/pixel_reader.hpp"
 
 namespace re::tests {
@@ -115,50 +116,18 @@ constexpr std::uint32_t kProbeY[3] = {32u, 56u, 8u};
 // ---------------------------------------------------------------------------
 
 /// Golden +Z-facing quad covering [-1,1]^2 at z=0 (two CCW triangles).
-data::Mesh makeQuadMesh() {
-    std::vector<glm::vec3> positions = {
-        glm::vec3(-1.0f, -1.0f, 0.0f), // v0
-        glm::vec3(1.0f, -1.0f, 0.0f),  // v1
-        glm::vec3(1.0f, 1.0f, 0.0f),   // v2
-        glm::vec3(-1.0f, 1.0f, 0.0f),  // v3
-    };
-    std::vector<std::uint32_t> indices = {0u, 1u, 2u, 0u, 2u, 3u};
-    return data::Mesh::fromTriangles(std::move(positions), std::move(indices));
-}
-
 /// Camera at (0,0,5) looking down -Z; ortho maps NDC [-1,1]^2 onto the full
 /// 64x64 viewport. World z=0 sits 5 units from the eye, world z=-1 sits 6 —
 /// both inside the [0.1, 10] clip range, at distinct depths.
-render::Camera makeCamera() {
-    render::Camera camera;
-    camera.position = glm::vec3(0.0f, 0.0f, 5.0f);
-    camera.view = glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f),
-                              glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
-    return camera;
-}
-
 /// Read back one RGBA8 pixel of `framebuffer` at (x, y) via utils::PixelReader
 /// (the raw readback stays under core/).
-std::vector<std::uint8_t> readPixel(core::Framebuffer& framebuffer,
-                                    std::uint32_t x, std::uint32_t y) {
-    framebuffer.bind();
-    std::vector<std::uint8_t> pixels;
-    re::utils::PixelReader reader;
-    auto read = reader.read(x, y, 1u, 1u, pixels);
-    EXPECT_TRUE(read.ok()) << read.error().message;
-    EXPECT_EQ(pixels.size(), 4u);
-    framebuffer.unbind();
-    return pixels;
-}
-
 /// One shared fixture piece: registry + golden quad handle + the two opaque
 /// materials + a renderer. All co-owned via shared_ptr so teardown order
 /// between view items, scenes, and this fixture can never dangle.
 struct OverlapFixture {
     std::shared_ptr<render::AssetRegistry> registry{
         std::make_shared<render::AssetRegistry>()};
-    data::Mesh quad{makeQuadMesh()};
+    data::Mesh quad{makeQuad()};
     render::AssetHandle handle{};
     std::shared_ptr<render::PhongMaterial> nearMaterial{
         std::make_shared<render::PhongMaterial>(kNearColor)};
@@ -190,15 +159,6 @@ struct OverlapFixture {
         return s;
     }
 };
-
-/// Assert an RGBA8 pixel equals `r,g,b,a` within the 1/255 color tolerance.
-void expectPixel(const std::vector<std::uint8_t>& pixel, int r, int g, int b,
-                 const char* where, int a = 255) {
-    EXPECT_NEAR(pixel[0], r, kColorTolerance) << "R at " << where;
-    EXPECT_NEAR(pixel[1], g, kColorTolerance) << "G at " << where;
-    EXPECT_NEAR(pixel[2], b, kColorTolerance) << "B at " << where;
-    EXPECT_NEAR(pixel[3], a, kColorTolerance) << "A at " << where;
-}
 
 } // namespace
 
@@ -333,7 +293,7 @@ TEST(T18Depth, SetDepthTestRecreatesTargetAndResizePreservesMode) {
 // ---------------------------------------------------------------------------
 
 TEST(T18Depth, LinkedListOitCompositeUnchangedThroughDepthEnabledTarget) {
-    data::Mesh quad = makeQuadMesh();
+    data::Mesh quad = makeQuad();
     auto registry = std::make_shared<render::AssetRegistry>();
     const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;

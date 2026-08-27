@@ -53,6 +53,7 @@
 #include "render/types.hpp" // render::Camera / render::RenderTarget
 #include "render/volume_renderer.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 #include "volume/color.hpp"
 #include "volume/ray_caster.hpp"
 #include "volume/transfer_function.hpp"
@@ -87,15 +88,6 @@ constexpr float kTfAlpha = 0.5f;
 
 /// The default camera: eye at (0.5,0.5,5) looking down -Z at the box center,
 /// orthographic projection mapping NDC [-1,1]^2 onto the full viewport.
-render::Camera makeCamera() {
-    render::Camera camera;
-    camera.position = glm::vec3(0.5f, 0.5f, 5.0f);
-    camera.view = glm::lookAt(camera.position, glm::vec3(0.5f, 0.5f, 0.5f),
-                              glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
-    return camera;
-}
-
 /// Build a render target (color-only FBO of `w` x `h`) bound for readback.
 struct RenderedTarget {
     core::Texture2D color;

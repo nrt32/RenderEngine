@@ -59,6 +59,7 @@
 #include "render/plane_renderer.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 
 namespace re::tests {
 namespace {
@@ -83,15 +84,6 @@ constexpr int kColorTolerance = 1;
 
 /// The default camera: eye at (0,0,5) looking down -Z at the origin, with an
 /// orthographic projection mapping NDC [-1,1]^2 onto the full viewport.
-render::Camera makeCamera() {
-    render::Camera camera;
-    camera.position = glm::vec3(0.0f, 0.0f, 5.0f);
-    camera.view = glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f),
-                              glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
-    return camera;
-}
-
 /// Build a render target (color-only FBO of `w` x `h`) bound for readback.
 struct RenderedTarget {
     core::Texture2D color;

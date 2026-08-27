@@ -54,6 +54,7 @@
 #include "render/types.hpp"
 #include "render/volume_renderer.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 #include "volume/color.hpp"
 #include "volume/transfer_function.hpp"
 
@@ -107,17 +108,6 @@ constexpr glm::vec3 kPlanePoint(0.0f, 0.0f, 0.0f);
 // ---------------------------------------------------------------------------
 
 /// Build a golden +Z-facing quad mesh covering [-1,1]^2 at z=0 (two triangles).
-data::Mesh makeQuadMesh() {
-    std::vector<glm::vec3> positions = {
-        glm::vec3(-1.0f, -1.0f, 0.0f), // v0
-        glm::vec3(1.0f, -1.0f, 0.0f),  // v1
-        glm::vec3(1.0f, 1.0f, 0.0f),   // v2
-        glm::vec3(-1.0f, 1.0f, 0.0f),  // v3
-    };
-    std::vector<std::uint32_t> indices = {0u, 1u, 2u, 0u, 2u, 3u};
-    return data::Mesh::fromTriangles(std::move(positions), std::move(indices));
-}
-
 /// Build the golden cube mesh `[-1,1]^3`: 8 corners, 12 outward-facing
 /// triangles (the kept z=+1 face has geometric normal +Z, FR-render.4).
 data::Mesh makeCubeMesh() {
@@ -174,15 +164,6 @@ volume::TransferFunction makeGreenTransferFunction() {
 
 /// The default camera (mesh/plane/slice): eye at (0,0,5) looking down -Z at the
 /// origin, orthographic projection mapping NDC [-1,1]^2 onto the full viewport.
-render::Camera makeCamera() {
-    render::Camera camera;
-    camera.position = glm::vec3(0.0f, 0.0f, 5.0f);
-    camera.view = glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f),
-                              glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
-    return camera;
-}
-
 /// The volume camera (FR-render.6): eye at (0.5,0.5,5) looking down -Z at the
 /// box center (0.5,0.5,0.5), orthographic projection mapping NDC [-1,1]^2 onto
 /// the full viewport.
@@ -283,7 +264,7 @@ TEST(T1V2IrDispatch, SceneVariantHoldsTheScenePointer) {
 TEST(T1V2IrDispatch, MeshDispatchRendersGoldenQuad) {
     auto material =
         std::make_shared<render::PhongMaterial>(kBaseColor);
-    data::Mesh quad = makeQuadMesh();
+    data::Mesh quad = makeQuad();
     // The scene carries the mesh's AssetHandle, not mesh bytes: the renderer
     // resolves it through the shared registry at draw time (RE-minimal
     // hand-off — the render side never stores CPU geometry).

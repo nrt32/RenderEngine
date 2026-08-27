@@ -73,6 +73,7 @@
 #include "render/phong_material.hpp"
 #include "render/slice_renderer.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "tests/test_helpers.hpp"
 
 namespace re::tests {
 namespace {
@@ -116,28 +117,8 @@ constexpr std::uint32_t kHugeIndex = 4096u;
 // ---------------------------------------------------------------------------
 
 /// Build a golden +Z-facing quad mesh covering [-1,1]^2 at z=0 (two triangles).
-data::Mesh makeQuadMesh() {
-    std::vector<glm::vec3> positions = {
-        glm::vec3(-1.0f, -1.0f, 0.0f), // v0
-        glm::vec3(1.0f, -1.0f, 0.0f),  // v1
-        glm::vec3(1.0f, 1.0f, 0.0f),   // v2
-        glm::vec3(-1.0f, 1.0f, 0.0f),  // v3
-    };
-    std::vector<std::uint32_t> indices = {0u, 1u, 2u, 0u, 2u, 3u};
-    return data::Mesh::fromTriangles(std::move(positions), std::move(indices));
-}
-
 /// The default camera: eye at (0,0,5) looking down -Z at the origin, with an
 /// orthographic projection mapping NDC [-1,1]^2 onto the full viewport.
-render::Camera makeCamera() {
-    render::Camera camera;
-    camera.position = glm::vec3(0.0f, 0.0f, 5.0f);
-    camera.view = glm::lookAt(camera.position, glm::vec3(0.0f, 0.0f, 0.0f),
-                              glm::vec3(0.0f, 1.0f, 0.0f));
-    camera.proj = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
-    return camera;
-}
-
 /// Build a color-only render target (64x64) bound for readback.
 struct RenderedTarget {
     core::Texture2D color;
@@ -165,15 +146,6 @@ RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
 
 /// Read back the single RGBA8 pixel at (x, y) from the still-bound framebuffer
 /// (y = 0 is the bottom scanline).
-std::vector<std::uint8_t> readPixel(std::uint32_t x, std::uint32_t y) {
-    std::vector<std::uint8_t> pixels;
-    re::utils::PixelReader reader;
-    auto read = reader.read(x, y, 1u, 1u, pixels);
-    EXPECT_TRUE(read.ok()) << read.error().message;
-    EXPECT_EQ(pixels.size(), 4u);
-    return pixels;
-}
-
 /// Assert the pixel bytes are the base-color bytes {51, 102, 204} within 1/255.
 void expectBaseColor(const std::vector<std::uint8_t>& pixel,
                      const char* where) {
@@ -192,7 +164,7 @@ void expectBaseColor(const std::vector<std::uint8_t>& pixel,
 
 TEST(T3V2AssetRegistry, SameMeshRegisteredTwiceIsOneGpuObject) {
     render::AssetRegistry registry;
-    data::Mesh mesh = makeQuadMesh();
+    data::Mesh mesh = makeQuad();
 
     // Register the same CPU object twice: "once via MeshRenderer, once via
     // SliceRenderer" — the second call must return the EXISTING handle and
@@ -234,7 +206,7 @@ TEST(T3V2AssetRegistry, MeshAndSliceRenderersShareOneGpuObject) {
     // point of the store is that MeshRenderer and SliceRenderer resolving the
     // same mesh produce ONE GPU object, not two uploads.
     auto registry = std::make_shared<render::AssetRegistry>();
-    data::Mesh mesh = makeQuadMesh();
+    data::Mesh mesh = makeQuad();
     const auto handle = registry->registerAsset(mesh);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
     auto material = std::make_shared<render::PhongMaterial>(kBaseColor);
@@ -307,7 +279,7 @@ TEST(T3V2AssetRegistry, MeshAndSliceRenderersShareOneGpuObject) {
 
 TEST(T3V2AssetRegistry, StaleHandleResolveReturnsTypedError) {
     render::AssetRegistry registry;
-    data::Mesh mesh = makeQuadMesh();
+    data::Mesh mesh = makeQuad();
     const auto handle = registry.registerAsset(mesh);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
     const std::uint32_t index = handle->index;
@@ -354,7 +326,7 @@ TEST(T3V2AssetRegistry, StaleHandleResolveReturnsTypedError) {
 
     // Reuse: a NEW CPU object reuses the freed slot with a NEW generation —
     // the old handle stays stale while the new one resolves.
-    data::Mesh other = makeQuadMesh(); // distinct object, identical content
+    data::Mesh other = makeQuad(); // distinct object, identical content
     const auto reused = registry.registerAsset(other);
     ASSERT_TRUE(reused.ok()) << reused.error().message;
     EXPECT_EQ(reused->index, index) << "the freed slot index is reused";
@@ -378,8 +350,8 @@ TEST(T3V2AssetRegistry, StaleHandleResolveReturnsTypedError) {
 
 TEST(T3V2AssetRegistry, TwoDistinctMeshesAreTwoGpuObjects) {
     render::AssetRegistry registry;
-    data::Mesh meshA = makeQuadMesh();
-    data::Mesh meshB = makeQuadMesh(); // same content, DIFFERENT object
+    data::Mesh meshA = makeQuad();
+    data::Mesh meshB = makeQuad(); // same content, DIFFERENT object
 
     const auto a = registry.registerAsset(meshA);
     const auto b = registry.registerAsset(meshB);
@@ -423,7 +395,7 @@ TEST(T3V2AssetRegistry, TwoDistinctMeshesAreTwoGpuObjects) {
 
 TEST(T3V2AssetRegistry, RendererPropagatesStaleHandleError) {
     auto registry = std::make_shared<render::AssetRegistry>();
-    data::Mesh mesh = makeQuadMesh();
+    data::Mesh mesh = makeQuad();
     const auto handle = registry->registerAsset(mesh);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
     auto material =
