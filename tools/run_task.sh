@@ -64,7 +64,7 @@ MAX_TASK="${MAX_TASK:-0}"
 # Model governance: run_models.conf is read at every invocation so edits take
 # effect from the next session launch. Precedence: RUN_MODEL > conf > default.
 # ---------------------------------------------------------------------------
-DEFAULT_MODEL="opencode/muse-spark-1.2-contributor-free"
+DEFAULT_MODEL="opencode-go/muse-spark-1.2-contributor"
 IMPLEMENTER_MODEL="${RUN_MODEL:-$DEFAULT_MODEL}"
 REVIEWER_MODEL="${RUN_MODEL:-$DEFAULT_MODEL}"
 if [ -f "$ROOT/tools/run_models.conf" ]; then
