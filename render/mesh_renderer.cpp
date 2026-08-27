@@ -35,8 +35,7 @@ data::Result<core::ShaderProgram*> MeshRenderer::opaqueProgram() {
 
 data::Result<void> MeshRenderer::drawInstances(const MeshScene& scene,
                                                const Camera& camera,
-                                               core::ShaderProgram* program,
-                                               bool skipTransparent) {
+                                               core::ShaderProgram* program) {
     program->use();
     program->setUniformMat4("uView", camera.view);
     program->setUniformMat4("uProj", camera.proj);
@@ -48,12 +47,9 @@ data::Result<void> MeshRenderer::drawInstances(const MeshScene& scene,
             // mesh pointer.
             continue;
         }
-        if (skipTransparent && instance.material->isTransparent()) {
-            // Opaque path only: transparent meshes are composited by the OIT
-            // pipeline, not this pass (FR-render.2/3). The drawLayer path
-            // passes skipTransparent=false — see drawInstances.
-            continue;
-        }
+        // T14: single transparent behavior — draw every resolvable instance
+        // with blending off (no silent drop). OIT capture is orchestrated by
+        // the ViewCompositor out-of-band; drawLayer never re-decides per layer.
         auto geometry = resolveMeshGeometry(registry_, instance.mesh,
                                             "MeshRenderer");
         if (geometry.failed()) {
@@ -82,9 +78,36 @@ data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
         return data::makeError<void>(programResult.error().code,
                                      programResult.error().message);
     }
-    // The direct opaque pass leaves transparent instances to the OIT pipeline.
-    return drawInstances(scene, camera, *programResult,
-                         /*skipTransparent=*/true);
+    core::ShaderProgram* program = *programResult;
+    program->use();
+    program->setUniformMat4("uView", camera.view);
+    program->setUniformMat4("uProj", camera.proj);
+    for (const MeshInstance& instance : scene.meshes) {
+        if (!instance.material || instance.mesh.isNull()) {
+            continue;
+        }
+        if (instance.material->isTransparent()) {
+            // Opaque-only path for the OIT composite: transparent meshes are
+            // captured via the pipeline, not this pass (FR-render.2/3). This is
+            // the ONLY place transparent instances are filtered, and only when
+            // a pipeline is actually engaged (see render() OIT branch).
+            continue;
+        }
+        auto geometry = resolveMeshGeometry(registry_, instance.mesh,
+                                            "MeshRenderer");
+        if (geometry.failed()) {
+            return data::makeError<void>(geometry.error().code,
+                                         geometry.error().message);
+        }
+        MeshGeometry* geometryPtr = *geometry;
+        program->setUniformMat4("uModel", instance.model);
+        program->setUniformVec4("uBaseColor", instance.material->baseColor());
+        auto draw = geometryPtr->draw();
+        if (draw.failed()) {
+            return draw;
+        }
+    }
+    return data::Result<void>(data::value);
 }
 
 data::Result<void> MeshRenderer::drawTransparent(const MeshScene& scene,
@@ -181,38 +204,31 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
         return transparency_->end(camera, target, ctx);
     }
 
-    return drawOpaque(scene, camera, target);
-}
-
-data::Result<void> MeshRenderer::render(const Scene& scene,
-                                         const Camera& camera,
-                                         const RenderTarget& target) {
-    const MeshScene* const* meshScene = std::get_if<const MeshScene*>(&scene);
-    if (meshScene == nullptr || *meshScene == nullptr) {
-        // The dispatch contract (SPEC §9 V2.3) rejects a scene of a different
-        // technique — or the null "no scene" payload (render/types.hpp) — with
-        // a typed error instead of throwing or crashing (SPEC §5).
-        return data::makeError<void>(
-            2, "MeshRenderer: scene does not hold a MeshScene");
+    // T14 fix: no silent drop — when no OIT pipeline is wired (or scene is
+    // opaque-only) draw every instance with blending off (single behavior).
+    // The previous drawOpaque() path silently dropped transparent instances when
+    // transparency_ == nullptr; that bug class is now unrepresentable — the
+    // only path draws all.
+    auto programResult = opaqueProgram();
+    if (programResult.failed()) {
+        return data::makeError<void>(programResult.error().code,
+                                     programResult.error().message);
     }
-    return render(**meshScene, camera, target);
+    return drawInstances(scene, camera, *programResult);
 }
 
 data::Result<void> MeshRenderer::drawLayer(const MeshScene& scene, const Camera& camera) {
-    // ReView already bind+viewport+clear via ctx; single-item render() keeps clear.
-    // This layer draws without clearing — second layer must not clear away the first.
-    // T2: (void)ctx removed — REContext::current() is the global per-GL-context single writer
+    // ReView already bind+viewport+clear via REContext::current(); single-item
+    // render() keeps clear. This layer draws without clearing — second layer
+    // must not clear away the first.
     auto programResult = opaqueProgram();
     if (programResult.failed()) {
         return data::makeError<void>(programResult.error().code, programResult.error().message);
     }
-    // drawLayer draws EVERY resolvable instance unconditionally: it is one
-    // layer of a multi-layer view composition, so transparency handling (OIT)
-    // is orchestrated by the View, not re-decided per layer here. The direct
-    // single-item render() path owns its own opaque/OIT split via
-    // skipTransparent=true in drawOpaque — that split is not duplicated here.
-    return drawInstances(scene, camera, *programResult,
-                         /*skipTransparent=*/false);
+    // drawLayer draws every resolvable instance unconditionally with blending
+    // off (single transparent behavior, no silent drop). OIT is orchestrated by
+    // the ViewCompositor out-of-band when a pipeline is wired.
+    return drawInstances(scene, camera, *programResult);
 }
 
 } // namespace re::render

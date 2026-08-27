@@ -132,7 +132,8 @@ struct PlaneScene {
     std::vector<PlaneInstance> planes;
 };
 
-/// Stateless textured-plane renderer (SPEC §3; feeds MPR, T14).
+/// Stateless textured-plane renderer (SPEC §3; feeds MPR, T14 collapse — IRenderer
+/// dispatch deleted, broker drawLayer path is single source of truth).
 ///
 /// Owns only GL resources: the cached textured-plane shader program and one
 /// shared unit-quad vertex array (all planes are unit quads transformed by
@@ -145,7 +146,9 @@ struct PlaneScene {
 /// per store and no per-renderer texture map exists. Textures are sampled with
 /// GL_LINEAR and CLAMP_TO_EDGE (core::Texture2D defaults), so a quad mapped
 /// 1:1 onto the viewport reproduces the source texels exactly (FR-render.5).
-class PlaneRenderer : public IRenderer {
+/// T14 removed the IRenderer Scene variant dispatch; all rendering goes through
+/// drawLayer after View's beginPass.
+class PlaneRenderer {
    public:
     /// Construct with the shared asset store (SHARED ownership: the renderer
     /// co-owns the registry with every other renderer — declaration order can
@@ -163,13 +166,6 @@ class PlaneRenderer : public IRenderer {
     /// cannot be issued.
     data::Result<void> render(const PlaneScene& scene, const Camera& camera,
                               const RenderTarget& target);
-
-    /// Type-erased dispatch entry (the IRenderer contract): renders when
-    /// `scene` holds a PlaneScene; a scene of any OTHER technique is rejected
-    /// with a typed error rather than thrown or silently ignored, so a wrong
-    /// renderer/scene pairing surfaces at the call site.
-    data::Result<void> render(const Scene& scene, const Camera& camera,
-                               const RenderTarget& target) override;
 
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
     /// assuming ReView already performed bind+viewport+clear via REContext::current()
@@ -199,21 +195,13 @@ class PlaneRenderer : public IRenderer {
     /// (render() after its pass prologue, drawLayer() as a View layer):
     /// installs `program`, maps the shared unit quad onto each instance's
     /// corner box + model transform (single copy of the basis-matrix math),
-    /// binds textures through the store, and issues one indexed draw per
-    /// instance using the shared kQuadTriangleIndices pattern.
+    /// binds textures via the shared store (O(1) handle resolve, no per-renderer
+    /// map), and issues one indexed draw per instance using the shared
+    /// kQuadTriangleIndices pattern.
     data::Result<void> drawInstances(const PlaneScene& scene,
                                      const Camera& camera,
                                      core::ShaderProgram* program,
                                      core::VertexArray* quadVao);
-
-    /// Resolve `handle`'s content in the shared asset store (O(1) handle
-    /// resolve, T7 owner-driven, no per-frame hash), returning a pointer to
-    /// the store-owned texture (non-null on success).
-    /// @note lifetime: non-owning view of store-owned storage (the slot's
-    /// unique_ptr) — valid until the slot's last reference is released or the
-    /// store dies; renderers never retain it across frames.
-    data::Result<core::Texture2D*> textureFor(
-        const ImageTextureHandle& handle);
 
     std::shared_ptr<AssetRegistry> assets_;
     LazyProgramCache planeProgram_;

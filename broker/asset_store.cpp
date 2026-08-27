@@ -34,20 +34,14 @@ data::Result<BrokerAssetHandle> AssetStore::registerAsset(SharedMesh mesh) {
             }
         }
     }
-    // Pointer shim second check (dual-key diagnostic, not dedup key — hash is primary).
-    auto it = byObject_.find(mesh.get());
-    if (it != byObject_.end()) {
-        // Pointer hit but hash mismatch means different content at same address
-        // (reused memory) — treat as new; otherwise hash hit already returned.
-        if (scene::computeContentHash(*it->first) == hash) {
-            return data::makeValue<BrokerAssetHandle>(it->second);
-        }
-    }
+    // T14 collapse: the former pointer-identity shim that mapped raw CPU mesh
+    // addresses to handles is deleted because the store now keys solely by the
+    // content-hash of stable bytes hashed at load time via data/content_hash
+    // (never per frame). The hash IS the identity so two distinct allocations
+    // with identical bytes alias one slot, global dedup is by content not pointer,
+    // and no per-renderer pointer map remains — the gate verifies zero such maps
+    // remain in broker (T14).
     size_t idx = 0;
-    const data::Mesh* /*borrow*/ raw = mesh.get(); // byObject_ diagnostic key;
-    // borrow of the bytes this store's Slot::cpuObject (shared_ptr below)
-    // co-owns — the key lives exactly as long as the slot (erased on
-    // unregister).
     if (!freeIndices_.empty()) {
         idx = freeIndices_.back();
         freeIndices_.pop_back();
@@ -67,7 +61,6 @@ data::Result<BrokerAssetHandle> AssetStore::registerAsset(SharedMesh mesh) {
     }
     ++liveCount_;
     BrokerAssetHandle h{static_cast<uint32_t>(idx), slots_[idx].generation};
-    byObject_.emplace(raw, h);
     byHash_[hash] = h;
     return data::makeValue<BrokerAssetHandle>(h);
 }
@@ -104,7 +97,6 @@ data::Result<void> AssetStore::unregister(const BrokerAssetHandle& h) {
     if (!s.live) {
         return data::makeError<void>(kFreedSlotCode, "AssetStore: freed slot");
     }
-    if (s.cpuObject) byObject_.erase(s.cpuObject.get());
     byHash_.erase(s.contentHash);
     s.cpuObject.reset(); // releases the store's shared reference; other
                          // co-owners keep the bytes alive

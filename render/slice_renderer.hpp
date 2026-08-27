@@ -40,32 +40,40 @@
 #include "render/mesh_geometry.hpp"
 #include "render/mesh_renderer.hpp"
 #include "render/shader_cache.hpp"
-#include "render/types.hpp" // IRenderer / render::Scene
+#include "render/types.hpp" // render::Camera / RenderTarget / ClipPlane
 
 namespace re::render {
 
 /// A scene of mesh instances to clip and slice (reuses MeshInstance from
 /// MeshRenderer; CPU-side, app/ builds these).
 ///
-/// `plane` is the clip plane used by the IRenderer dispatch path
-/// (SliceRenderer::render(scene, camera, target), SPEC §9 V2.3): the dispatch
-/// contract carries no separate plane parameter, so the scene itself carries
-/// the plane it should be sliced against. The concrete 4-argument render
-/// (which receives the plane explicitly) is unaffected by this member.
+/// `plane` is the clip plane carried by the scene for the View drawLayer path
+/// that clips without a separate plane parameter (the concrete 4-argument render
+/// which receives the plane explicitly is unaffected; the former IRenderer
+/// dispatch path that carried the plane inside the Scene variant was deleted in
+/// T14).
 struct SliceScene {
     std::vector<MeshInstance> meshes;
-    ClipPlane plane; ///< Clip plane for the IRenderer dispatch path.
+    ///< Clip plane for the View drawLayer path — the View's ViewTarget already
+    ///< performed bind+viewport+clear via REContext::current(), so drawLayer
+    ///< clips against this plane without a separate parameter; the former Scene
+    ///< variant that carried the plane inside a type-erased dispatch was deleted
+    ///< in T14 to make the transparent-mesh silent-drop bug class unrepresentable
+    ///< and to leave one defined behavior for all layers (T14).
+    ClipPlane plane;
 };
 
-/// Stateless geometry-shader plane-clip renderer (SPEC §3).
+/// Stateless geometry-shader plane-clip renderer (SPEC §3, T14 collapse — IRenderer
+/// dispatch deleted, broker drawLayer path is single source of truth).
 ///
 /// Owns only GL resources: the cached clip shader program (vertex + geometry +
 /// fragment), the cached transform-feedback capture program, and a transform
 /// feedback object. Mesh geometry lives in the shared AssetRegistry (SPEC §9
 /// V2.5): the renderer resolves each instance's AssetHandle through the
 /// injected registry, so a data::Mesh is uploaded to the GPU once — even
-/// across MeshRenderer + SliceRenderer.
-class SliceRenderer : public IRenderer {
+/// across MeshRenderer + SliceRenderer. T14 removed the IRenderer Scene variant
+/// dispatch; all rendering goes through drawLayer after View's beginPass.
+class SliceRenderer {
    public:
     /// Construct with the shared asset registry (SHARED ownership, T13 — see
     /// MeshRenderer). A null registry is accepted at construction so member
@@ -89,19 +97,12 @@ class SliceRenderer : public IRenderer {
                               const ClipPlane& plane,
                               const RenderTarget& target);
 
-    /// IRenderer dispatch (SPEC §9 V2.3): renders when `scene` holds a
-    /// SliceScene, clipping it against the plane carried by the scene itself
-    /// (`scene.plane`); returns a typed error when it holds a different
-    /// technique (SPEC §5, no exceptions).
-    data::Result<void> render(const Scene& scene, const Camera& camera,
-                               const RenderTarget& target) override;
-
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
     /// assuming ReView already performed bind+viewport+clear via REContext::current()
     /// (T2 global per-GL-context, 2 layers sharing viewport issue 1 glViewport).
     /// Does not clear — second layer must not clear away the first. Clips against
-    /// the plane carried by the scene (slice.plane) for the IRenderer path; the
-    /// explicit-plane overload uses the passed plane.
+    /// the plane carried by the scene (slice.plane); the explicit-plane overload
+    /// uses the passed plane.
     data::Result<void> drawLayer(const SliceScene& scene, const Camera& camera);
     /// Explicit-plane layer variant (used when View's ClipPlane supplies the
     /// plane, not the scene).

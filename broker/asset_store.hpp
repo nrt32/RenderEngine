@@ -95,9 +95,6 @@ class AssetStore {
     };
     std::vector<Slot> slots_;
     std::vector<size_t> freeIndices_;
-    // Diagnostic shim keyed by the live object's address (erased on
-    // unregister so no entry outlives its key); NOT the dedup key.
-    std::unordered_map<const data::Mesh*, BrokerAssetHandle> byObject_;
     std::unordered_map<uint64_t, BrokerAssetHandle> byHash_;
     size_t liveCount_{0u};
 };

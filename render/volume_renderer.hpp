@@ -113,7 +113,8 @@ struct VolumeScene {
 /// analytic CPU expectation in the gate uses the identical spacing.
 inline constexpr float kDefaultStepLength = 0.25f;
 
-/// Stateless ray-cast volume renderer (SPEC §3, FR-render.6).
+/// Stateless ray-cast volume renderer (SPEC §3, FR-render.6, T14 collapse — IRenderer
+/// dispatch deleted, broker drawLayer path is single source of truth).
 ///
 /// Owns only GL resources: the cached ray-cast shader program and one shared
 /// full-screen quad (every volume is ray-cast over the whole viewport). GPU
@@ -125,8 +126,9 @@ inline constexpr float kDefaultStepLength = 0.25f;
 /// lazy lookupVolume path), so each distinct dataset is uploaded once per
 /// store — even across two renderer instances — and no per-renderer texture
 /// map exists. The transfer function is uploaded per instance from its
-/// control points.
-class VolumeRenderer : public IRenderer {
+/// control points. T14 removed the IRenderer Scene variant dispatch; all
+/// rendering goes through drawLayer after View's beginPass.
+class VolumeRenderer {
    public:
     /// Construct with the shared asset store (SHARED ownership: the renderer
     /// co-owns the registry with every other renderer — declaration order can
@@ -145,13 +147,6 @@ class VolumeRenderer : public IRenderer {
     /// cannot be issued.
     data::Result<void> render(const VolumeScene& scene, const Camera& camera,
                               const RenderTarget& target);
-
-    /// Type-erased dispatch entry (the IRenderer contract): renders when
-    /// `scene` holds a VolumeScene; a scene of any OTHER technique is rejected
-    /// with a typed error rather than thrown or silently ignored, so a wrong
-    /// renderer/scene pairing surfaces at the call site.
-    data::Result<void> render(const Scene& scene, const Camera& camera,
-                               const RenderTarget& target) override;
 
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
     /// assuming ReView already performed bind+viewport+clear via REContext::current()
@@ -185,22 +180,14 @@ class VolumeRenderer : public IRenderer {
 
     /// The ONE shared instance-draw loop behind both entry points (render()
     /// after its pass prologue, drawLayer() as a View layer): installs
-    /// `program`, binds each instance's store-owned 3D texture, uploads the
+    /// `program`, binds each instance's store-owned 3D texture via direct
+    /// handle resolve (no per-renderer map, O(1) shared store), uploads the
     /// slab/uniform block (single copy of that math), and issues one
     /// full-screen-quad draw per instance.
     data::Result<void> drawInstances(const VolumeScene& scene,
                                      const Camera& camera,
                                      core::ShaderProgram* program,
                                      core::VertexArray* quadVao);
-
-    /// Resolve `handle`'s content in the shared asset store (O(1) handle
-    /// resolve, T7 owner-driven, no per-frame hash), returning a pointer to
-    /// the store-owned texture (non-null on success).
-    /// @note lifetime: non-owning view of store-owned storage (the slot's
-    /// unique_ptr) — valid until the slot's last reference is released or the
-    /// store dies; renderers never retain it across frames.
-    data::Result<core::Texture3D*> textureFor(
-        const VolumeTextureHandle& handle);
 
     /// Upload the transfer function `tf` to `program` as the TF control-point
     /// uniforms (uTfCount/uTfValues/uTfColors).

@@ -68,19 +68,6 @@ data::Result<core::VertexArray*> VolumeRenderer::screenQuad() {
     return data::makeValue<core::VertexArray*>(&screenQuad_->vao());
 }
 
-data::Result<core::Texture3D*> VolumeRenderer::textureFor(
-    const VolumeTextureHandle& handle) {
-    // Owner-driven T7: hashed at register time, O(1) handle resolve, never
-    // per-frame FNV-1a (data/content_hash.hpp:31). The lookupVolume lazy
-    // path is deleted — content-hash IS identity via the handle's
-    // contentHash field, no pointer-key shim, no pinned refs==0 slots.
-    if (handle.isNull()) {
-        return data::makeError<core::Texture3D*>(
-            4, "VolumeRenderer: null volume handle (register via AssetRegistry)");
-    }
-    return assets_->resolveVolume(handle);
-}
-
 void VolumeRenderer::uploadTransferFunction(
     const volume::TransferFunction& tf, core::ShaderProgram* program) const {
     const std::size_t count = tf.size();
@@ -141,7 +128,17 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
                        std::to_string(kMaxTfPoints) + " control points");
         }
 
-        auto texture = textureFor(handle);
+        // T14 collapse: direct handle resolve via the shared AssetRegistry with no
+        // per-renderer wrapper — the VolumeTextureHandle minted at register time
+        // carries the content-hash of stable bytes (never per frame) and the
+        // renderer resolves O(1) through the single shared store, so identical
+        // voxel content aliases one GPU Texture3D globally and no per-renderer
+        // pointer-keyed map remains to drift or to require per-frame hashing (T14).
+        if (handle.isNull()) {
+            return data::makeError<void>(
+                4, "VolumeRenderer: null volume handle (register via AssetRegistry)");
+        }
+        auto texture = assets_->resolveVolume(handle);
         if (texture.failed()) {
             return data::makeError<void>(texture.error().code,
                                          texture.error().message);
@@ -211,21 +208,6 @@ data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
                   target.clearColor.b, target.clearColor.a);
 
     return drawInstances(scene, camera, program, quadVao);
-}
-
-data::Result<void> VolumeRenderer::render(const Scene& scene,
-                                           const Camera& camera,
-                                           const RenderTarget& target) {
-    const VolumeScene* const* volumeScene =
-        std::get_if<const VolumeScene*>(&scene);
-    if (volumeScene == nullptr || *volumeScene == nullptr) {
-        // The dispatch contract (SPEC §9 V2.3) rejects a scene of a different
-        // technique — or the null "no scene" payload (render/types.hpp) — with
-        // a typed error instead of throwing or crashing (SPEC §5).
-        return data::makeError<void>(
-            2, "VolumeRenderer: scene does not hold a VolumeScene");
-    }
-    return render(**volumeScene, camera, target);
 }
 
 data::Result<void> VolumeRenderer::drawLayer(const VolumeScene& scene, const Camera& camera) {

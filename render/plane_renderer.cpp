@@ -118,18 +118,6 @@ data::Result<core::VertexArray*> PlaneRenderer::quadGeometry() {
     return data::makeValue<core::VertexArray*>(&*quadVao_);
 }
 
-data::Result<core::Texture2D*> PlaneRenderer::textureFor(
-    const ImageTextureHandle& handle) {
-    // Owner-driven T7: hashed at register time, O(1) handle resolve, never
-    // per-frame FNV-1a. The lookupImage lazy path is deleted — content-hash
-    // IS identity via the handle's contentHash field.
-    if (handle.isNull()) {
-        return data::makeError<core::Texture2D*>(
-            4, "PlaneRenderer: null image handle (register via AssetRegistry)");
-    }
-    return assets_->resolveImage(handle);
-}
-
 data::Result<void> PlaneRenderer::drawInstances(const PlaneScene& scene,
                                                 const Camera& camera,
                                                 core::ShaderProgram* program,
@@ -163,7 +151,17 @@ data::Result<void> PlaneRenderer::drawInstances(const PlaneScene& scene,
                 legacyHandleCache_[instance.image.get()] = handle;
             }
         }
-        auto texture = textureFor(handle);
+        // T14 collapse: direct handle resolve via the shared AssetRegistry with no
+        // per-renderer wrapper — the ImageTextureHandle minted at register time
+        // carries the content-hash of stable bytes (never per frame) and the
+        // renderer resolves O(1) through the single shared store, so identical
+        // pixel content aliases one GPU Texture2D globally and no per-renderer
+        // pointer-keyed map remains to drift or to require per-frame hashing (T14).
+        if (handle.isNull()) {
+            return data::makeError<void>(
+                4, "PlaneRenderer: null image handle (register via AssetRegistry)");
+        }
+        auto texture = assets_->resolveImage(handle);
         if (texture.failed()) {
             return data::makeError<void>(texture.error().code,
                                          texture.error().message);
@@ -249,20 +247,6 @@ data::Result<void> PlaneRenderer::render(const PlaneScene& scene,
                   target.clearColor.b, target.clearColor.a);
 
     return drawInstances(scene, camera, program, quadVao);
-}
-
-data::Result<void> PlaneRenderer::render(const Scene& scene,
-                                          const Camera& camera,
-                                          const RenderTarget& target) {
-    const PlaneScene* const* planeScene = std::get_if<const PlaneScene*>(&scene);
-    if (planeScene == nullptr || *planeScene == nullptr) {
-        // The dispatch contract (SPEC §9 V2.3) rejects a scene of a different
-        // technique — or the null "no scene" payload (render/types.hpp) — with
-        // a typed error instead of throwing or crashing (SPEC §5).
-        return data::makeError<void>(
-            2, "PlaneRenderer: scene does not hold a PlaneScene");
-    }
-    return render(**planeScene, camera, target);
 }
 
 data::Result<void> PlaneRenderer::drawLayer(const PlaneScene& scene, const Camera& camera) {

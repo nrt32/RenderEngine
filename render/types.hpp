@@ -1,38 +1,36 @@
 #pragma once
 
-// render/types.hpp — shared render types + the IRenderer dispatch contract
-// (SPEC §9 V2.3, V3.4 T5).
+// render/types.hpp — shared render types (SPEC §9 V2.3, V3.4 T5, T14 collapse).
 //
 // The types every renderer shares: Camera and RenderTarget (moved here from
 // mesh_renderer.hpp so renderers that need only the shared types no longer pull
-// in the whole mesh renderer), the Scene dispatch variant (kept ONLY for the
-// direct single-item render() tests; the View path carries items as
-// type-erased IRenderable draw calls instead, and scenes reference assets by
-// copyable AssetHandle rather than raw CPU pointers), and the pure abstract
-// IRenderer render contract implemented by the four per-technique renderers
-// (Mesh/Plane/Volume/SliceRenderer). The multi-view workstream (SPEC §9 V2.4)
-// dispatched scene objects to the correct renderer through this interface;
-// the V3 view redesign (T5) replaces it with render::View (ReView) per screen
-// section + IRenderable list (render/view.hpp) and deletes ViewRenderer.
-// render::ViewRect remains here as the shared window-section handle.
+// in the whole mesh renderer), ViewRect as the shared window-section handle,
+// and ClipPlane for view culling. The former Scene dispatch variant
+// `variant<const MeshScene*, ...>` and the pure abstract IRenderer dispatch
+// contract were kept ONLY for direct single-item render() tests; they were
+// deleted in T14 (collapse to the broker path) because the dispatch introduced
+// a second transparent-mesh behavior that silently dropped transparent instances
+// when no OIT pipeline was wired, while the broker drawLayer path draws every
+// instance with blending off — a bug class made unrepresentable by keeping only
+// IRenderable::drawLayer via View/REContext (T14, A9). The multi-view
+// workstream (SPEC §9 V2.4) previously dispatched through IRenderer; the V3
+// view redesign (T5) replaced it with render::View (ReView) per screen section
+// + IRenderable list (render/view.hpp) and deleted ViewRenderer; T14 then
+// removed the vestigial Scene/ IRenderer dispatch entirely so all rendering
+// goes through the View compositor's out-of-band OIT capture when a pipeline
+// is wired, otherwise drawLayer draws with blending off — never a silent drop.
+// Scenes are now consumed as concrete `MeshScene`/`PlaneScene`/etc. via
+// `drawLayer` after View's `REContext::current().beginPass` prologue, and the
+// App never retains the scene beyond one call (stateless-renderer model,
+// SPEC §3).
 //
-// The Scene variant holds POINTERS to the per-technique scene structs (defined
-// in mesh_renderer.hpp / plane_renderer.hpp / volume_renderer.hpp /
-// slice_renderer.hpp): pointer types are complete even when the pointee is
-// forward-declared, so the variant can live here without pulling in the
-// renderer headers (a std::variant of incomplete VALUE types would not
-// compile). Scenes are owned by app/ and passed by pointer, matching the
-// stateless-renderer model (SPEC §3): a render call receives all of its data
-// per call and never retains the scene.
-//
-// render/ is GL-call-free: it draws through the core::Draw API and core/ RAII
-// objects (guardrail gpu_api_ownership).
+// render/ is GL-call-free: it draws through the core wrappers and REContext
+// (guardrail gpu_api_ownership).
 
 #include <cstdint>
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
-#include <variant>
 
 #include "core/framebuffer.hpp"
 #include "data/result.hpp"
@@ -58,8 +56,9 @@ struct Camera {
 struct RenderTarget {
     /// Borrow for the DURATION OF ONE render/blit call only (structurally
     /// guaranteed: renderers use it synchronously inside
-    /// IRenderer::render/View::blitTo and never retain it — stateless-renderer
-    /// contract, SPEC §3). Null = the window's default framebuffer.
+    /// concrete `render(scene,camera,target)` / `View::blitTo` and never retain
+    /// it — stateless-renderer contract, SPEC §3). Null = the window's default
+    /// framebuffer.
     /// @note lifetime: owned by the caller — a ViewTarget's inner framebuffer
     /// or the window's default FB; must outlive the single call that consumes
     /// this target.
@@ -68,32 +67,6 @@ struct RenderTarget {
     std::uint32_t height = 0u;
     glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 0.0f};
 };
-
-// Forward declarations of the per-technique scene structs (defined in their
-// renderer headers: mesh_renderer.hpp, plane_renderer.hpp,
-// volume_renderer.hpp, slice_renderer.hpp).
-struct MeshScene;
-struct PlaneScene;
-struct VolumeScene;
-struct SliceScene;
-
-/// A scene of any of the four supported rendering techniques, held by pointer:
-/// the dispatch payload of the IRenderer contract (SPEC §9 V2.3). Exactly one
-/// alternative is non-null in a well-formed dispatch; a null pointer (e.g. the
-/// default-constructed variant) is a valid "no scene" value that every
-/// renderer rejects with a typed error (nothing to render), never a crash or
-/// undefined behavior. The multi-view workstream (T2, SPEC §9 V2.4) dispatches
-/// scene objects to the correct renderer by building this variant and calling
-/// IRenderer::render.
-///
-/// @note lifetime: each alternative borrows a scene OWNED BY THE CALLER for
-/// the DURATION OF ONE dispatch — the variant is built at the call site from
-/// an lvalue scene and consumed synchronously by IRenderer::render, which
-/// never retains it (stateless-renderer contract, SPEC §3). This is a
-/// structurally guaranteed scope-bounded borrow, not ownership; long-lived
-/// scene state lives in render::View items or broker-side caches instead.
-using Scene = std::variant<const MeshScene*, const PlaneScene*,
-                           const VolumeScene*, const SliceScene*>;
 
 /// A window-section rectangle in GL pixel coordinates (origin bottom-left,
 /// matching core::setViewport): the per-view window-section handle the app
@@ -119,24 +92,6 @@ struct ViewRect {
 struct ClipPlane {
     glm::vec3 normal{0.0f, 0.0f, 1.0f}; ///< Unit plane normal (world space).
     glm::vec3 point{0.0f, 0.0f, 0.0f};  ///< A point on the plane (world space).
-};
-
-/// Pure abstract renderer contract (SPEC §9 V2.3): the single narrow dispatch
-/// method implemented by every per-technique renderer (MeshRenderer,
-/// PlaneRenderer, VolumeRenderer, SliceRenderer). The renderer validates that
-/// `scene` holds its own scene type and renders it into `target` from
-/// `camera`; a scene of a different technique is rejected with a typed error
-/// (SPEC §5, no exceptions), never a crash or undefined behavior.
-class IRenderer {
-   public:
-    virtual ~IRenderer() = default;
-
-    /// Render the scene held by `scene` into `target` from `camera`. On
-    /// success the target framebuffer is left bound (so tests can read it
-    /// back). Returns a typed error if the scene holds a different technique
-    /// or the render cannot be issued (SPEC §5).
-    virtual data::Result<void> render(const Scene& scene, const Camera& camera,
-                                      const RenderTarget& target) = 0;
 };
 
 } // namespace re::render

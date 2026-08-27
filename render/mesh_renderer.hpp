@@ -58,13 +58,19 @@ struct MeshScene {
     std::vector<MeshInstance> meshes;
 };
 
-/// Stateless opaque-forward-pass mesh renderer (SPEC §3).
+/// Stateless opaque-forward-pass mesh renderer (SPEC §3, T14 collapse — IRenderer
+/// dispatch deleted, broker drawLayer path is single source of truth).
 ///
 /// Owns only GL resources: the cached opaque shader program. Mesh geometry
 /// lives in the shared AssetRegistry (SPEC §9 V2.5): the renderer resolves
 /// each instance's AssetHandle through the injected registry, so a data::Mesh
 /// is uploaded to the GPU once — even across MeshRenderer + SliceRenderer.
-class MeshRenderer : public IRenderer {
+/// T14 removed the IRenderer Scene variant dispatch (the second transparent-mesh
+/// behavior that silently dropped transparent instances when no OIT pipeline was
+/// wired); the only rendering entry for composited views is drawLayer which
+/// draws every resolvable instance with blending off, and the ViewCompositor
+/// orchestrates OIT out-of-band when a pipeline is wired — no silent drop.
+class MeshRenderer {
    public:
     /// Construct with the shared asset registry (SHARED ownership, T13: the
     /// renderer co-owns the registry with every other mesh-family renderer
@@ -81,16 +87,14 @@ class MeshRenderer : public IRenderer {
     /// Render `scene` into `target` from `camera`. On success the target
     /// framebuffer is left bound (so tests can read it back). Returns a typed
     /// error if the opaque shader fails to build, an instance's handle fails
-    /// to resolve (stale/dangling), or a draw cannot be issued.
+    /// to resolve (stale/dangling), or a draw cannot be issued. T14 fix: when
+    /// no OIT pipeline is wired transparent instances are drawn with blending
+    /// off (no silent drop) — the same single behavior as drawLayer; only when
+    /// a pipeline is wired and the scene contains transparent instances does
+    /// the method engage the pipeline (opaque via drawOpaque, transparent via
+    /// capture).
     data::Result<void> render(const MeshScene& scene, const Camera& camera,
                               const RenderTarget& target);
-
-    /// Type-erased dispatch entry (the IRenderer contract): renders when
-    /// `scene` holds a MeshScene; a scene of any OTHER technique is rejected
-    /// with a typed error rather than thrown or silently ignored, so a wrong
-    /// renderer/scene pairing surfaces at the call site.
-    data::Result<void> render(const Scene& scene, const Camera& camera,
-                               const RenderTarget& target) override;
 
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
     /// assuming ReView already performed bind+viewport+clear via REContext::current()
@@ -120,20 +124,18 @@ class MeshRenderer : public IRenderer {
     /// cached program (non-null on success).
     data::Result<core::ShaderProgram*> opaqueProgram();
 
-    /// The ONE shared instance-draw loop behind both entry points: installs
-    /// `program` and draws every resolvable mesh of `scene`. With
-    /// `skipTransparent` (the direct render()/drawOpaque path) transparent
-    /// instances are left to the OIT pipeline; without it (the drawLayer path,
-    /// one layer of a View composition) EVERY resolvable instance is drawn —
-    /// transparency handling is orchestrated by the View, not re-decided per
-    /// layer. Returns a typed error if a handle fails to resolve or a draw
-    /// cannot be issued.
+    /// The shared instance-draw loop: installs `program` and draws every
+    /// resolvable mesh of `scene` with blending off (single transparent behavior
+    /// for the broker path; no silent drop). Transparency handling when an OIT
+    /// pipeline is wired is orchestrated by the ViewCompositor out-of-band, not
+    /// re-decided per layer. Returns a typed error if a handle fails to resolve
+    /// or a draw cannot be issued.
     data::Result<void> drawInstances(const MeshScene& scene,
                                      const Camera& camera,
-                                     core::ShaderProgram* program,
-                                     bool skipTransparent);
+                                     core::ShaderProgram* program);
 
-    /// Draw every opaque mesh instance directly to `target`.
+    /// Draw only opaque mesh instances (used by the direct render OIT path:
+    /// opaque go directly, transparent are captured via the pipeline).
     data::Result<void> drawOpaque(const MeshScene& scene, const Camera& camera,
                                   const RenderTarget& target);
 

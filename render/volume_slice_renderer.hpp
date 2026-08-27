@@ -35,10 +35,13 @@
 // shared with VolumeRenderer instances — an extracted slice and a ray-cast
 // of the same dataset upload it once.
 //
-// Like ContourRenderer, this renderer deliberately does NOT join the
-// `render::Scene` IRenderer dispatch variant (the variant's size is pinned
-// by its own dispatch gate): views compose it through the type-erased
-// drawLayer path, and direct tests call the concrete typed overload.
+// T14 collapse: the former `render::Scene` IRenderer dispatch variant
+// (`variant<const MeshScene*,...>` + `IRenderer render(Scene)`) was deleted;
+// the vestigial second transparent-mesh behavior (silent drop when no OIT
+// pipeline was wired) is now unrepresentable. All rendering goes through the
+// broker path: View's `REContext::current().beginPass` prologue followed by
+// concrete `drawLayer(scene, camera)` — the same single behavior as
+// Mesh/Plane/Volume. Direct tests call the concrete typed overload.
 //
 // render/ is GL-call-free: it draws through the core::Draw API and core/
 // RAII objects (guardrail gpu_api_ownership).
@@ -171,15 +174,6 @@ class VolumeSliceRenderer {
     /// @note lifetime: non-owning view of renderer-owned storage (the
     /// screenQuad_ `optional<>` member) — valid while this renderer is.
     data::Result<core::VertexArray*> screenQuad();
-
-    /// Resolve `handle`'s content in the shared asset store (O(1) handle
-    /// resolve, T7 owner-driven, no per-frame hash), returning a pointer to
-    /// the store-owned texture (non-null on success).
-    /// @note lifetime: non-owning view of store-owned storage (the slot's
-    /// unique_ptr) — valid until the slot's last reference is released or the
-    /// store dies; renderers never retain it across frames.
-    data::Result<core::Texture3D*> textureFor(
-        const VolumeTextureHandle& handle);
 
     /// Upload the transfer function `tf` to `program` as the TF control-point
     /// uniforms (uTfCount/uTfValues/uTfColors).

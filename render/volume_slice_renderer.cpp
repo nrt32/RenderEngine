@@ -50,16 +50,6 @@ data::Result<core::VertexArray*> VolumeSliceRenderer::screenQuad() {
     return data::makeValue<core::VertexArray*>(&screenQuad_->vao());
 }
 
-data::Result<core::Texture3D*> VolumeSliceRenderer::textureFor(
-    const VolumeTextureHandle& handle) {
-    // Owner-driven T7 (SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame): volume/image handles are minted via AssetRegistry::registerVolume/registerImage at sync, handing renderers VolumeTextureHandle/ImageTextureHandle; the renderer resolves O(1) via handle's contentHash (content-hash IS identity, no byObject pointer shim, no pinned refs==0 slots). The lazy lookupVolume/lookupImage insertion paths that recomputed FNV-1a over every byte per instance per frame are deleted, keeping explicit register→resolve only.
-    if (handle.isNull()) {
-        return data::makeError<core::Texture3D*>(
-            4, "VolumeSliceRenderer: null volume handle (register via AssetRegistry)");
-    }
-    return assets_->resolveVolume(handle);
-}
-
 void VolumeSliceRenderer::uploadTransferFunction(
     const volume::TransferFunction& tf, core::ShaderProgram* program) const {
     const std::size_t count = tf.size();
@@ -103,7 +93,17 @@ data::Result<void> VolumeSliceRenderer::drawOne(
         return data::makeError<void>(
             1, "VolumeSliceRenderer: slice instance dataset is null");
     }
-    auto texture = textureFor(handle);
+    // T14 collapse: direct handle resolve via the shared AssetRegistry with no
+    // per-renderer wrapper — the VolumeTextureHandle minted at register time
+    // carries the content-hash of stable bytes (never per frame) and the
+    // renderer resolves O(1) through the single shared store, so identical voxel
+    // content aliases one GPU Texture3D globally and no per-renderer pointer-keyed
+    // map remains to drift or to require per-frame hashing (T14).
+    if (handle.isNull()) {
+        return data::makeError<void>(
+            4, "VolumeSliceRenderer: null volume handle (register via AssetRegistry)");
+    }
+    auto texture = assets_->resolveVolume(handle);
     if (texture.failed()) {
         return data::makeError<void>(texture.error().code,
                                      texture.error().message);

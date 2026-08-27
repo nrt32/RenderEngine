@@ -134,21 +134,6 @@ data::Result<void> SliceRenderer::render(const SliceScene& scene,
     return clipInstances(scene, camera, plane, *programResult);
 }
 
-data::Result<void> SliceRenderer::render(const Scene& scene,
-                                          const Camera& camera,
-                                          const RenderTarget& target) {
-    const SliceScene* const* sliceScene = std::get_if<const SliceScene*>(&scene);
-    if (sliceScene == nullptr || *sliceScene == nullptr) {
-        // The dispatch contract (SPEC §9 V2.3) rejects a scene of a different
-        // technique — or the null "no scene" payload (render/types.hpp) — with
-        // a typed error instead of throwing or crashing (SPEC §5).
-        return data::makeError<void>(
-            2, "SliceRenderer: scene does not hold a SliceScene");
-    }
-    const SliceScene& slice = **sliceScene;
-    return render(slice, camera, slice.plane, target);
-}
-
 data::Result<void> SliceRenderer::drawLayer(const SliceScene& scene, const Camera& camera) {
     return drawLayer(scene, camera, scene.plane);
 }
