@@ -28,27 +28,13 @@
 #include "data/result.hpp"
 #include "scene/asset_id.hpp"
 #include "scene/asset_registry.hpp"
+#include "scene/detail/generation_tracker.hpp"
+#include "scene/field_id.hpp"
 #include "scene/iscene_object.hpp"
 #include "scene/object.hpp"
 #include "scene/view.hpp"
 
 namespace re::scene {
-
-/// Field identifier for per-field generation tracking: each enum value names
-/// one independently mutable part of the scene/view state, so a camera orbit
-/// can bump only `CameraView` while layout and items stay clean. Mappers use
-/// these generations as cache keys to skip re-translating unchanged input
-/// (SPEC §10.4).
-enum class FieldId : uint8_t {
-    Rect = 0,
-    Plane = 1,
-    CameraView = 2,
-    CameraProj = 3,
-    Items = 4,
-    Transform = 5,
-    Material = 6,
-    TransferFunction = 7,
-};
 
 /// SceneStore: owns SceneObject family (polymorphic) with stable handles + generation.
 ///
@@ -173,13 +159,16 @@ class SceneStore {
     bool removeObject(uint64_t id) noexcept;
 
     /// Global store generation — monotonic, bumped on every add/remove/mutate.
-    uint64_t storeGeneration() const noexcept { return storeGen_; }
+    /// Delegates to the shared GenerationTracker (T9 A6) — single impl for both
+    /// SceneStore/ViewStore, no hand-copied duplicate.
+    uint64_t storeGeneration() const noexcept { return tracker_.storeGeneration(); }
 
     /// Single mutation entry point: every field change goes through `bump`
     /// (never a direct storeGen increment elsewhere), which keeps the global
     /// generation and the dirty log consistent and makes "who changed since
     /// when" answerable from one place — a guard against store methods each
-    /// inventing their own dirty-tracking side channels (SPEC §10.4).
+    /// inventing their own dirty-tracking side channels (SPEC §10.4). Delegates
+    /// to GenerationTracker::bump (shared impl, T9 A6).
     void bump(FieldId field) noexcept;
 
     /// Push opt-in: mark a specific id/field dirty without the caller needing
@@ -188,12 +177,34 @@ class SceneStore {
     /// — the hybrid poll+push contract (SPEC §10.4).
     void markDirty(uint64_t id, FieldId field) noexcept;
 
-    /// Counts.
+    /// Counts — symmetric per-kind counters generated from the single partitioned
+    /// store template (T9 A7). Each `*Count()` is the partition size for that
+    /// kind (O(1)), and the six base families cover the original six partitions
+    /// (mesh/meshSlice/volume/volumeSlice/plane/contour) that prove the O(kind)
+    /// split. The template helper `addTypedObject_` underlies the add/get/remove
+    /// families, so the six families are one SRP template, not hand-copied.
     size_t meshObjectCount() const noexcept { return meshObjects_.size(); }
+    size_t meshSliceObjectCount() const noexcept { return meshSliceObjects_.size(); }
     size_t volumeObjectCount() const noexcept { return volumeObjects_.size(); }
+    size_t volumeSliceObjectCount() const noexcept { return volumeSliceObjects_.size(); }
     size_t planeObjectCount() const noexcept { return planeObjects_.size(); }
     size_t contourObjectCount() const noexcept { return contourObjects_.size(); }
     size_t teapotObjectCount() const noexcept { return teapotObjects_.size(); }
+    size_t sphereObjectCount() const noexcept { return sphereObjects_.size(); }
+    size_t cubeObjectCount() const noexcept { return cubeObjects_.size(); }
+    size_t cylinderObjectCount() const noexcept { return cylinderObjects_.size(); }
+    size_t torusObjectCount() const noexcept { return torusObjects_.size(); }
+    size_t coneObjectCount() const noexcept { return coneObjects_.size(); }
+    size_t arrowObjectCount() const noexcept { return arrowObjects_.size(); }
+    size_t gridObjectCount() const noexcept { return gridObjects_.size(); }
+    size_t axesObjectCount() const noexcept { return axesObjects_.size(); }
+    size_t pointCloudObjectCount() const noexcept { return pointCloudObjects_.size(); }
+    size_t capsuleObjectCount() const noexcept { return capsuleObjects_.size(); }
+    /// Generic alias `count()` per kind family — unified staleness contract A8
+    /// exposes typed `resolve` + borrowed accessors; `count()` is the symmetric
+    /// set for every kind (six base families plus open kinds) to avoid asymmetry
+    /// where some kinds lack a counter.
+    size_t count(SceneKind k) const noexcept { return countOfKind(k); }
     /// Total live objects across all partitions (kindIndex_ size invariant).
     size_t totalObjectCount() const noexcept;
     /// Per-kind live count via kindIndex_ — O(1) for any of the fifteen kinds,
@@ -287,9 +298,10 @@ class SceneStore {
 
    private:
     uint64_t allocId() noexcept { return nextId_++; }
-    /// Single write path of the bounded dirty log: raise the field's slot
-    /// generation in place (or append a new slot) so the log can never grow
-    /// past one entry per FieldId (see SceneStore::dirtyFieldsSince).
+    /// Single write path of the bounded dirty log — now delegated to the shared
+    /// GenerationTracker (T9 A6) so SceneStore/ViewStore share one impl; no
+    /// hand-copied duplicate. The tracker holds the bounded log with one slot
+    /// per FieldId raised in place (see GenerationTracker::recordDirty).
     void recordDirty_(FieldId field) noexcept;
     /// Helper to insert a newly allocated polymorphic object into its
     /// partitioned map and the secondary kindIndex_ (keeps O(kind) typed
@@ -301,12 +313,8 @@ class SceneStore {
     /// Resolve helper — check whether id is live in given partition.
     bool containsInPartition_(uint64_t id, const std::unordered_map<uint64_t, std::unique_ptr<ISceneObject>>& partition) const noexcept;
 
-    uint64_t storeGen_{0};
+    detail::GenerationTracker tracker_;
     uint64_t nextId_{1};
-    // Per-field dirty log with ONE slot per FieldId whose recorded
-    // generation is raised on every mutation of that field — the bounded
-    // structure `dirtyFieldsSince` computes from (never a hardcoded set).
-    std::vector<std::pair<uint64_t, FieldId>> dirtyLog_{};
 
     // Asset registries: one typed store per CPU asset kind (mesh, volume,
     // image). The template makes adding a new kind a one-line member instead
@@ -347,9 +355,6 @@ class SceneStore {
     // consults kindIndex_[k] (O(kind) result, no 17→1 scan). Kept in sync on
     // every add/remove. T1 Phase B O(kind) guarantee.
     std::unordered_map<SceneKind, std::unordered_set<uint64_t>> kindIndex_;
-
-    // Tombstone generations for removed ids (to detect stale handles).
-    std::unordered_map<uint64_t, uint64_t> tombstoneGen_;
 };
 
 /// ViewStore: owns View objects with stable handles + per-field generation.
@@ -368,7 +373,7 @@ class ViewStore {
     View* /*borrow*/ getViewMut(uint64_t id) noexcept;
     bool removeView(uint64_t id) noexcept;
 
-    uint64_t storeGeneration() const noexcept { return storeGen_; }
+    uint64_t storeGeneration() const noexcept { return tracker_.storeGeneration(); }
     void bump(FieldId field) noexcept;
     void markDirty(uint64_t id, FieldId field) noexcept;
     size_t count() const noexcept { return views_.size(); }
@@ -385,15 +390,11 @@ class ViewStore {
 
    private:
      uint64_t allocId() noexcept { return nextId_++; }
-     /// Single write path of the bounded dirty log: raise the field's slot
-     /// generation in place (or append a new slot) so the log can never grow
-     /// past one entry per FieldId (see SceneStore::dirtyFieldsSince).
+     /// Single write path of the bounded dirty log — now delegated to the shared GenerationTracker so both SceneStore and ViewStore share one implementation (no hand-copied duplicate). The tracker holds the bounded one-slot-per-field log and the tombstone map from one place, keeping the dirty computation and staleness contract unified (T9 A6).
      void recordDirty_(FieldId field) noexcept;
-     uint64_t storeGen_{0};
+     detail::GenerationTracker tracker_;
      uint64_t nextId_{1};
      std::unordered_map<uint64_t, View> views_;
-     std::unordered_map<uint64_t, uint64_t> tombstoneGen_;
-     std::vector<std::pair<uint64_t, FieldId>> dirtyLog_{};
 };
 
 } // namespace re::scene

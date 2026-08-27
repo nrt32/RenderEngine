@@ -216,17 +216,19 @@ TEST(T1SceneStore, DirtyFieldsSince) {
     EXPECT_TRUE(store.dirtyFieldsSince(store.storeGeneration()).empty())
         << "dirtyFieldsSince(currentGen) must be empty (no new mutation)";
     // ViewStore variant: computed too — a fresh view is genuinely untranslated
-    // in all four render-relevant fields.
+    // in all six render-relevant fields (the per-field dirty log starts with one slot per FieldId, so a new view dirties Rect, Plane, CameraView, Items plus the new ClearColor and DepthTest gens; T9 A5 adds ClearColor/DepthTest).
     scene::ViewStore vstore;
     EXPECT_TRUE(vstore.dirtyFieldsSince(0).empty());
     scene::View view;
     vstore.addView(view);
     auto vdirty = vstore.dirtyFieldsSince(0);
-    ASSERT_EQ(vdirty.size(), 4u) << "ViewStore addView dirties Rect,Plane,CameraView,Items";
+    ASSERT_EQ(vdirty.size(), 6u) << "ViewStore addView dirties Rect,Plane,CameraView,Items,ClearColor,DepthTest (T9 A5 adds two)";
     EXPECT_EQ(vdirty[0], scene::FieldId::Rect);
     EXPECT_EQ(vdirty[1], scene::FieldId::Plane);
     EXPECT_EQ(vdirty[2], scene::FieldId::CameraView);
     EXPECT_EQ(vdirty[3], scene::FieldId::Items);
+    EXPECT_EQ(vdirty[4], scene::FieldId::ClearColor);
+    EXPECT_EQ(vdirty[5], scene::FieldId::DepthTest);
 }
 
 // ---------------------------------------------------------------------------

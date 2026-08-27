@@ -34,9 +34,11 @@ peer to `scene`/`render`/`core`). Owns no GL and no app rendering logic — only
 - `render_stack.*` — the technique-renderer set (Mesh/Slice/Volume/VolumeSlice/Plane/Contour renderers over ONE AssetRegistry, optional LinkedListOIT). Not a mapper: the layers the synchronizer builds bind their drawLayer closures to these renderers.
 - `app_context.*` — the DIP composition root `{SceneStore, Broker(full default inventory), RenderStack, ViewBridge}`; the ONLY constructor call an app needs.
 - `slice_display.*` — slice-display camera factories returning `scene::Camera` values (`makeSliceCamera`, `make3dCamera`) plus `toRenderCamera` (the CameraMapper translation without cache/validation); formerly `app/mpr_camera.*`, moved here because they build RE-side types and app must not name them.
-- `view_synchronizer.*` — polls `SceneStore::storeGeneration()` early-out + computed `dirtyFieldsSince` (SRP: cache/dirty); item ids translate into REAL renderer-bound layers — an unresolvable id is typed error code 11, never a silently skipped item
+- `view_synchronizer.*` — polls `SceneStore::storeGeneration()` early-out + computed `dirtyFieldsSince` (SRP: cache/dirty; T9 A5 per-field `clearColorGen`/`depthTestGen` + shared `detail::GenerationTracker`); item ids translate into REAL renderer-bound layers — an unresolvable id is typed error code 11, never a silently skipped item. T9 A3: no `weak-pointer<ViewCompositor>` cycle — compositor passed explicitly per `sync`.
 - `view_compositor.*` — owns dispatch/present (SRP: ReView map); runs the OIT capture/composite stage after each view pass when transparent instances are pending
-- `view_bridge.*` — `IViewBridge` façade composing `ViewSynchronizer` + `ViewCompositor` (SRP via composition)
+- `view_bridge.*` — `IViewBridge` façade composing `ViewSynchronizer` + `ViewCompositor` (SRP via composition; T9 A3: `sync` passes compositor explicitly, no stored cycle; A4 `presentAll(core::Framebuffer*)` leak acknowledged, deferred to RHI `IRHIFramebuffer`)
+
+> **T9 A4 note (deferred leak, acknowledged):** `IViewBridge::presentAll(core::Framebuffer*)` still leaks the concrete `core::Framebuffer` vocabulary through the app façade. No code fix this batch — deferred to the RHI `IRHIFramebuffer` landing (EOL-1 / DIP-3), where the façade will depend on the `core/rhi/` abstraction. See `docs/render.md` T9 note and `docs/spec/broker.md` §11.6 DIP-3.
 - `stable_key.hpp` — THE single ReView identity key `{version, layoutId, viewId}` shared by synchronizer caches and the compositor's ReView map (one definition — divergent twins were a persistence-honesty review finding)
 
 App never holds an `IMapper`; only `IViewBridge` (DIP via the `AppContext`
@@ -56,4 +58,3 @@ through `AppContext` + `IViewBridge{sync, renderAll, presentAll}`.
 - One `class *Mapper` per file (audit `broker_per_type`); `ViewBridge`/`ViewSynchronizer`/`ViewCompositor`/`RenderStack` are coordinators, not mappers.
 - `ISP`: `IMapper` must not expose `mapCached` (`isp_mapper_forbid`).
 - `app → IViewBridge` only (audit `broker_app_reach`); `app ↛ render/` includes enforced by `acl_app_render`.
-

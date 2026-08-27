@@ -14,7 +14,7 @@ template <typename Derived>
 uint64_t SceneStore::addTypedObject_(Derived obj, std::unordered_map<uint64_t, std::unique_ptr<ISceneObject>>& partition) {
     uint64_t id = allocId();
     obj.setId(id);
-    obj.setGeneration(storeGen_ + 1);
+    obj.setGeneration(tracker_.storeGeneration() + 1);
     // Polymorphic heap allocation — the extra new per object (plus the
     // existing shared_ptr control block for the immutable asset) is amortised
     // by a future slab/arena in SceneStore (not this task). Today MeshObject
@@ -27,9 +27,9 @@ uint64_t SceneStore::addTypedObject_(Derived obj, std::unordered_map<uint64_t, s
     auto ptr = std::make_unique<Derived>(std::move(obj));
     partition.emplace(id, std::move(ptr));
     kindIndex_[kind].insert(id);
-    ++storeGen_;
-    recordDirty_(FieldId::Transform);
-    recordDirty_(FieldId::Items);
+    tracker_.incStoreGen();
+    tracker_.recordDirty(FieldId::Transform);
+    tracker_.recordDirty(FieldId::Items);
     return id;
 }
 
@@ -38,15 +38,15 @@ bool SceneStore::removeFromPartition_(uint64_t id, std::unordered_map<uint64_t, 
     if (it == partition.end()) return false;
     uint64_t gen = it->second->generation();
     SceneKind kind = it->second->kind();
-    tombstoneGen_[id] = gen + 1;
+    tracker_.noteTombstone(id, gen + 1);
     auto kit = kindIndex_.find(kind);
     if (kit != kindIndex_.end()) {
         kit->second.erase(id);
         if (kit->second.empty()) kindIndex_.erase(kit);
     }
     partition.erase(it);
-    ++storeGen_;
-    recordDirty_(FieldId::Items);
+    tracker_.incStoreGen();
+    tracker_.recordDirty(FieldId::Items);
     return true;
 }
 
@@ -81,7 +81,7 @@ uint64_t SceneStore::addObject(std::unique_ptr<ISceneObject> obj) {
     SceneKind kind = obj->kind();
     uint64_t id = allocId();
     obj->setId(id);
-    obj->setGeneration(storeGen_ + 1);
+    obj->setGeneration(tracker_.storeGeneration() + 1);
     // Route to correct partition by kind — the open dispatch that keeps store
     // closed for modification when new kinds are added (new partition line is
     // the only edit, and kindIndex_ absorbs the typed iteration without branch).
@@ -109,9 +109,9 @@ uint64_t SceneStore::addObject(std::unique_ptr<ISceneObject> obj) {
         default: meshObjects_.emplace(id, std::move(obj)); break;
     }
     kindIndex_[kind].insert(id);
-    ++storeGen_;
-    recordDirty_(FieldId::Transform);
-    recordDirty_(FieldId::Items);
+    tracker_.incStoreGen();
+    tracker_.recordDirty(FieldId::Transform);
+    tracker_.recordDirty(FieldId::Items);
     return id;
 }
 
@@ -272,38 +272,27 @@ size_t SceneStore::countOfKind(SceneKind k) const noexcept {
 }
 
 void SceneStore::recordDirty_(FieldId field) noexcept {
-    for (auto& entry : dirtyLog_) {
-        if (entry.second == field) {
-            entry.first = storeGen_;
-            return;
-        }
-    }
-    dirtyLog_.emplace_back(storeGen_, field);
+    tracker_.recordDirty(field);
 }
 
 void SceneStore::bump(FieldId field) noexcept {
-    ++storeGen_;
-    recordDirty_(field);
+    tracker_.bump(field);
 }
 
-void SceneStore::markDirty(uint64_t /*id*/, FieldId field) noexcept {
-    ++storeGen_;
-    recordDirty_(field);
+void SceneStore::markDirty(uint64_t id, FieldId field) noexcept {
+    (void)id;
+    tracker_.markDirty(id, field);
 }
 
 std::vector<FieldId> SceneStore::dirtyFieldsSince(uint64_t lastGen) const noexcept {
-    std::vector<FieldId> out;
-    for (const auto& entry : dirtyLog_) {
-        if (entry.first > lastGen) out.push_back(entry.second);
-    }
-    return out;
+    return tracker_.dirtyFieldsSince(lastGen);
 }
 
 data::Result<void> SceneStore::resolve(uint64_t id) const noexcept {
     if (getObject(id) != nullptr) {
         return data::Result<void>(data::value);
     }
-    if (tombstoneGen_.count(id) != 0u) {
+    if (tracker_.hasTombstone(id)) {
         return data::makeError<void>(
             2, "SceneStore::resolve: stale object handle — id " +
                    std::to_string(id) + " was erased (tombstone present)");
@@ -353,17 +342,21 @@ data::Result<void> SceneStore::unregisterImageAsset(AssetId id) {
 uint64_t ViewStore::addView(View view) {
     uint64_t id = allocId();
     view.id = id;
-    view.generation = storeGen_ + 1;
+    view.generation = tracker_.storeGeneration() + 1;
     view.rectGen = view.generation;
     view.planeGen = view.generation;
     view.cameraGen = view.generation;
     view.itemsGen = view.generation;
+    view.clearColorGen = view.generation;
+    view.depthTestGen = view.generation;
     views_.emplace(id, std::move(view));
-    ++storeGen_;
-    recordDirty_(FieldId::Rect);
-    recordDirty_(FieldId::Plane);
-    recordDirty_(FieldId::CameraView);
-    recordDirty_(FieldId::Items);
+    tracker_.incStoreGen();
+    tracker_.recordDirty(FieldId::Rect);
+    tracker_.recordDirty(FieldId::Plane);
+    tracker_.recordDirty(FieldId::CameraView);
+    tracker_.recordDirty(FieldId::Items);
+    tracker_.recordDirty(FieldId::ClearColor);
+    tracker_.recordDirty(FieldId::DepthTest);
     return id;
 }
 const View* /*borrow*/ ViewStore::getView(uint64_t id) const noexcept {
@@ -377,44 +370,33 @@ View* /*borrow*/ ViewStore::getViewMut(uint64_t id) noexcept {
 bool ViewStore::removeView(uint64_t id) noexcept {
     auto it = views_.find(id);
     if (it == views_.end()) return false;
-    tombstoneGen_[id] = it->second.generation + 1;
+    tracker_.noteTombstone(id, it->second.generation + 1);
     views_.erase(it);
-    ++storeGen_;
-    recordDirty_(FieldId::Items);
+    tracker_.incStoreGen();
+    tracker_.recordDirty(FieldId::Items);
     return true;
 }
 
 void ViewStore::recordDirty_(FieldId field) noexcept {
-    for (auto& entry : dirtyLog_) {
-        if (entry.second == field) {
-            entry.first = storeGen_;
-            return;
-        }
-    }
-    dirtyLog_.emplace_back(storeGen_, field);
+    tracker_.recordDirty(field);
 }
 
 void ViewStore::bump(FieldId field) noexcept {
-    ++storeGen_;
-    recordDirty_(field);
+    tracker_.bump(field);
 }
 
-void ViewStore::markDirty(uint64_t /*id*/, FieldId field) noexcept {
-    ++storeGen_;
-    recordDirty_(field);
+void ViewStore::markDirty(uint64_t id, FieldId field) noexcept {
+    (void)id;
+    tracker_.markDirty(id, field);
 }
 
 std::vector<FieldId> ViewStore::dirtyFieldsSince(uint64_t lastGen) const noexcept {
-    std::vector<FieldId> out;
-    for (const auto& entry : dirtyLog_) {
-        if (entry.first > lastGen) out.push_back(entry.second);
-    }
-    return out;
+    return tracker_.dirtyFieldsSince(lastGen);
 }
 
 data::Result<void> ViewStore::resolve(uint64_t id) const noexcept {
     if (views_.count(id) != 0u) return data::Result<void>(data::value);
-    if (tombstoneGen_.count(id) != 0u) {
+    if (tracker_.hasTombstone(id)) {
         return data::makeError<void>(
             2, "ViewStore::resolve: stale view handle — id " +
                    std::to_string(id) + " was erased (tombstone present)");

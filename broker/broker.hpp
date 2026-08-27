@@ -143,8 +143,17 @@ class Broker {
         AppReKey key{std::type_index(typeid(AppT)), std::type_index(typeid(ReT))};
         auto it = ownedByApp_.find(key);
         if (it != ownedByApp_.end()) return static_cast<IMapper<AppT, ReT>*>(it->second.get());
-        auto aliasIt = aliasByApp_.find(key);
-        if (aliasIt != aliasByApp_.end()) return static_cast<IMapper<AppT, ReT>*>(aliasIt->second);
+        // Derived from ownedByMapper_ via pair->mapper type index (T9 A2) — no
+        // alias-map raw-pointer store, so a stale raw alias can never survive
+        // a re-registration. The pair key is looked up in pairToMapperType_
+        // and then the concrete mapper is fetched from ownedByMapper_ (the sole
+        // owning map), guaranteeing the returned borrow is always the current
+        // live object.
+        auto pit = pairToMapperType_.find(key);
+        if (pit != pairToMapperType_.end()) {
+            auto mit = ownedByMapper_.find(pit->second);
+            if (mit != ownedByMapper_.end()) return static_cast<IMapper<AppT, ReT>*>(mit->second.get());
+        }
         return nullptr;
     }
 
@@ -161,22 +170,29 @@ class Broker {
          static_assert(std::is_base_of_v<IMapperBase, MapperT>,
                        "MapperT must inherit IMapperBase");
          auto key = std::type_index(typeid(MapperT));
-         MapperT* /*borrow*/ raw = mapper.get(); // borrow of the unique_ptr's
-         // object; ownership moves into ownedByMapper_ below, which becomes the
-         // sole owner — the alias is recorded in aliasByApp_ (pair-keyed) and,
-         // when the app type carries a SceneKind (T1 polymorphic
-         // hierarchy), also in the SceneKind alias map so
-         // Broker::registeredTypes() sees the kind without a second register
-         // call (open for extension — one header plus one registerMapper line).
+         IMapperBase* /*borrow*/ rawAfter = mapper.get(); // borrow before move, used for kind alias below
          ownedByMapper_[key] = std::unique_ptr<IMapperBase>(mapper.release());
+         // Retrieve the canonical borrow from the owning map so the kind alias
+         // never holds a stale raw from the released unique_ptr — the owning
+         // map is the sole owner, and the alias consults it via the pair index
+         // to avoid a dangling borrow after re-registration (T9 A2).
+         IMapperBase* /*borrow*/ ownedRaw = ownedByMapper_[key].get();
          if constexpr (requires { typename MapperT::AppType; typename MapperT::ReType; }) {
              using AppT = typename MapperT::AppType;
              using ReT = typename MapperT::ReType;
              AppReKey pair{std::type_index(typeid(AppT)), std::type_index(typeid(ReT))};
-             aliasByApp_[pair] = raw;
+             // Derived alias: pair -> mapper type_index, not a raw pointer.
+             // get<AppT,ReT>() will derive the borrow from ownedByMapper_ via
+             // this indirection, so a re-registration cannot leave a stale raw
+             // alias behind (fixes the pre-T9 alias-map stale-raw bug).
+             auto pit = pairToMapperType_.find(pair);
+             if (pit != pairToMapperType_.end()) pit->second = key;
+             else pairToMapperType_.emplace(pair, key);
              if constexpr (requires { AppT::Kind; }) {
-                 sceneKindAliases_[AppT::Kind] = raw;
+                 sceneKindAliases_[AppT::Kind] = ownedRaw;
              }
+         } else {
+             (void)rawAfter;
          }
      }
 
@@ -261,19 +277,20 @@ class Broker {
 
    private:
      std::unordered_map<AppReKey, std::unique_ptr<IMapperBase>, AppReKeyHash> ownedByApp_;
-     // Non-owning aliases into ownedByMapper_ storage (keyed by {AppT,ReT} pair for the
-     // app-typed get() overload). Every alias points at a mapper owned by
-     // ownedByMapper_; re-registration overwrites both entries together. Pair-keyed
-     // via hash_combine(AppT,ReT) so a wrong ReT misses cleanly (nullptr) and
-     // same AppT/different ReT are distinct entries (T3 fix).
-     std::unordered_map<AppReKey, IMapperBase*, AppReKeyHash> aliasByApp_;
+     // Pair -> mapper-type indirection (T9 A2) — derived from ownedByMapper_
+     // instead of a raw-pointer alias store. get<AppT,ReT>() consults this map
+     // to find the mapper's type_index and then fetches the live borrow from
+     // ownedByMapper_. No stale raw alias can survive a re-registration because
+     // the only raw borrows are the transient get() results, not a stored map.
+     std::unordered_map<AppReKey, std::type_index, AppReKeyHash> pairToMapperType_;
      std::unordered_map<std::type_index, std::unique_ptr<IMapperBase>> ownedByMapper_;
      // SceneKind-keyed alias view into the same owned storage —Strategy per
      // Kind (one file per mapper). Adding a new kind needs only one new
      // *Mapper file plus one registerMapper call; existing files and the view
      // synchronizer remain closed for modification (OCP via type_index/SceneKind
      // factories). The map holds non-owning borrows into ownedByApp_/
-     // ownedByMapper_ storage (same lifetime contract as aliasByApp_).
+     // ownedByMapper_ storage (same lifetime contract as the former alias-map,
+     // now derived).
      std::unordered_map<scene::SceneKind, IMapperBase* /*borrow*/> sceneKindAliases_;
 };
 

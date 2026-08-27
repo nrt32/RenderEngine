@@ -352,6 +352,8 @@ orthographic `[-1,1]²` onto a 64×64 view:
 
 Gate: `tests/t18_depth_test.cpp` (N>=3 consecutive green runs).
 
+> **T9 A4 note (deferred leak, acknowledged):** `IViewBridge::presentAll(core::Framebuffer*)` still leaks the concrete `core::Framebuffer` vocabulary through the app façade (app → core). No code fix this batch — the leak is intentional and deferred to the RHI `IRHIFramebuffer` landing (EOL-1 / DIP-3), where the façade will depend on `IRHIFramebuffer` (the `core/rhi/` abstraction) instead of the concrete GL framebuffer. See `docs/spec/broker.md` §11.6 DIP-3 and the T9 landed note there. `broker/README.md` tracks the same defer.
+
 ### The unified asset store: `AssetRegistry` (SPEC §9 V2.5 mesh kind, SPEC §7 T14 volume/image/material kinds)
 
 The **asset system of the render layer**: one registry instance owns exactly

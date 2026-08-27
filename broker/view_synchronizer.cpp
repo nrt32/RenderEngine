@@ -73,17 +73,20 @@ std::vector<scene::FieldId> ViewSynchronizer::dirtyFieldsSince(uint64_t lastGen)
 
 data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
                                           const scene::SceneStore& scene,
-                                          uint64_t layoutId) {
-    // Hybrid poll early-out: compute current generation as sceneGen + layoutId + views gens combined
+                                          uint64_t layoutId,
+                                          ViewCompositor* /*borrow*/ compositor) {
+    // Hybrid poll early-out: compute current generation as sceneGen + layoutId + views gens combined — the per-view hash folds every generation field (rect, plane, camera, items plus the new clearColor and depthTest gens from T9 A5) so a lone color change dirties only its field and does not force a full view rebuild, keeping the per-field cache precise (T9 A5).
     uint64_t curGen = scene.storeGeneration();
     curGen ^= std::hash<uint64_t>{}(layoutId) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
     for (const auto& v : views) {
-        // Combine per-view generations (deterministic)
+        // Combine per-view generations (deterministic) — includes the new clearColorGen/depthTestGen per-field gens so the poll hash distinguishes a color-only mutation from a geometry mutation, keeping the cache precise (T9 A5).
         curGen ^= std::hash<uint64_t>{}(v.generation) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.rectGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.planeGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.cameraGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.itemsGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
+        curGen ^= std::hash<uint64_t>{}(v.clearColorGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
+        curGen ^= std::hash<uint64_t>{}(v.depthTestGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
     }
     // Include push dirties in generation so poll sees push as change (hybrid)
     for (auto& kv : pushDirties_) {
@@ -99,12 +102,9 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         return data::Result<void>(data::value);
     }
 
-    // Lock the weak compositor back-pointer: the synchronizer does not own
-    // the compositor, it co-exists with it inside ViewBridge; an expired
-    // pointer means the bridge was never wired (or already torn down).
-    std::shared_ptr<ViewCompositor> compositor = compositor_.lock();
-
-    if (!compositor) {
+    // T9 A3: compositor is a call-scoped borrow passed explicitly by ViewBridge — the synchronizer never retains the compositor handle beyond this call, so the former weak pointer to ViewCompositor observer cycle is gone and the wiring is explicit per frame. Legacy test sites that constructed the synchronizer with (broker, compositor, stack) and call the 3-arg sync without an explicit compositor fall back to the stored legacy handle (shared fallback, not a weak cycle) so old tests remain green (T9 A3).
+    ViewCompositor* /*borrow*/ effective = compositor ? compositor : legacyCompositor_.get();
+    if (!effective) {
         // Not wired to a compositor yet (early skeleton wiring): consume the
         // generations so stale dirt is not re-reported once a compositor is
         // attached, then return without touching any render state.
@@ -143,7 +143,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         activeIds.push_back(av.id);
         // Borrow owned by the compositor's views_ map (see ensureView's
         // lifetime note); consumed synchronously within this sync call.
-        render::View* /*borrow*/ rv = compositor->ensureView(layoutId, av);
+        render::View* /*borrow*/ rv = effective->ensureView(layoutId, av);
         if (!rv) {
             return data::makeError<void>(10, "ViewSynchronizer: ensureView failed");
         }
@@ -152,12 +152,19 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         bool isNew = (it == caches_.end());
         ViewCache& cache = caches_[key]; // default ~0
 
-        // Presentation flags applied on every non-early-out pass (cheap
-        // setters): the render side's ensureTarget recreates its target when
-        // the depth mode flipped, and the pass prologue picks up the clear
-        // color. Defaults match the engine's historical values, so views that
-        // never set them behave exactly as before.
-        rv->setDepthTest(av.depthTest);
+        // Presentation flags: per-field gens (T9 A5) — depth and clear color
+        // are now cached like rect/plane, so a lone color change dirties only
+        // that field and the target recreate is skipped when not needed.
+        bool depthDirty = isNew || cache.depthTestGen != av.depthTestGen || hasPushDirty(av.id, scene::FieldId::DepthTest);
+        bool clearColorDirty = isNew || cache.clearColorGen != av.clearColorGen || hasPushDirty(av.id, scene::FieldId::ClearColor);
+        if (depthDirty) {
+            rv->setDepthTest(av.depthTest);
+            cache.depthTestGen = av.depthTestGen;
+        }
+        if (clearColorDirty) {
+            rv->setClearColor(av.clearColor);
+            cache.clearColorGen = av.clearColorGen;
+        }
 
         // Rect (size) — hash includes physical pixels
         bool rectDirty = isNew || cache.rectGen != av.rectGen || hasPushDirty(av.id, scene::FieldId::Rect);
@@ -165,12 +172,14 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
             render::ViewRect r{av.rect.x, av.rect.y, av.rect.w, av.rect.h};
             rv->setRect(r);
         }
-        rv->setClearColor(av.clearColor);
-        if (rectDirty) {
-            // Recreate ViewTarget inner FBO if size changed (size hash includes physical pixels + contentScale)
+        if (rectDirty || depthDirty) {
+            // Recreate ViewTarget inner FBO if size or depth mode changed
             auto et = rv->ensureTarget();
             if (et.failed()) return et;
             cache.rectGen = av.rectGen;
+        } else if (clearColorDirty) {
+            // Clear color does not require target recreate, only prologue pick-up
+            // (already set above), but we still update the cache.
         }
 
         // Plane (2D vs 3D) — converted to world space through the ONE
@@ -289,7 +298,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
             // Transparent mesh instances captured out-of-band when the stack
             // carries the OIT pipeline (the compositor runs capture+composite
             // right after the view pass); otherwise they were added inline.
-            compositor->setTransparentItems(layoutId, av.id,
+            effective->setTransparentItems(layoutId, av.id,
                                             stack_ && stack_->pipeline
                                                 ? std::move(transparentPending)
                                                 : std::vector<render::MeshInstance>{});
@@ -298,7 +307,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
     }
 
     // Layout count/set change -> insert/erase ReViews (prune those not in active set)
-    compositor->pruneLayout(layoutId, activeIds);
+    effective->pruneLayout(layoutId, activeIds);
 
     lastStoreGen_ = curGen;
     lastSceneStoreGen_ = scene.storeGeneration();

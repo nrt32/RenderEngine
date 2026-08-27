@@ -43,6 +43,8 @@ struct View {
     uint64_t planeGen{0};
     uint64_t cameraGen{0};
     uint64_t itemsGen{0};
+    uint64_t clearColorGen{0};
+    uint64_t depthTestGen{0};
     uint64_t generation{0}; // legacy coarse — equals max of per-field.
     /// Clear color of this screen section (consumed by the render-side pass
     /// prologue; see setClearColor).
@@ -86,24 +88,31 @@ struct View {
         }
     }
     /// Set the view's clear color (the RGBA the render-side pass prologue
-    /// clears this screen section to) and bump `generation`. Default matches
-    /// the engine's historical default (transparent black), so views that
-    /// never call this keep their previous behavior.
+    /// clears this screen section to) and bump `clearColorGen` plus `generation`.
+    /// Default matches the engine's historical default (transparent black), so
+    /// views that never call this keep their previous behavior. The dedicated
+    /// `clearColorGen` allows the synchronizer's per-field cache (ViewCache)
+    /// to skip re-applying the clear color when it hasn't changed — the
+    /// per-field generation split keeps color dirt separate from rect/plane
+    /// dirt (SPEC §10.4, T9 A5).
     void setClearColor(glm::vec4 c) noexcept {
         if (clearColor != c) {
             clearColor = std::move(c);
+            ++clearColorGen;
             ++generation;
         }
     }
     /// Opt this view into depth-tested rendering: the render side recreates
     /// its target with a real depth attachment and enables + clears the depth
     /// test in the pass prologue, so overlapping opaque items resolve by true
-    /// occlusion instead of draw order. Bumps `generation` (the poll path sees
-    /// the flip); the default stays false — color-only painter's order, the
-    /// deterministic-gate configuration.
+    /// occlusion instead of draw order. Bumps `depthTestGen` plus `generation`
+    /// (the poll path sees the flip); the default stays false — color-only
+    /// painter's order, the deterministic-gate configuration. The dedicated
+    /// `depthTestGen` keeps depth dirt separate from other fields (T9 A5).
     void setDepthTest(bool enabled) noexcept {
         if (depthTest != enabled) {
             depthTest = enabled;
+            ++depthTestGen;
             ++generation;
         }
     }

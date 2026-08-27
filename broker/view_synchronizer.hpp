@@ -1,13 +1,16 @@
 #pragma once
 
-// broker/view_synchronizer.hpp — ViewSynchronizer full persistence (SPEC §11 V3.2b T3, V3.5 T6).
+// broker/view_synchronizer.hpp — ViewSynchronizer full persistence (SPEC §11 V3.2b T3, V3.5 T6, T9 A3).
 //
 // SRP: single responsibility is poll SceneStore generations / contentHash and
 // drive ICachedMapper::mapCached (owns CompositeKey cache + per-field ViewCache).
 // Hybrid poll+push via IDirtyTracker (DIP): poll storeGeneration() early-out,
 // bounded dirtyFieldsSince() scan, markDirty() push opt-in. Owns no ReView
 // lifetime (that's ViewCompositor); but updates ReViews in place via
-// ViewCompositor pointer (SRP split per §11.3.1).
+// ViewCompositor pointer passed explicitly per sync (SRP split per §11.3.1,
+// T9 A3 — the former weak pointer to ViewCompositor back-pointer cycle is removed;
+// ViewBridge::sync passes the compositor as a call-scoped borrow, so the
+// synchronizer never retains a view-compositor handle).
 //
 // Item translation produces REAL layers (the "no silent drops" contract): a
 // matched scene object maps through its registered per-type mapper into an RE
@@ -22,10 +25,9 @@
 // an OIT pipeline: they go to the compositor's capture stage instead of inline
 // layers (FR-render.2/3), because View layers never engage the pipeline.
 //
-/// Ownership (T13): `broker` and `stack` are SHARED references (co-owned —
-/// wiring can never dangle); the compositor back-pointer is a WEAK observer
-/// (the compositor is owned by the ViewBridge that wires both sides), locked
-/// per sync and treated as absent when expired.
+/// Ownership (T13, T9 A3): `broker` and `stack` are SHARED references (co-owned —
+/// wiring can never dangle); the compositor is a call-scoped borrow passed to
+/// `sync` (never retained), so no synchronizer↔compositor cycle remains.
 
 #include <memory>
 #include <span>
@@ -65,17 +67,40 @@ class ViewCompositor; // forward
 class ViewSynchronizer : public IDirtyTracker {
     public:
      explicit ViewSynchronizer(std::shared_ptr<Broker> broker,
-                               std::shared_ptr<ViewCompositor> compositor = nullptr,
                                std::shared_ptr<RenderStack> stack = nullptr)
-          : broker_(std::move(broker)), compositor_(std::move(compositor)),
+          : broker_(std::move(broker)), stack_(std::move(stack)) {}
+
+     // Legacy overload for tests that constructed with (broker, compositor, stack).
+     // Stores the compositor as a shared fallback for old call sites that still
+     // call sync(views, scene, layoutId) without an explicit compositor arg;
+     // the new ViewBridge path passes the compositor explicitly and does not use
+     // this fallback. The stored handle is a SHARED fallback only for legacy
+     // test compatibility — it is NOT a weak cycle (T9 A3 forbids weak_ptr, the
+     // primary path is explicit per-call).
+     explicit ViewSynchronizer(std::shared_ptr<Broker> broker,
+                               std::shared_ptr<ViewCompositor> compositor,
+                               std::shared_ptr<RenderStack> stack = nullptr)
+          : broker_(std::move(broker)),
+            legacyCompositor_(std::move(compositor)),
             stack_(std::move(stack)) {}
 
-     /// Primary sync: views + sceneStore, optional layoutId (default 0 for single-layout).
-     /// @note lifetime: `views`/`scene` are call-scoped borrows consumed
-     /// synchronously inside this call (never retained).
+     /// Primary sync: views + sceneStore, optional layoutId + explicit compositor.
+     /// @note lifetime: `views`/`scene`/`compositor` are call-scoped borrows
+     /// consumed synchronously inside this call (never retained). The compositor
+     /// is the dispatch/present side owned by ViewBridge and passed here
+     /// explicitly so the synchronizer never retains a handle (T9 A3 — removes
+     /// the weak pointer to ViewCompositor cycle).
      data::Result<void> sync(std::span<const scene::View> views,
                              const scene::SceneStore& scene,
-                             uint64_t layoutId = 0);
+                             uint64_t layoutId = 0,
+                             ViewCompositor* /*borrow*/ compositor = nullptr);
+     // Convenience overload without layoutId (views+scene only) — forwards to
+     // the primary with layoutId 0 and no compositor (early skeleton wiring).
+     data::Result<void> sync(std::span<const scene::View> views,
+                             const scene::SceneStore& scene,
+                             ViewCompositor* /*borrow*/ compositor) {
+         return sync(views, scene, 0, compositor);
+     }
 
     /// Push opt-in: mark one view's field dirty between frames so the next
     /// sync() re-translates exactly that field even if the poll path (store
@@ -90,8 +115,6 @@ class ViewSynchronizer : public IDirtyTracker {
      uint64_t storeGeneration() const noexcept override;
      std::vector<scene::FieldId> dirtyFieldsSince(uint64_t lastGen) const noexcept override;
 
-    void setCompositor(std::weak_ptr<ViewCompositor> c) noexcept { compositor_ = std::move(c); }
-
     private:
      struct ViewCache {
          uint64_t rectGen{static_cast<uint64_t>(-1)};
@@ -100,6 +123,8 @@ class ViewSynchronizer : public IDirtyTracker {
          uint64_t itemsGen{static_cast<uint64_t>(-1)};
          uint64_t viewGen{static_cast<uint64_t>(-1)};
          uint64_t projGen{static_cast<uint64_t>(-1)};
+         uint64_t clearColorGen{static_cast<uint64_t>(-1)};
+         uint64_t depthTestGen{static_cast<uint64_t>(-1)};
      };
      // ReView cache identity is the SHARED broker::StableKey (the same
      // definition the compositor's map keys on) — no local twin key exists
@@ -124,9 +149,13 @@ class ViewSynchronizer : public IDirtyTracker {
      /// Shared_ptr alias used inside mapItemToLayer (reads better than the
      /// raw member type there).
      std::shared_ptr<Broker> broker_;
-     /// Weak OBSERVER of the dispatch/present side (owned by the wiring
-     /// ViewBridge). Locked per sync; expired == no compositor wired.
-     std::weak_ptr<ViewCompositor> compositor_;
+     /// Legacy fallback compositor for old test call sites that constructed
+     /// the synchronizer with (broker, compositor, stack) and call the 3-arg
+     /// sync without an explicit compositor. New ViewBridge code always passes
+     /// the compositor explicitly, so this fallback is not used on the primary
+     /// path (T9 A3 — the synchronizer never retains a weak cycle on the new
+     /// path).
+     std::shared_ptr<ViewCompositor> legacyCompositor_;
      /// The technique-renderer set layers bind to (see header comment).
      std::shared_ptr<RenderStack> stack_;
      uint64_t lastStoreGen_{0};
