@@ -1,5 +1,8 @@
 # comment_context waivers — ERE matched against <path> or <path>:<line>
 # Added per spec-review #12: allow bare RE_GLSL_VERSION note in shader headers
 # and T18 citation in test_utils (otherwise >=120 chars would be required there).
-render/shaders/.*
-test_utils/.*
+render/shaders/.*\.glsl
+render/shaders/re_glsl_version\.hpp
+test_utils/pixel_reader\..*
+test_utils/offscreen_context\..*
+test_utils/capture_helpers\..*

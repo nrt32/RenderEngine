@@ -23,6 +23,7 @@
   tooling for NRRD downsample at setup — `tools/convert_nrrd.py`, **stdlib
   only, no pip deps**; `python3 --version` ≥3.10 required, verified stdlib-only
   via `python3 -c "import sys; print(sys.version)"`), `unzip`.
+- `pkg-config` (for `glfw` fallback probe, not used — `FetchContent` `GIT_TAG 3.4` is source), `libglfw3-dev` system alternative not used
 - `ccache` (recommended, not required) — compiler cache so rebuilds after
   `tools/clean.sh` (or spurious recompiles) hit cached objects. If the system
   package is unavailable (no sudo), a user-local static binary under
@@ -39,6 +40,7 @@
 
 ### Environment variables
 - `DISPLAY` (WSLg auto; X server fallback only if not W11).
+- `RE_GLSL_VERSION` — shader language level (`450` portable floor, `460` hardware, see `RE_GLSL_VERSION` ceiling note below; not an env var but a macro in `core/glsl_version.hpp`)
 - `LOOP_BUILD_TEST_CMD` — must be set to the build+test command when
   launching the loop (runner needs it; default runner logic knows CMake, but
   set explicitly). `tools/env.sh` sets it to `tools/configure.sh && cmake
