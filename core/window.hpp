@@ -34,12 +34,15 @@ struct GLFWwindow;
 
 namespace re::core {
 
+class GlfwRuntime;
+
 /// RAII-managed visible OpenGL 4.6 core window (GLFW).
 ///
 /// Creating a Window makes its GL 4.6 core context current and loads the GL
 /// entry points with glad (so the core/ wrappers work). It owns the GLFW
-/// window and calls glfwTerminate on destruction (safe to construct only one at
-/// a time, matching the SPEC §1 "single window" non-goal).
+/// window and holds a shared reference to the process-global GLFW runtime
+/// (core::GlfwRuntime) — the first Window or OffscreenContext initializes
+/// GLFW, the last one shuts it down, so teardown order is irrelevant.
 class Window {
    public:
     /// Create a visible window of `width` x `height` pixels with a GL 4.6 core
@@ -125,6 +128,10 @@ class Window {
     /// though C++ Window instances move — moves just re-seat the shared_ptr,
     /// never dangling the registration.
     std::shared_ptr<FramebufferSizeState> fbSize_;
+    /// Shared ownership of the process-global GLFW lifecycle. The first
+    /// Window or OffscreenContext initializes GLFW, the last one shuts it
+    /// down — order-independent teardown with no double init.
+    std::shared_ptr<GlfwRuntime> glfwRuntime_;
 };
 
 } // namespace re::core

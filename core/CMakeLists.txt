@@ -2,6 +2,7 @@
 # render/, app/, tests/ use core/ wrappers. io/, data/, volume/ are GL-free.
 
 add_library(re_core STATIC
+    glfw_runtime.cpp
     load_core_gl.cpp
     re_context.cpp
     window.cpp

@@ -15,11 +15,16 @@
 // is the offscreen-context facade they share.
 
 #include <cstdint>
+#include <memory>
 
 #include "core/load_core_gl.hpp"
 #include "data/result.hpp"
 
 struct GLFWwindow;
+
+namespace re::core {
+class GlfwRuntime;
+}
 
 namespace re::utils {
 
@@ -138,6 +143,7 @@ class OffscreenContext {
     void* eglContext_{nullptr};
     ContextBackend backend_{ContextBackend::Glfw};
     core::GlContextInfo info_{};
+    std::shared_ptr<core::GlfwRuntime> glfwRuntime_;
 };
 
 } // namespace re::utils

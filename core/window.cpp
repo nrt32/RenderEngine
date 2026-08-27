@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "core/glfw_runtime.hpp"
 #include "core/load_core_gl.hpp"
 #include "core/re_context.hpp"
 
@@ -30,7 +31,8 @@ Window::Window(Window&& other) noexcept
     : window_(other.window_),
       major_(other.major_),
       minor_(other.minor_),
-      fbSize_(std::move(other.fbSize_)) {
+      fbSize_(std::move(other.fbSize_)),
+      glfwRuntime_(std::move(other.glfwRuntime_)) {
     other.window_ = nullptr;
     other.major_ = 0;
     other.minor_ = 0;
@@ -48,6 +50,7 @@ Window& Window::operator=(Window&& other) noexcept {
         major_ = other.major_;
         minor_ = other.minor_;
         fbSize_ = std::move(other.fbSize_);
+        glfwRuntime_ = std::move(other.glfwRuntime_);
         other.window_ = nullptr;
         other.major_ = 0;
         other.minor_ = 0;
@@ -70,12 +73,11 @@ void Window::release() noexcept {
         // per-frame path. Only clear the current GL context and REContext if this
         // window is the one currently bound (otherwise we would unbind a different
         // window's context that was restored before this destructor ran).
-        // VG12 Window teardown dedup: glfwDestroyWindow + glfwTerminate are paired
-        // per Window instance, but the process-global glfwInit/glfwTerminate pair
-        // will be refcounted via core::GlfwRuntime in T15 (OffscreenContext +
-        // Window share one global init). Until T15, Window remains the sole owner
-        // of the visible-window terminate path; OffscreenContext's Glfw backend
-        // does not call glfwTerminate, so no double-terminate occurs.
+        // T15: the process-global GLFW lifecycle is refcounted via
+        // core::GlfwRuntime — the first holder initializes, the last token
+        // destruction shuts down, so teardown order of Window and
+        // OffscreenContext is irrelevant and no direct termination call lives
+        // here.
         const bool isCurrent = glfwGetCurrentContext() == window_;
         REContext::clearWindow(window_);
         if (isCurrent) {
@@ -86,7 +88,7 @@ void Window::release() noexcept {
         }
         glfwDestroyWindow(window_);
         window_ = nullptr;
-        glfwTerminate();
+        glfwRuntime_.reset();
     }
 }
 
@@ -145,7 +147,8 @@ void Window::onFramebufferSize_(GLFWwindow* window, int newWidth,
 
 data::Result<Window> Window::create(int width, int height,
                                     const std::string& title) {
-    if (glfwInit() != GLFW_TRUE) {
+    auto runtime = GlfwRuntime::acquire();
+    if (runtime == nullptr) {
         return data::makeError<Window>(1, "window: glfwInit failed");
     }
 
@@ -161,7 +164,6 @@ data::Result<Window> Window::create(int width, int height,
     if (window == nullptr) {
         const char* desc = nullptr;
         glfwGetError(&desc);
-        glfwTerminate();
         return data::makeError<Window>(
             2, std::string("window: glfwCreateWindow failed: ") +
                    (desc != nullptr ? desc : "unknown"));
@@ -176,6 +178,7 @@ data::Result<Window> Window::create(int width, int height,
     glfwMakeContextCurrent(window);
 
     Window win(window);
+    win.glfwRuntime_ = std::move(runtime);
 
     // Framebuffer-size bookkeeping (T23): seed the state with the REAL
     // physical pixel size (the framebuffer size, not the window coordinate
@@ -202,8 +205,8 @@ data::Result<Window> Window::create(int width, int height,
         spdlog::error("window: {}", loaded.error().message);
         glfwMakeContextCurrent(nullptr);
         glfwDestroyWindow(window);
-        glfwTerminate();
         win.window_ = nullptr;
+        win.glfwRuntime_.reset();
         return data::makeError<Window>(3, loaded.error().message);
     }
     win.major_ = loaded->major;

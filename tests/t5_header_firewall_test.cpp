@@ -171,15 +171,16 @@ TEST(T5HeaderFirewall, AllCoreHeadersGladFreeComprehensive) {
         // — but only check the include, not constants (constants could be named
         // in comments). The mechanical gate is include count.
     }
-    // Analytic: total #include occurrences in core/*.hpp is exactly 60
+    // Analytic: total #include occurrences in core/*.hpp is exactly 61
     // (re_context.hpp 7 + texture2d.hpp 2 + load_core_gl.hpp 2 + logging.hpp 1
     // + transform_feedback.hpp 4 + gl_error.hpp 2 + framebuffer.hpp 3
-    // + vertex_array.hpp 3 + window.hpp 5 + draw.hpp 1 + vertex_buffer.hpp 3
+    // + vertex_array.hpp 3 + window header 5 + draw.hpp 1 + vertex_buffer.hpp 3
     // + read_pixels.hpp 4 + shader_program.hpp 12 + storage_buffer.hpp 4
-    // + texture3d.hpp 2 + glsl_version.hpp 1 + element_buffer.hpp 4 = 60).
+    // + texture3d.hpp 2 + glsl_version.hpp 1 + element_buffer.hpp 4
+    // + glfw_runtime.hpp 1 = 61). glfw_runtime adds 1 for <memory>.
     // shader_program.hpp grew by one include (unordered_map for VG1 uniform cache).
     // This exact count proves the scan enumerated files, not a vacuous >0.
-    EXPECT_EQ(totalIncludes, 60) << "core headers include count must be 60 (analytic sum, proves scan)";
+    EXPECT_EQ(totalIncludes, 61) << "core headers include count must be 61 (analytic sum, proves scan)";
     EXPECT_EQ(countGladInCoreHeaders(), 0);
 }
 

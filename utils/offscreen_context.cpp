@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 
+#include "core/glfw_runtime.hpp"
 #include "core/re_context.hpp"
 
 // GLFW is the primary context-creation backend (every OS).
@@ -43,7 +44,8 @@ OffscreenContext::OffscreenContext(OffscreenContext&& other) noexcept
       eglDisplay_(other.eglDisplay_),
       eglContext_(other.eglContext_),
       backend_(other.backend_),
-      info_(other.info_) {
+      info_(other.info_),
+      glfwRuntime_(std::move(other.glfwRuntime_)) {
     other.window_ = nullptr;
     other.eglDisplay_ = nullptr;
     other.eglContext_ = nullptr;
@@ -60,6 +62,7 @@ OffscreenContext& OffscreenContext::operator=(
         eglContext_ = other.eglContext_;
         backend_ = other.backend_;
         info_ = other.info_;
+        glfwRuntime_ = std::move(other.glfwRuntime_);
 
         other.window_ = nullptr;
         other.eglDisplay_ = nullptr;
@@ -112,6 +115,8 @@ void OffscreenContext::release() noexcept {
         // Only clear the current GL context and REContext thread_local if this
         // window is the one currently bound — otherwise we would unbind the
         // fixture's context that another test restored before this destructor ran.
+        // T15: GLFW lifecycle is refcounted via GlfwRuntime — the token is
+        // released here so the last holder shuts down, order-independent.
         const bool isCurrent = glfwGetCurrentContext() == window_;
         core::REContext::clearWindow(window_);
         if (isCurrent) {
@@ -120,6 +125,7 @@ void OffscreenContext::release() noexcept {
         }
         glfwDestroyWindow(window_);
         window_ = nullptr;
+        glfwRuntime_.reset();
     } else if (backend_ == ContextBackend::Egl && eglContext_ != nullptr) {
         eglMakeCurrent(static_cast<EGLDisplay>(eglDisplay_), EGL_NO_SURFACE,
                        EGL_NO_SURFACE, EGL_NO_CONTEXT);
@@ -185,7 +191,8 @@ data::Result<OffscreenContext> OffscreenContext::createCgl() {
 }
 
 data::Result<OffscreenContext> OffscreenContext::createGlfw() {
-    if (glfwInit() != GLFW_TRUE) {
+    auto runtime = core::GlfwRuntime::acquire();
+    if (runtime == nullptr) {
         return data::makeError<OffscreenContext>(1, "glfwInit failed");
     }
 
@@ -200,7 +207,6 @@ data::Result<OffscreenContext> OffscreenContext::createGlfw() {
     if (window == nullptr) {
         const char* desc = nullptr;
         glfwGetError(&desc);
-        glfwTerminate();
         return data::makeError<OffscreenContext>(
             2, std::string("glfwCreateWindow failed: ") +
                    (desc != nullptr ? desc : "unknown"));
@@ -216,6 +222,7 @@ data::Result<OffscreenContext> OffscreenContext::createGlfw() {
 
     OffscreenContext ctx(ContextBackend::Glfw);
     ctx.window_ = window;
+    ctx.glfwRuntime_ = std::move(runtime);
 
     // GL entry-point loading + version/profile probe (raw GL) happen in the
     // core/ anchor; glfwGetProcAddress matches core::GlLoadProc exactly.
@@ -224,8 +231,8 @@ data::Result<OffscreenContext> OffscreenContext::createGlfw() {
         spdlog::error("offscreen context: {}", loaded.error().message);
         glfwMakeContextCurrent(nullptr);
         glfwDestroyWindow(window);
-        glfwTerminate();
         ctx.window_ = nullptr;
+        ctx.glfwRuntime_.reset();
         return data::makeError<OffscreenContext>(3, loaded.error().message);
     }
     ctx.info_ = *loaded;
