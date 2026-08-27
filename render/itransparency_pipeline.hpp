@@ -48,8 +48,11 @@ class ITransparencyPipeline {
     /// storage to fit `target`'s pixel size.
     ///
     /// Returns a typed error if the capture storage cannot be prepared; on
-    /// failure the pipeline stays un-engaged and the frame renders without OIT
-    /// (the error propagates to the caller, SPEC §5).
+    /// failure the pipeline stays un-engaged and the transparent-capable mesh
+    /// pass is aborted — no silent blend fallback (the target is left cleared
+    /// and the typed error is surfaced via the bridge, SPEC §5). Unsupported
+    /// or over-budget hardware therefore yields opaque-only rendering for that
+    /// pass.
     virtual data::Result<void> begin(const Camera& camera,
                                      const RenderTarget& target,
                                      core::REContext& ctx) = 0;

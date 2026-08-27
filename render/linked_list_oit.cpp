@@ -167,8 +167,11 @@ data::Result<void> LinkedListOIT::begin(const Camera& camera,
                                         core::REContext& ctx) {
     (void)camera;
     // (Re)allocate storage if the target size changed. A failure is reported
-    // as a typed error (SPEC §5): the pipeline stays un-engaged and the frame
-    // renders without OIT.
+    // as a typed error (SPEC §5): the pipeline stays un-engaged and the
+    // transparent-capable mesh pass is aborted — no silent blend fallback
+    // (the target is left cleared and the typed error is surfaced via the
+    // bridge, SPEC §5). Unsupported or over-budget hardware therefore yields
+    // opaque-only rendering for that pass.
     const data::Result<void> capacity = ensureCapacity(target.width, target.height);
     if (capacity.failed()) {
         engaged_ = false;

@@ -584,6 +584,17 @@ camera mapping NDC `[-1,1]^2` onto the full 64×64 viewport:
 | One transparent quad added | `beginCount == 1`, `drawTransparentCount == 1`, `endCount == 1` | pipeline flips on exactly for the frame (injectable spy, FR-render.3) |
 | Stub pipeline drives renderer | same call counts with a no-op stub | interface is swappable; renderer depends only on the abstraction (FR-render.3) |
 
+#### Capacity and failure mode — per-view SSBO budget, no silent fallback (T8, corrected)
+
+Per-view capture storage is `w*h*16*32` bytes (width × height pixels × maxFragmentsPerPixel 16 × node stride 32 B: `vec4` 16 + `float` 4 + `uint` 4 padded to `vec4` alignment). Head-pointer texture adds one `R32UI` per pixel (4 B), negligible beside the node buffer. Deployment targets are known, so over-budget or unsupported hardware (no `imageAtomicExchange`/`ssboAtomics`) legitimately fails.
+
+| View size | SSBO budget (nodes) | Bytes (analytic) | Note |
+|---|---|---|---|
+| 640×480 | 152 MB (307200×16×32 = 157286400 B ≈150 MiB, ~152 MB with head texture) | 640×480=307200, ×16=4915200 nodes, ×32 | per-view cost `w*h*16*32` example used by the gate |
+| 1920×1080 | ≈1.03 GB (2073600×16×32 = 1061683200 B) | 1920×1080=2073600, ×16=33177600 nodes, ×32 | 1080p requires ~1 GB per view |
+
+Failure contract: `ITransparencyPipeline::begin()` returning a typed error aborts the transparent-capable mesh pass — no silent blend fallback. The target is left cleared (opaque contents preserved only on success) and the error is surfaced via the bridge (`MeshRenderer::render` propagates the `Result`, `ViewCompositor` surfaces it). Unsupported or over-budget hardware therefore yields opaque-only rendering for that pass; callers handle the typed error instead of receiving a partial blended frame (SPEC §5).
+
 #### The OIT sample composition — real meshes over a depth-tested opaque pass (`app/oit_sample.cpp` + `app/oit_scene.hpp`, T19)
 
 The sample scene is no longer transparent quads: it interleaves REAL meshes
