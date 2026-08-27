@@ -88,6 +88,42 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 ---
 
+## Next iteration draft backlog — explicit layering + standalone + FPS + camera (upcoming `T1..T4`, spec §3.1/§10/§11, Option C)
+
+### T1: Explicit 64-layer layering — enum `Layer` + `LayerMask` + technique-priority tie-break (Option C)
+
+**D** — Every scene object carries `Layer layer{Layer::L0_Background}` (`scene/layer.hpp` enum `Layer : uint8_t { L0_Background=0 … L63_OverlayTop=63, Count=64 }`, `using LayerMask = uint64_t; 1ULL<<layer`). `scene::View` gains `LayerMask layerMask{~0ULL}` (all on) + `setLayerMask(mask)` bumping `layerMaskGen` (+ `View::generation`). `SceneObject` family (`MeshObject` etc.) gains `Layer layer` + `setLayer()` bumping object `generation`/`layerGen` (`FieldId::Layer`). Rendering is **layer → technique-priority**: `ViewSynchronizer` groups translated `Re*` objects by `layer` ascending, then by fixed technique priority `Volume(0) → VolumeSlice(1) → Plane(2) → Mesh(3) → MeshSlice(4) → Contour(5) → PointCloud/Grid/Axes(6)` — so `itemIds` insertion order is irrelevant at 10k objects; two `Mesh` objects on `L5` are same-layer same-technique and rely on `Z-test` (depth-on) or stable overdraw (contour). Per-view `layerMask & (1ULL<<layer)` culls invisible layers `O(visible layers)` without removing objects. Count `32→64` fits one `uint64_t`; 64 keys cover future overlays. Per-object `layer` is primary; per-view override map `View::layerOverrides` is deferred (empty by default) — sharing one `MeshObject` at two different layers would duplicate the store entry (cheap `AssetRef` share) until override proves needed.
+
+**FR:** none new — deterministic layer order replaces `itemIds` insertion order; regression `FR-render.*`/`FR-app.*` still green (MPR `VolumeSlice L0 → Contour L1`).
+
+**T** — gate: two objects on same `L5` but different techniques render in priority order independent of `itemIds` insertion order (swap `itemIds` → same image within 1/255); mask hides a layer (`layerMask &= ~(1ULL<<L1)` → contour disappears, volume alone within 1/255); `grep -c "enum class Layer" scene/` == 1.
+
+**G** — suite green, audit green, `layerMask` hidden-layer still green.
+
+### T2: Standalone samples — unbounded run with headless gate preservation
+
+**D** — `app/sample_harness` gains dual mode: default `runInteractive()` loops `while(!shouldClose())` until user closes; gate path `runBounded(maxFrames)` / `run(maxFrames)` stays for `RE_SAMPLE_MAX_FRAMES` headless CI (FR-app.1). `runSample` helper dispatches on env var presence. Samples' `main()` switches to unbounded by default.
+
+**T** — headless `RE_SAMPLE_MAX_FRAMES=20` smoke still exits 0 under Xvfb; interactive path runs until close (manual smoke); `grep runInteractive app/sample_harness.hpp` == 1.
+
+**G** — suite green, audit green.
+
+### T3: FPS counter — all samples via harness overlay
+
+**D** — `app/FpsCounter` (`std::chrono::steady_clock`, 0.5s sliding window) owned by `SampleHarness`, ticked each frame before overlay; overlay adds `Text("FPS: %.1f (%.1f ms)", fps, ms)` always-on (gate headless still shows but not asserted). Single-site harness change covers all 6 samples.
+
+**T** — fps text present in interactive overlay (visual); headless smoke not broken; unit test `FpsCounter` sliding average within 1e-3.
+
+**G** — suite green.
+
+### T4: Camera interaction — pan/rotate/zoom, configurable, 3D views only
+
+**D** — `app/CameraController` + `CameraBindings{ rotateButton=LMB, panButton=RMB, zoomButton=MMB/wheel, modifiers, rotateSpeed, panSpeed, zoomSpeed }` plain struct. Harness polls `glfwGetMouseButton/CursorPos/Scroll` each frame before `renderFrame`, forwards to controller when `!ImGui::GetIO().WantCaptureMouse`; controller calls `View::mutateCamera([&](Camera& c){ c.rotate(...); })` so `viewGen` bumps and broker re-translates only dirty fields. Wired in `mesh/slice/volume/oit/mpr-3D` (plane + MPR 2D orthographic slice views skip it).
+
+**T** — drag `rotate` updates `viewMatrix` deterministically (±1e-6 vs analytic orbit); `WantCaptureMouse` guard prevents camera move while dragging ImGui slider; gate bounded run with no input still green.
+
+**G** — suite green, audit green.
+
 ## Definition of Done — next iteration (to be defined at `/loop-spec-review`)
 
 - [ ] All task gates green; full suite green on a clean tree at the last task.
