@@ -224,12 +224,31 @@ class REContext {
     static void invalidateCurrent() noexcept { current().invalidate(); }
 
     /// Read RGBA8 pixels from the currently-bound read framebuffer (test-consumed
-    /// readback). Thin wrapper that delegates to core::readRgba8 but is reachable
-    /// via REContext::current().readRgba8 for test_utils façade discipline
-    /// (raw glReadPixels stays in core/re_context.cpp).
+    /// readback). Thin wrapper reachable via REContext::current().readRgba8 for
+    /// test_utils façade discipline (raw readback stays in core/re_context.cpp
+    /// as the sole raw anchor per T18 — no second site in test_utils).
     data::Result<void> readRgba8(std::uint32_t x, std::uint32_t y,
                                  std::uint32_t width, std::uint32_t height,
                                  std::vector<std::uint8_t>& out) const;
+
+    /// Buffer target for readback via REContext (avoids exposing glad types in
+    /// the public header; maps to GL_SHADER_STORAGE_BUFFER /
+    /// GL_TRANSFORM_FEEDBACK_BUFFER internally).
+    enum class BufferTarget {
+        ShaderStorage,
+        TransformFeedback,
+    };
+
+    /// Read back buffer data via the REContext raw anchor (test-consumed
+    /// readback, guardrail no_production_readback). The raw call lives only
+    /// in core/re_context.cpp; test_utils and render delegate here so no
+    /// second anchor exists. Every context-setting GL call still flows through
+    /// T2 REContext — no test helper touches raw GL.
+    data::Result<void> readBufferSubData(BufferTarget target,
+                                         std::uint32_t bufferId,
+                                         std::size_t byteOffset,
+                                         std::size_t byteSize,
+                                         void* out) const;
 
    private:
     struct Cache {

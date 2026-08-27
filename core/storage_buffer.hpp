@@ -57,10 +57,11 @@ class ShaderStorageBuffer {
                 BufferUsage usage) const noexcept;
 
     /// Read `count` uint32 values starting at `byteOffset` bytes into `out`
-    /// (glGetBufferSubData). The buffer must be bound. This is a test-consumed
-    /// readback path (guardrail no_production_readback), used by the OIT gate
-    /// to observe the node-allocator count. Returns an error if no GL context
-    /// is current.
+    /// (buffer readback via REContext sole anchor). The buffer must be bound.
+    /// This is a test-consumed readback path (guardrail no_production_readback),
+    /// used by the OIT gate to observe the node-allocator count. Returns an
+    /// error if no GL context is current. Raw call lives only in
+    /// core/re_context.cpp (T18).
     data::Result<void> readUint32(std::size_t byteOffset, std::size_t count,
                                   std::uint32_t* out) const;
 

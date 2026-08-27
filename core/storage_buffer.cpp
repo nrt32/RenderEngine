@@ -6,6 +6,8 @@
 
 #include <cstdint>
 
+#include "core/re_context.hpp"
+
 namespace re::core {
 
 data::Result<ShaderStorageBuffer> ShaderStorageBuffer::create() {
@@ -74,15 +76,12 @@ void ShaderStorageBuffer::upload(const void* data, std::size_t byteSize,
 data::Result<void> ShaderStorageBuffer::readUint32(std::size_t byteOffset,
                                                    std::size_t count,
                                                    std::uint32_t* out) const {
-    if (glGetBufferSubData == nullptr) {
-        return data::makeError<void>(1,
-                                     "ShaderStorageBuffer: no GL context "
-                                     "(glGetBufferSubData not loaded)");
-    }
-    glGetBufferSubData(
-        GL_SHADER_STORAGE_BUFFER, static_cast<GLintptr>(byteOffset),
-        static_cast<GLsizeiptr>(count * sizeof(std::uint32_t)), out);
-    return data::Result<void>(data::value);
+    // Test-consumed readback via REContext sole anchor (T18) — raw call lives
+    // only in core/re_context.cpp, this façade delegates via REContext so no
+    // second raw site exists in core/storage_buffer.cpp.
+    return REContext::current().readBufferSubData(
+        REContext::BufferTarget::ShaderStorage, id_, byteOffset,
+        count * sizeof(std::uint32_t), out);
 }
 
 } // namespace re::core

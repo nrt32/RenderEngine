@@ -4,9 +4,9 @@
 //
 // core/ is the SOLE owner of raw GL calls (SPEC §3, guardrail
 // gpu_api_ownership): higher layers consume GL only through these wrappers.
-// This header is GL-call-free; the raw glGenTransformFeedbacks /
-// glBeginTransformFeedback / glEndTransformFeedback / glBindBufferBase /
-// glGetBufferSubData calls live in transform_feedback.cpp.
+// This header is GL-call-free; the raw GL calls live in transform_feedback.cpp
+// and the buffer-read raw anchor lives solely in re_context.cpp (T18 —
+// REContext::readBufferSubData, no second site).
 //
 // Transform feedback captures the primitives a geometry (or vertex) shader
 // emits into a buffer, letting tests observe exactly which vertices were
@@ -81,11 +81,11 @@ class TransformFeedback {
     void end() const noexcept;
 
     /// Read back `count` float values captured into `buffer`, starting at
-    /// `floatOffset` floats into the buffer, into `out` (glGetBufferSubData).
-    /// The buffer must have been bound via bindBufferBase(). This is a
-    /// test-consumed readback path (guardrail no_production_readback); the
-    /// render path never reads back from the GPU. Returns an error if no GL
-    /// context is current.
+    /// `floatOffset` floats into the buffer, into `out` (buffer readback via
+    /// REContext sole anchor). The buffer must have been bound via
+    /// bindBufferBase(). This is a test-consumed readback path (guardrail
+    /// no_production_readback); the render path never reads back from the GPU.
+    /// Returns an error if no GL context is current.
     data::Result<void> readFloats(const VertexBuffer& buffer,
                                   std::size_t floatOffset, std::size_t count,
                                   float* out) const;

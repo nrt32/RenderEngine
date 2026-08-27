@@ -328,13 +328,14 @@ data::Result<void> blit(const Framebuffer& source, int srcX, int srcY,
     return data::Result<void>(data::value);
 }
 
-// REContext::readRgba8 — test_utils façade via REContext (raw glReadPixels stays here, core/ only).
+// REContext::readRgba8 — test_utils façade via REContext (raw readback stays
+// here, core/ only — the sole raw readback anchor per T18).
 // VG4: overflow check + PACK_ALIGNMENT save/restore.
 data::Result<void> REContext::readRgba8(std::uint32_t x, std::uint32_t y,
                                         std::uint32_t width, std::uint32_t height,
                                         std::vector<std::uint8_t>& out) const {
-    if (glReadPixels == nullptr) {
-        return data::makeError<void>(1, "readRgba8: no GL context (glReadPixels not loaded)");
+    if (glGetIntegerv == nullptr) {
+        return data::makeError<void>(1, "readRgba8: no GL context (not loaded)");
     }
     const std::size_t bytesPerPixel = 4u;
     // Overflow-safe total = width * height * 4 using 64-bit intermediate.
@@ -359,6 +360,30 @@ data::Result<void> REContext::readRgba8(std::uint32_t x, std::uint32_t y,
                  static_cast<GLsizei>(width), static_cast<GLsizei>(height),
                  GL_RGBA, GL_UNSIGNED_BYTE, out.data());
     glPixelStorei(GL_PACK_ALIGNMENT, oldAlign);
+    return data::Result<void>(data::value);
+}
+
+data::Result<void> REContext::readBufferSubData(BufferTarget target,
+                                                std::uint32_t bufferId,
+                                                std::size_t byteOffset,
+                                                std::size_t byteSize,
+                                                void* out) const {
+    if (glGetBufferSubData == nullptr || glBindBuffer == nullptr) {
+        return data::makeError<void>(1, "readBufferSubData: no GL context (not loaded)");
+    }
+    GLenum glTarget = 0u;
+    switch (target) {
+        case BufferTarget::ShaderStorage:
+            glTarget = GL_SHADER_STORAGE_BUFFER;
+            break;
+        case BufferTarget::TransformFeedback:
+            glTarget = GL_TRANSFORM_FEEDBACK_BUFFER;
+            break;
+    }
+    glBindBuffer(glTarget, bufferId);
+    glGetBufferSubData(glTarget, static_cast<GLintptr>(byteOffset),
+                       static_cast<GLsizeiptr>(byteSize), out);
+    glBindBuffer(glTarget, 0u);
     return data::Result<void>(data::value);
 }
 

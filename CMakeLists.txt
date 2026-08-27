@@ -153,6 +153,7 @@ add_subdirectory(scene)
 add_subdirectory(core)
 add_subdirectory(broker)
 add_subdirectory(utils)
+add_subdirectory(test_utils)
 add_subdirectory(render)
 add_subdirectory(app)
 

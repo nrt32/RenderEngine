@@ -1,9 +1,9 @@
 // core/read_pixels.cpp — framebuffer pixel readback (test-consumed, SPEC §6
-// guardrail no_production_readback: raw glReadPixels anchor is sole in
+// guardrail no_production_readback: raw readback anchor is sole in
 // core/re_context.cpp (REContext::readRgba8); this free function is a thin
 // façade delegating to REContext::current() so tests/utils keep a stable API
 // while the raw GL stays in one place (T2 per-GL-context REContext, T18
-// test_utils façade discipline)).
+// test_utils façade via REContext, not raw)).
 
 #include "core/read_pixels.hpp"
 

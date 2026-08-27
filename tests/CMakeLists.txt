@@ -59,6 +59,7 @@ target_link_libraries(${RE_TEST_TARGET}
     PRIVATE
         re_core
         re_utils
+        re_test_utils
         re_data
         re_io
         re_volume

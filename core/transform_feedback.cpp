@@ -4,6 +4,8 @@
 
 #include <glad/gl.h>
 
+#include "core/re_context.hpp"
+
 namespace re::core {
 
 data::Result<TransformFeedback> TransformFeedback::create() {
@@ -79,21 +81,14 @@ data::Result<void> TransformFeedback::readFloats(const VertexBuffer& buffer,
                                                  std::size_t floatOffset,
                                                  std::size_t count,
                                                  float* out) const {
-    if (glGetBufferSubData == nullptr) {
-        return data::makeError<void>(
-            1,
-            "TransformFeedback: no GL context (glGetBufferSubData not "
-            "loaded)");
-    }
-    // glGetBufferSubData reads from the buffer bound to the given target. The
-    // capture buffer is bound to GL_TRANSFORM_FEEDBACK_BUFFER (via
-    // bindBufferBase), which is a valid binding target for readback.
-    glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, buffer.id());
-    glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER,
-                       static_cast<GLintptr>(floatOffset * sizeof(float)),
-                       static_cast<GLsizeiptr>(count * sizeof(float)), out);
-    glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, 0u);
-    return data::Result<void>(data::value);
+    // Test-consumed readback via REContext sole anchor (T18) — raw call lives
+    // only in core/re_context.cpp, this façade delegates via REContext so no
+    // second raw site exists in core/transform_feedback.cpp.
+    // The capture buffer is bound to GL_TRANSFORM_FEEDBACK_BUFFER via
+    // bindBufferBase, which is the valid binding target for readback.
+    return REContext::current().readBufferSubData(
+        REContext::BufferTarget::TransformFeedback, buffer.id(),
+        floatOffset * sizeof(float), count * sizeof(float), out);
 }
 
 } // namespace re::core

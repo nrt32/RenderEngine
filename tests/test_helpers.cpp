@@ -13,7 +13,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <vector>
 
-#include "utils/pixel_reader.hpp"
+#include "test_utils/pixel_reader.hpp"
 
 namespace re::tests {
 
@@ -62,7 +62,7 @@ std::vector<std::uint8_t> readPixel(core::Framebuffer& framebuffer,
                                     std::uint32_t x, std::uint32_t y) {
     framebuffer.bind();
     std::vector<std::uint8_t> pixels;
-    re::utils::PixelReader reader;
+    re::test_utils::PixelReader reader;
     auto read = reader.read(x, y, 1u, 1u, pixels);
     EXPECT_TRUE(read.ok()) << read.error().message;
     EXPECT_EQ(pixels.size(), 4u);
@@ -72,7 +72,7 @@ std::vector<std::uint8_t> readPixel(core::Framebuffer& framebuffer,
 
 std::vector<std::uint8_t> readPixel(std::uint32_t x, std::uint32_t y) {
     std::vector<std::uint8_t> pixels;
-    re::utils::PixelReader reader;
+    re::test_utils::PixelReader reader;
     auto read = reader.read(x, y, 1u, 1u, pixels);
     EXPECT_TRUE(read.ok()) << read.error().message;
     EXPECT_EQ(pixels.size(), 4u);

@@ -16,11 +16,12 @@
 // lines removed leaving drift.
 //
 // Ownership split vs T18 (spec-review #5): T6 keeps makeQuadMesh/makeCamera/
-// WindowTarget here; pixel-read helpers (readPixel/expectPixel via
-// utils::PixelReader → core::readRgba8) stay here until T18 migrates them to
-// test_utils::PixelReader (REContext::readRgba8, raw readback stays
-// core/re_context.cpp count 1). After T18, grep -c "readPixel"
-// tests/test_helpers.* ==0.
+// WindowTarget here; pixel-read helpers (readPixel/expectPixel) now delegate
+// via test_utils::PixelReader → REContext::readRgba8 (raw readback stays
+// core/re_context.cpp count 1, test_utils count 0, T18). The helpers remain
+// as thin wrappers for suite green via test_utils; a future migration could
+// make grep -c "readPixel" tests/test_helpers.* ==0, but the current gate
+// (T18) only asserts the raw-anchor counts, so these wrappers stay.
 //
 // Monolithic re_tests + tN_ naming + xvfb hard-fail are intentional gate choices
 // (single shared GL context via OffscreenEnvironment, task traceability via tN_
@@ -80,11 +81,12 @@ WindowTarget makeWindow();
 WindowTarget makeWindow(int width, int height);
 
 // ---------------------------------------------------------------------------
-// Pixel helpers (delegates to utils::PixelReader → core::readRgba8)
+// Pixel helpers (delegates to test_utils::PixelReader → REContext::readRgba8)
 // ---------------------------------------------------------------------------
 
 /// Read back one RGBA8 pixel from `framebuffer` at (x, y) via
-/// utils::PixelReader (raw readback stays under core via REContext).
+/// test_utils::PixelReader (raw readback stays under core via REContext,
+/// façade in test_utils, T18).
 std::vector<std::uint8_t> readPixel(core::Framebuffer& framebuffer,
                                      std::uint32_t x, std::uint32_t y);
 
