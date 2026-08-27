@@ -39,6 +39,7 @@ add_executable(${RE_TEST_TARGET}
     t12_plane_path_test.cpp
     t14_unified_asset_store_test.cpp
     t16_volume_slice_test.cpp
+    t16_transfer_function_gate_test.cpp
     t17_renderer_consolidation_test.cpp
     t18_depth_test.cpp
     t19_oit_sample_test.cpp

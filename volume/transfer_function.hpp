@@ -29,6 +29,13 @@ class TransferFunction {
         RgbaColor color{}; ///< Straight RGBA color at the breakpoint.
     };
 
+    /// Default-construct a valid degenerate ramp: transparent black at 0.0
+    /// to opaque white at 1.0. This makes a value-initialized transfer
+    /// function usable without UB — sample() linearly interpolates between
+    /// these two pinned endpoints, so sample(0)=transparent black,
+    /// sample(1)=opaque white, and sample(0.5) is the exact midpoint.
+    TransferFunction();
+
     /// Build a transfer function from `points`.
     ///
     /// Precondition (caller-validated, matching the data/ container style):

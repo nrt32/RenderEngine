@@ -217,4 +217,14 @@ inline glm::vec3 sliceCrosshair(const MprSliceState& state) {
                      static_cast<float>(state.transverseZ) + 0.5f);
 }
 
+namespace detail {
+
+/// Clamped float-to-byte conversion used by makeSliceImage. Converts a
+/// straight RGBA channel in any range to an 8-bit byte by clamping to
+/// [0,1] then rounding. Exposed for the gate test to verify 1.5→255 and
+/// -0.2→0 with defined behavior.
+std::uint8_t toByteClamped(float v) noexcept;
+
+} // namespace detail
+
 } // namespace re::app

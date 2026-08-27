@@ -15,12 +15,25 @@
 
 namespace re::app {
 
+namespace detail {
+
+std::uint8_t toByteClamped(float v) noexcept {
+    const float clamped = std::clamp(v, 0.0f, 1.0f);
+    return static_cast<std::uint8_t>(std::round(clamped * 255.0f));
+}
+
+} // namespace detail
+
 namespace {
 
-/// Convert a straight RGBA color in [0, 1] to RGBA8 bytes (round-half-up,
-/// matching the render/ convention: byte = round(c * 255 + 0.5)).
-std::uint8_t toByte(float v) noexcept {
-    return static_cast<std::uint8_t>(std::round(v * 255.0f));
+/// Convert a straight RGBA color channel to an RGBA8 byte with well-defined
+/// clamping. The transfer function may produce values outside [0,1] if its
+/// control-point colors are out of range or due to floating-point drift; the
+/// float-to-integer conversion is undefined behavior when the value is outside
+/// the destination range, so clamp to [0,1] before scaling and rounding. This
+/// matches the render convention byte = round(clamp(c,0,1) * 255).
+inline std::uint8_t toByte(float v) noexcept {
+    return detail::toByteClamped(v);
 }
 
 } // namespace

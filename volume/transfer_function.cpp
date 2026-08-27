@@ -7,10 +7,21 @@
 
 namespace re::volume {
 
+TransferFunction::TransferFunction()
+    : points_{
+          ControlPoint{0.0f, RgbaColor{0.0f, 0.0f, 0.0f, 0.0f}},
+          ControlPoint{1.0f, RgbaColor{1.0f, 1.0f, 1.0f, 1.0f}}} {}
+
 TransferFunction::TransferFunction(std::vector<ControlPoint> points)
     : points_(std::move(points)) {}
 
 RgbaColor TransferFunction::sample(float value) const noexcept {
+    // Defensive: an empty control-point list would be UB on front()/back().
+    // Return transparent black (the degenerate ramp's low endpoint) so a
+    // default-constructed or otherwise empty transfer function is defined.
+    if (points_.empty()) {
+        return RgbaColor{0.0f, 0.0f, 0.0f, 0.0f};
+    }
     // Below the first breakpoint (or a single-point ramp): the first endpoint
     // color.
     if (value <= points_.front().value) {
