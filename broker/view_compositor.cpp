@@ -103,10 +103,13 @@ data::Result<void> ViewCompositor::captureTransparents(StableKey key, render::Vi
             "pipeline is wired in its RenderStack");
     }
 
-    // Hand the depth state back to the established pipeline configuration
-    // (depth OFF during capture AND composite) through the SAME ctx the view
-    // pass used — exact transition regardless of global draw-state caches.
-    core::REContext::current().disableDepthTest();
+    // T4: single-writer discipline — View::render already used REContext::current()
+    // for the opaque prologue (bind+viewport+clear+depth). Reuse the SAME instance
+    // for OIT so viewport/depth/blend share one ledger (2 layers sharing viewport
+    // issue exactly 1 glViewport; no skipped-glEnable bugs). Explicit REContext&
+    // passed to begin/end makes the single-writer contract mechanical.
+    auto& ctx = core::REContext::current();
+    ctx.disableDepthTest();
 
     render::RenderTarget target;
     target.framebuffer = &rv->target()->framebuffer();
@@ -115,7 +118,7 @@ data::Result<void> ViewCompositor::captureTransparents(StableKey key, render::Vi
     target.clearColor = rv->clearColor();
 
     const render::Camera camera = rv->camera();
-    auto begun = stack_->pipeline->begin(camera, target);
+    auto begun = stack_->pipeline->begin(camera, target, ctx);
     if (begun.failed()) {
         return begun;
     }
@@ -134,7 +137,7 @@ data::Result<void> ViewCompositor::captureTransparents(StableKey key, render::Vi
             return captured;
         }
     }
-    return stack_->pipeline->end(camera, target);
+    return stack_->pipeline->end(camera, target, ctx);
 }
 
 data::Result<void> ViewCompositor::renderAll() {

@@ -1231,6 +1231,36 @@ private body (per-renderer `drawInstances`/`clipInstances`; mesh takes a
 `skipTransparent` flag because the OIT split is owned by the direct path
 only). Zero pixel change is regression-locked by the FR-render gates.
 
+### Single draw-state cache via `REContext` (V3.3 T4: analysis → unify on `REContext`-everywhere)
+
+**Deliverable (1) analysis note — single-writer discipline per cached state, ImGui save/restore, and `LinkedListOIT` taking `REContext&`.**
+
+The two live regimes at T3 close were:
+
+| Regime | Cache location | Writers | Consumed by |
+|---|---|---|---|
+| Global free functions (`core::setViewport` etc. in `core/re_context.cpp` via `g_cache`/`g_spy`) | process-global dirty flags | any caller (hidden `REContext::current()` inside each free function) | `LinkedListOIT` (`linked_list_oit.cpp:193,274,276,280,289`) |
+| Instance `core::REContext` (per-`View` prologue via `REContext::current()` in `render/view.cpp`) | per-GL-context `thread_local` mirror (`REContextState` per `GLFWwindow*`) | explicit `View::render()` / `beginPass()` | every `View` pass prologue |
+
+Both regimes ultimately wrote the same GL state (`glViewport`, `glClearColor`, `glEnable(GL_DEPTH_TEST)`, `glEnable(GL_BLEND)`, `glBlendFunc`), but through **different cache ledgers** — a second `setViewport(0,0,64,64)` after a View prologue could issue a duplicate `glViewport` if the free-function global cache had not seen that rect, or skip a mandatory `glEnable` if it thought blending was already on when the View had disabled it. This is the "skipped-glEnable" bug class the T4 gate closes.
+
+*Single-writer discipline per cached state (viewport / clear color / depth / blend).* Every cached piece of GL state now has exactly **one writer: `REContext`**. The four cached families are:
+
+| State | `REContext` method | GL call | Cache key |
+|---|---|---|---|
+| viewport rect | `setViewport(x,y,w,h)` | `glViewport` | `hasViewport` + exact `vpX/vpY/vpW/vpH` equality |
+| clear color | `setClearColor(r,g,b,a)` | `glClearColor` | `hasClearColor` + component equality |
+| depth test | `enableDepthTest` / `disableDepthTest` | `glEnable`/`glDisable`(`GL_DEPTH_TEST`) | `hasDepthTest` + `depthEnabled` |
+| blending | `enableBlend` / `disableBlend` / `enablePremultipliedOverBlend` | `glEnable`/`glDisable`(`GL_BLEND`) + `glBlendFunc`(`GL_ONE`, `GL_ONE_MINUS_SRC_ALPHA`) | `hasBlend`/`hasBlendFunc` + `blendEnabled`/`blendSrc`/`blendDst` |
+
+No other module writes these states directly, and no code path reads them except through `REContext`'s cache (the raw `gl*` stays exclusive to `core/re_context.cpp` — guardrail `gpu_api_ownership`). `REContext::current()` is `thread_local` per `GLFWwindow*`, so a single thread driving several views on one window naturally shares one ledger, while a future worker thread with a private context gets a private mirror with no lock.
+
+*ImGui backend save/restore semantics.* Dear ImGui's OpenGL3 backend (`imgui_impl_opengl3.cpp`) **saves and restores** the GL state it touches (viewport, scissor, blend, depth, program, VAO, texture bindings) around `ImGui_ImplOpenGL3_RenderDrawData`. After ImGui draws, the actual GL state is restored to whatever the engine had before, but `REContext`'s mirror would still believe ImGui's transient state is current — a later engine draw could then skip a re-issue and render with the wrong state. The discipline is therefore **explicit invalidation at ImGui boundaries, never auto-guess**: `SampleHarness` (and any future `ViewCompositor` host) calls `REContext::current().invalidate()` (or `invalidateRECache()`) immediately after the ImGui backend returns, and tests call `invalidate()` between independent cases. `invalidate()` resets both the dirty flags and the spy, so the next engine prologue always re-issues.
+
+*Whether `LinkedListOIT` can take `REContext&` from the compositor flow.* Yes — `ViewCompositor` already owns `ReView` lifetime and drives `renderAll()` → `View::render()` → `REContext::current().beginPass(...)` per view, all on the same GL context. The single per-frame `REContext&` obtained there (`auto& ctx = REContext::current()`) is the **frame's single writer**, so passing that `ctx` into the pipeline (`pipeline->begin(camera, target, ctx)` / `end(camera, target, ctx)` and `ctx.setViewport`/`ctx.disableDepthTest`/`ctx.enablePremultipliedOverBlend`/`ctx.disableBlend` inside `linked_list_oit.cpp:193,274,276,280,289`) makes the OIT + prologue share **one ledger** by construction. View layers never engage the pipeline directly ("View layers never engage the pipeline"), and the pipeline's composite pass deliberately avoids `beginPass` (must not clear), but both share the viewport/depth/blend ledger so `setViewport(0,0,w,h)` issued by the View prologue is seen as a cache hit by the OIT begin/end with the same rect — `getSpyCounts().viewport == 1` for the duplicate, not 2. The alternative — keeping a separate free-function global cache for OIT — would reintroduce the duplicate-issue / skipped-enable bugs.
+
+**Implementation (2).** Converged on `REContext`-everywhere: `LinkedListOIT::begin` and `end` now take `core::REContext& ctx` from `ViewCompositor` (which obtains it via `REContext::current()` per view) and the five call sites at `linked_list_oit.cpp:193,274,276,280,289` were ported from `core::setViewport`/`disableDepthTest`/`enablePremultipliedOverBlend`/`disableBlend` free functions to `ctx.*`. `MeshRenderer::render` also passes `REContext::current()` to the pipeline for the direct-renderer path. Legacy `core/draw.* → core/re_context.*` rename is complete (T2), and the global `g_cache`/`g_spy`/`invalidateDrawCache()` shim was deleted (`grep -c "g_cache\|g_spy\|invalidateDrawCache" core/` == 0); `invalidateRECache()` (and `REContext::invalidate()`) remain as the explicit boundary invalidator.
+
 ## Guardrails observed
 
 - **GL ownership**: `render/` is GL-call-free — no raw `glXxx` call and no

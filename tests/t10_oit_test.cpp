@@ -156,7 +156,8 @@ std::vector<std::uint8_t> readPixel(std::uint32_t x, std::uint32_t y) {
 class RecordingPipeline final : public render::ITransparencyPipeline {
    public:
     data::Result<void> begin(const render::Camera&,
-                             const render::RenderTarget&) override {
+                             const render::RenderTarget&,
+                             core::REContext&) override {
         ++beginCount_;
         return data::Result<void>(data::value);
     }
@@ -167,7 +168,8 @@ class RecordingPipeline final : public render::ITransparencyPipeline {
         return data::Result<void>(data::value);
     }
     data::Result<void> end(const render::Camera&,
-                           const render::RenderTarget&) override {
+                           const render::RenderTarget&,
+                           core::REContext&) override {
         ++endCount_;
         return data::Result<void>(data::value);
     }

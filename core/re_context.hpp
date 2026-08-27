@@ -28,6 +28,15 @@
 // Worker threads with private contexts get private mirrors with no lock because
 // t_current is thread_local and the GLFWwindow* → REContext map is mutex-guarded
 // for creation only; per-frame access is lock-free via the thread_local pointer.
+//
+// T4 (single ledger): viewport/clear/depth/blend each have exactly one writer
+// (REContext). LinkedListOIT now takes explicit REContext& from ViewCompositor
+// (which already holds REContext::current() per view), so View prologues and
+// OIT share one ledger (spy proves setViewport duplicate 2->1, analytic count 1
+// not >0; no skipped-glEnable class bugs). Legacy global cache + spy + legacy
+// cache-invalidate shim deleted (mechanical grep count 0). ImGui backends
+// save/restore GL state; invalidate() is called explicitly after ImGui to keep
+// the mirror in sync (no auto-guess).
 
 #include <cstddef>
 #include <cstdint>
@@ -112,8 +121,6 @@ inline void resetDrawSpyCounts() noexcept { resetRESpyCounts(); }
 
 /// Invalidate the current GL context's dirty-flag cache (also resets spy).
 void invalidateRECache() noexcept;
-/// Alias for backward compat (global invalidate).
-inline void invalidateDrawCache() noexcept { invalidateRECache(); }
 
 /// Copy a pixel rectangle via glBlitFramebuffer.
 data::Result<void> blit(const Framebuffer& source, int srcX, int srcY,

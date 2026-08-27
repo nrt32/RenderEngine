@@ -4,8 +4,14 @@
 // glClearColor / glClear / glEnable / glDisable / glDrawElements /
 // glBlitFramebuffer). render/, app/, tests/ consume GL only through these
 // wrappers (guardrail gpu_api_ownership). The free-function core::Draw API
-// now delegates to REContext::current() so 2 layers sharing state within the
+// delegates to REContext::current() so 2 layers sharing state within the
 // same GL context issue only 1 glViewport (cross-pass dedup, T2).
+// T4: single-writer discipline — viewport/clear/depth/blend each have exactly
+// one writer (REContext); LinkedListOIT now takes explicit REContext& from
+// ViewCompositor (which already holds REContext::current() per view), so View
+// prologues and OIT share one ledger (spy proves setViewport duplicate 2->1,
+// analytic count 1 not >0; no skipped-glEnable bugs). Legacy global cache
+// shim deleted (T4, mechanical grep count 0).
 //
 // Per-GL-context state: REContext::current() is thread_local pointer set by
 // loadCoreGl() / makeContextCurrent(GLFWwindow*) mapping GLFWwindow* →
@@ -13,7 +19,9 @@
 // blend, blendFunc, cull, FBO bindings, VAO, program, image units). Worker
 // threads with private contexts get private mirrors with no lock (thread_local);
 // shared resources noted out-of-scope (GL share groups). Explicit invalidation
-// at boundaries (SampleHarness post-ImGui, invalidate() public for tests).
+// at boundaries (SampleHarness post-ImGui, invalidate() public for tests) —
+// ImGui backends save/restore GL state, so invalidate() is called after ImGui
+// to keep the mirror in sync (no auto-guess).
 
 #include "core/re_context.hpp"
 

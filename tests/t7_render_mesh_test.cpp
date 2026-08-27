@@ -100,7 +100,8 @@ render::Camera makeCamera() {
 class SpyTransparencyPipeline final : public render::ITransparencyPipeline {
    public:
     data::Result<void> begin(const render::Camera&,
-                             const render::RenderTarget&) override {
+                             const render::RenderTarget&,
+                             core::REContext&) override {
         ++beginCount_;
         return data::Result<void>(data::value);
     }
@@ -111,7 +112,8 @@ class SpyTransparencyPipeline final : public render::ITransparencyPipeline {
         return data::Result<void>(data::value);
     }
     data::Result<void> end(const render::Camera&,
-                           const render::RenderTarget&) override {
+                           const render::RenderTarget&,
+                           core::REContext&) override {
         ++endCount_;
         return data::Result<void>(data::value);
     }

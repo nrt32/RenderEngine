@@ -163,7 +163,8 @@ data::Result<void> LinkedListOIT::ensureCapacity(std::uint32_t width,
 }
 
 data::Result<void> LinkedListOIT::begin(const Camera& camera,
-                                        const RenderTarget& target) {
+                                        const RenderTarget& target,
+                                        core::REContext& ctx) {
     (void)camera;
     // (Re)allocate storage if the target size changed. A failure is reported
     // as a typed error (SPEC §5): the pipeline stays un-engaged and the frame
@@ -187,11 +188,14 @@ data::Result<void> LinkedListOIT::begin(const Camera& camera,
 
     // Bind the head-pointer image + SSBOs to their fixed binding points for the
     // capture + composite passes, and install the viewport for the frame.
+    // T4: single ledger via REContext& from ViewCompositor — OIT + View prologues
+    // share one viewport/depth/blend cache, so 2 layers sharing viewport issue
+    // exactly 1 glViewport (no skipped-glEnable bugs).
     core::bindImageR32ui(*headTexture_, kHeadImageUnit);
     nodeBuffer_->bindBase(kNodeBinding);
     counterBuffer_->bindBase(kCounterBinding);
-    core::setViewport(0, 0, static_cast<int>(target.width),
-                      static_cast<int>(target.height));
+    ctx.setViewport(0, 0, static_cast<int>(target.width),
+                   static_cast<int>(target.height));
 
     engaged_ = true;
     return data::Result<void>(data::value);
@@ -233,7 +237,8 @@ data::Result<void> LinkedListOIT::drawTransparent(const MeshGeometry& geometry,
 }
 
 data::Result<void> LinkedListOIT::end(const Camera& camera,
-                                      const RenderTarget& target) {
+                                      const RenderTarget& target,
+                                      core::REContext& ctx) {
     (void)camera;
     if (!engaged_) {
         return data::Result<void>(data::value);
@@ -266,18 +271,19 @@ data::Result<void> LinkedListOIT::end(const Camera& camera,
     // through the shared beginPass prologue: compositing must blend OVER the
     // already-drawn opaque contents, so nothing may be cleared here — only the
     // narrower bind + viewport + depth-off + blend-on sequence is issued.
+    // T4: uses explicit REContext& ledger — single writer for viewport/depth/blend.
     if (target.framebuffer == nullptr) {
         core::bindDefaultFramebuffer();
     } else {
         target.framebuffer->bind();
     }
-    core::setViewport(0, 0, static_cast<int>(target.width),
-                      static_cast<int>(target.height));
-    core::disableDepthTest();
+    ctx.setViewport(0, 0, static_cast<int>(target.width),
+                   static_cast<int>(target.height));
+    ctx.disableDepthTest();
 
     // The composite shader outputs the accumulated premultiplied transparent
     // color; blend it over the opaque contents with (ONE, ONE_MINUS_SRC_ALPHA).
-    core::enablePremultipliedOverBlend();
+    ctx.enablePremultipliedOverBlend();
 
     program->use();
     program->setUniformInt("uMaxNodes",
@@ -286,7 +292,7 @@ data::Result<void> LinkedListOIT::end(const Camera& camera,
         core::drawElements(*quadVao, kQuadTriangleIndices.size());
 
     // Restore draw state regardless of the draw result (no state leak).
-    core::disableBlend();
+    ctx.disableBlend();
     core::unbindImage(kHeadImageUnit);
     engaged_ = false;
     return draw;

@@ -24,6 +24,10 @@
 #include "data/result.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
 
+namespace re::core {
+class REContext;
+}
+
 namespace re::render {
 
 class MeshGeometry;
@@ -47,7 +51,8 @@ class ITransparencyPipeline {
     /// failure the pipeline stays un-engaged and the frame renders without OIT
     /// (the error propagates to the caller, SPEC §5).
     virtual data::Result<void> begin(const Camera& camera,
-                                     const RenderTarget& target) = 0;
+                                     const RenderTarget& target,
+                                     core::REContext& ctx) = 0;
 
     /// Capture `geometry` (a transparent mesh) into the pipeline with
     /// `baseColor` (straight RGBA; the pipeline premultiplies) and `model`
@@ -67,7 +72,8 @@ class ITransparencyPipeline {
     /// Draw state (blend, image bindings) is restored whether or not the pass
     /// succeeds.
     virtual data::Result<void> end(const Camera& camera,
-                                   const RenderTarget& target) = 0;
+                                   const RenderTarget& target,
+                                   core::REContext& ctx) = 0;
 
     /// True while a begin()/end() frame is in progress (engaged).
     virtual bool isEngaged() const noexcept = 0;

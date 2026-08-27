@@ -161,7 +161,8 @@ void expectPixel(const std::vector<std::uint8_t>& p, int r, int g, int b, int a,
 class RecordingPipeline final : public render::ITransparencyPipeline {
    public:
     data::Result<void> begin(const render::Camera&,
-                             const render::RenderTarget&) override {
+                             const render::RenderTarget&,
+                             core::REContext&) override {
         ++beginCount_;
         return data::Result<void>(data::value);
     }
@@ -172,7 +173,8 @@ class RecordingPipeline final : public render::ITransparencyPipeline {
         return data::Result<void>(data::value);
     }
     data::Result<void> end(const render::Camera&,
-                           const render::RenderTarget&) override {
+                           const render::RenderTarget&,
+                           core::REContext&) override {
         ++endCount_;
         return data::Result<void>(data::value);
     }
@@ -325,7 +327,7 @@ data::Result<void> composeFrame(render::View& view,
                                 render::ITransparencyPipeline& pipeline,
                                 const Rig& rig, std::uint32_t width,
                                 std::uint32_t height,
-                                core::DrawContext& ctx) {
+                                core::REContext& ctx) {
     const render::Camera camera =
         rig.cameraFor(static_cast<float>(width) / static_cast<float>(height));
     view.setRect(render::ViewRect{0, 0, static_cast<int>(width),
@@ -349,7 +351,9 @@ data::Result<void> composeFrame(render::View& view,
     target.clearColor = oit_scene::kClearColor;
 
     // Stage 3: capture + depth-sorted composite over the opaque result.
-    const auto begun = pipeline.begin(camera, target);
+    // T4: single ledger — same REContext as View opaque pass (viewport/depth/blend
+    // dedup 2→1, no skipped-glEnable bugs).
+    const auto begun = pipeline.begin(camera, target, ctx);
     if (begun.failed()) {
         return begun;
     }
@@ -369,7 +373,7 @@ data::Result<void> composeFrame(render::View& view,
             return captured;
         }
     }
-    return pipeline.end(camera, target);
+    return pipeline.end(camera, target, ctx);
 }
 
 std::string readFile(const std::filesystem::path& p) {
@@ -420,7 +424,7 @@ TEST(T19OitSample, CompositeProbesMatchAnalyticChain) {
     view.addItem(rig.opaqueScene(), renderer);
 
     for (int frame = 1; frame <= 2; ++frame) {
-        core::DrawContext ctx;
+        core::REContext ctx;
         auto composed = composeFrame(view, *pipeline, rig,
                                                 kTargetWidth, kTargetHeight,
                                                 ctx);

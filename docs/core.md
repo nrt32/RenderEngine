@@ -105,14 +105,16 @@ portable level that compiles on both llvmpipe and the native d3d12 driver. GLSL
 460 remains the target for hardware-driven sample shaders on the native d3d12
 path.
 
-### Draw-state cache (SPEC §9 V2.10) & REContext instance (V3.2a Q43:B — formerly DrawContext, T2)
+### Draw-state cache — single ledger via `REContext` (SPEC §9 V2.10, V3.2a Q43:B + V3.3 T4 unify)
 
-`core/draw.cpp` keeps an **internal dirty-flag cache** for the draw-state
-wrappers (`setViewport`, `setClearColor`, `enableDepthTest`/`disableDepthTest`,
-`enableBlend`/`disableBlend`, `enablePremultipliedOverBlend`). The free-function
-`core::Draw` API and the audit anchors (`core::loadCoreGl`, `core::readRgba8`)
-are unchanged — the cache is transparent to callers and to the mechanical
-audit.
+`core/re_context.hpp` (`core/re_context.cpp`) keeps the **single dirty-flag cache**
+for the draw-state wrappers (`setViewport`, `setClearColor`, `enableDepthTest`/`disableDepthTest`,
+`enableBlend`/`disableBlend`, `enablePremultipliedOverBlend`). The cache is the single writer
+for viewport / clear color / depth / blend state (T4 analysis → unify). Before T4 two ledgers
+existed — global free-function cache (`g_cache`/`g_spy`) and instance `REContext` — and `LinkedListOIT`
+used the free-function path while `View` prologues used `REContext::current()`; after T4 every path
+shares one ledger via explicit `REContext&` (no mixed regime; `grep -c "g_cache\|g_spy\|invalidateDrawCache"
+core/` == 0).
 
 - `setViewport(x,y,w,h)` caches the last viewport rect; an identical rect is a
   cache hit and issues no `glViewport`.
@@ -124,23 +126,28 @@ audit.
   the `GL_BLEND` enable and the `glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)`
   state, so a second identical call issues neither.
 - Motivator: OIT mid-frame toggles that would otherwise redundantly re-issue
-  `glEnable`/`glDisable`/`glBlendFunc` per transparent draw.
+  `glEnable`/`glDisable`/`glBlendFunc` per transparent draw — now deduped to a single
+  ledger so `View` + OIT sharing the same viewport rect issues exactly **1** `glViewport`
+  (`getSpyCounts().viewport == 1` for the duplicate, not 2 — the T4 `2→1` proof).
 
-For testing, `core/draw.hpp` exposes a **test-injectable spy**:
+For testing, `core/re_context.hpp` exposes a **test-injectable spy**:
 
-- `core::DrawSpyCounts` — per-wrapper raw-GL call counts (only incremented on a
-  cache miss);
-- `core::getDrawSpyCounts()` / `core::resetDrawSpyCounts()` — inspect/reset the
-  spy;
-- `core::invalidateDrawCache()` — invalidate the cache (and reset the spy) so
-  the next wrapper call always issues its `gl*` call. Tests call this between
-  cases to avoid cross-test pollution.
+- `core::RESpyCounts` (`DrawSpyCounts` alias for backward compat) — per-wrapper raw-GL call counts (only incremented on a cache miss);
+- `core::getRESpyCounts()` / `core::getDrawSpyCounts()` / `core::REContext::getSpyCounts()` — inspect the spy;
+- `core::resetRESpyCounts()` / `ctx.resetSpyCounts()` — reset spy counters;
+- `core::invalidateRECache()` / `ctx.invalidate()` — invalidate the cache (and reset the spy) so
+  the next wrapper call always issues its `gl*` call. Legacy `core::invalidateDrawCache()` was
+  deleted at T4 (`core/re_context.*` is the canonical location; `core/draw.*` is now an empty shim).
+  Tests call `invalidateRECache()` / `invalidate()` between cases to avoid cross-test pollution.
+  At ImGui boundaries `REContext::current().invalidate()` is called explicitly after the ImGui
+  backend restores GL state, so the next engine prologue always re-issues (no auto-guess).
 
 Example gate assertion: `setClearColor(red); setClearColor(red)` issues exactly
 **1** `glClearColor`; the same holds for `setViewport` and each
-`enable*`/`disable*`.
+`enable*`/`disable*`. T4 adds: `View` prologue + `LinkedListOIT::begin(ctx, ...)` sharing the same
+`REContext&` and rect issues exactly **1** `glViewport` (spy `2→1` proof, analytic count 1 not `>0`).
 
-#### REContext — instance per FrameContext (V3.2a, Q43:B SRP via instance — formerly DrawContext, T2)
+#### REContext — global per-GL-context + instance per FrameContext (V3.2a, Q43:B SRP via instance — formerly DrawContext, T2; T4: single ledger)
 
 `core::REContext` (`core/re_context.hpp` (formerly `core/draw.hpp`, T2), header-only value type) **replaces** the
 global `static Cache g_cache` / `invalidateDrawCache()` with an **instance per
@@ -177,9 +184,15 @@ global mutable). The instance owns its own dirty-flag cache + spy:
 - Future `FrameContext{ REContext draw; Viewport viewport; ClearColor clearCol; }`
   (see `modules.md` RHI) will thread `REContext&` through `renderAll`/`drawLayer`
   so `core::Draw` façade delegates to `FrameContext::draw` (DIP). The global free-function
-  API remains for V2 regression lock; new code migrates to `REContext` instance.
+  API (delegating to `REContext::current()`) remains for ergonomic one-liners, but `LinkedListOIT`
+  and `ViewCompositor` now take explicit `REContext&` from the compositor flow (T4) — single-writer
+  discipline: viewport/clear/depth/blend each have exactly one writer per frame, so no
+  skipped-`glEnable` bugs are possible, and ImGui save/restore is handled by explicit
+  `invalidate()` at the boundary (no auto-guess).
 
 Gate: `REContext` duplicate `setViewport` → exactly 1 `glViewport` (`t2_skeletons_test.cpp`);
+`REContext::current()` + `LinkedListOIT::begin(ctx, ...)` sharing one ledger proves `2→1` dedup
+(`t6_v2_draw_cache_test.cpp:SharedLedgerViewportDuplicateIsOneNotTwo`, analytic count 1 not `>0`);
 `invalidate()` resets cache+spy; two instances are independent (N>=1 consecutive green);
 T17: exactly one `beginPass` definition in the tree, zero clear-prologue repeats under
 `render/`, `<glad/gl.h>` under `render/` == 0 (`t17_renderer_consolidation_test.cpp`).

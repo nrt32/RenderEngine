@@ -54,13 +54,15 @@ class LinkedListOIT final : public ITransparencyPipeline {
     LinkedListOIT& operator=(const LinkedListOIT&) = delete;
 
     data::Result<void> begin(const Camera& camera,
-                             const RenderTarget& target) override;
+                             const RenderTarget& target,
+                             core::REContext& ctx) override;
     data::Result<void> drawTransparent(const MeshGeometry& geometry,
                                        const glm::vec4& baseColor,
                                        const glm::mat4& model,
                                        const Camera& camera) override;
     data::Result<void> end(const Camera& camera,
-                           const RenderTarget& target) override;
+                           const RenderTarget& target,
+                           core::REContext& ctx) override;
     bool isEngaged() const noexcept override;
 
     /// Test-consumed readback (guardrail no_production_readback): read the

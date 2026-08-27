@@ -153,9 +153,9 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
     // depth test is a per-view opt-in (render::View::setDepthTest), applied by
     // the View's own prologue call when a composition needs it. The OIT passes
     // below therefore always run with the depth test OFF exactly as before:
-    // the capture draws immediately after this depth-off prologue, and end()
-    // issues its own explicit core::disableDepthTest() — so both behave
-    // identically on color-only and depth-enabled targets.
+    // the capture draws immediately after this depth-off prologue, and end(ctx)
+    // issues its own explicit ctx.disableDepthTest() via the shared ledger — so
+    // both behave identically on color-only and depth-enabled targets.
     auto& ctx = core::REContext::current();
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,
@@ -165,7 +165,10 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
         // Engage the OIT pipeline (capture -> depth-sort -> composite): draw
         // the opaque meshes first, then capture the transparent meshes through
         // the pipeline, then let end() composite (FR-render.2/3).
-        const data::Result<void> begin = transparency_->begin(camera, target);
+        // T4: single ledger — OIT begin/end share the same REContext& as the
+        // View/opaque prologue, so duplicate viewport/depth/blend state is
+        // deduped to 1 gl call, not 2 (no skipped-glEnable bugs).
+        const data::Result<void> begin = transparency_->begin(camera, target, ctx);
         if (begin.failed()) {
             // The pipeline could not be engaged: abort the frame and surface
             // the typed error to the caller (SPEC §5, never silent). The
@@ -174,15 +177,15 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
         }
         const data::Result<void> opaque = drawOpaque(scene, camera, target);
         if (opaque.failed()) {
-            transparency_->end(camera, target);
+            transparency_->end(camera, target, ctx);
             return opaque;
         }
         const data::Result<void> transparent = drawTransparent(scene, camera);
         if (transparent.failed()) {
-            transparency_->end(camera, target);
+            transparency_->end(camera, target, ctx);
             return transparent;
         }
-        return transparency_->end(camera, target);
+        return transparency_->end(camera, target, ctx);
     }
 
     return drawOpaque(scene, camera, target);

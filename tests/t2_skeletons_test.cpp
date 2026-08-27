@@ -14,7 +14,7 @@
 
 #include <glm/ext/matrix_transform.hpp>
 
-#include "core/draw.hpp"
+#include "core/re_context.hpp"
 #include "scene/camera.hpp"
 #include "scene/composite_key.hpp"
 #include "scene/translate_context.hpp"
@@ -174,31 +174,31 @@ TEST(T2TranslateContext, ViewContextOnlyForCameraMapper) {
 // ---------------------------------------------------------------------------
 
 TEST(T2DrawContext, PerFrameViewportDuplicateIsOneGlCall) {
-    core::DrawContext ctx;
+    core::REContext ctx;
     ctx.setViewport(0, 0, 640, 480);
     ctx.setViewport(0, 0, 640, 480);
     auto counts = ctx.getSpyCounts();
-    EXPECT_EQ(counts.viewport, 1) << "DrawContext duplicate setViewport must be exactly 1 glViewport (explainable: cache hit)";
+    EXPECT_EQ(counts.viewport, 1) << "REContext duplicate setViewport must be exactly 1 glViewport (explainable: cache hit)";
 }
 
 TEST(T2DrawContext, PerFrameViewportDifferentValuesAreTwoCalls) {
-    core::DrawContext ctx;
+    core::REContext ctx;
     ctx.setViewport(0, 0, 640, 480);
     ctx.setViewport(0, 0, 800, 600);
     EXPECT_EQ(ctx.getSpyCounts().viewport, 2) << "distinct viewports must be 2 glViewport";
 }
 
 TEST(T2DrawContext, TwoInstancesAreIndependent) {
-    // SRP via instance — two DrawContexts must have independent caches/spies.
-    core::DrawContext ctxA;
-    core::DrawContext ctxB;
+    // SRP via instance — two REContexts must have independent caches/spies.
+    core::REContext ctxA;
+    core::REContext ctxB;
     ctxA.setViewport(0, 0, 640, 480);
     ctxA.setViewport(0, 0, 640, 480);
     EXPECT_EQ(ctxA.getSpyCounts().viewport, 1);
 
     // ctxB starts cold — same rect must still issue glViewport (no cross-frame bleed).
     ctxB.setViewport(0, 0, 640, 480);
-    EXPECT_EQ(ctxB.getSpyCounts().viewport, 1) << "fresh DrawContext must issue glViewport even if ctxA cached same rect (instance isolation)";
+    EXPECT_EQ(ctxB.getSpyCounts().viewport, 1) << "fresh REContext must issue glViewport even if ctxA cached same rect (instance isolation)";
     ctxB.setViewport(0, 0, 640, 480);
     EXPECT_EQ(ctxB.getSpyCounts().viewport, 1) << "ctxB duplicate still 1 (per-instance cache)";
 
@@ -210,7 +210,7 @@ TEST(T2DrawContext, TwoInstancesAreIndependent) {
 }
 
 TEST(T2DrawContext, PerFrameClearColorAndDepthBlendCached) {
-    core::DrawContext ctx;
+    core::REContext ctx;
     ctx.setClearColor(0.2f, 0.4f, 0.8f, 1.0f);
     ctx.setClearColor(0.2f, 0.4f, 0.8f, 1.0f);
     EXPECT_EQ(ctx.getSpyCounts().clearColor, 1) << "duplicate clearColor must be 1 glClearColor";
@@ -233,13 +233,14 @@ TEST(T2DrawContext, PerFrameClearColorAndDepthBlendCached) {
     auto c = ctx.getSpyCounts();
     EXPECT_EQ(c.blendFunc, 1) << "first premultiplied after enableBlend must add exactly 1 blendFunc";
 
-    // Verify global static cache still exists and is independent — DrawContext does not alias global.
-    // Global invalidate must not affect instance cache/spy (instance isolation): set viewport,
+    // T4: single ledger via REContext — global per-GL-context cache (REContext::current())
+    // is independent from local instances. Invalidate of the global current must not
+    // affect a local instance's cache/spy (instance isolation): set viewport,
     // global invalidate, duplicate same rect on same instance must still be cache hit (exactly 1).
-    core::DrawContext isoCtx;
+    core::REContext isoCtx;
     isoCtx.setViewport(10, 20, 300, 200);
     EXPECT_EQ(isoCtx.getSpyCounts().viewport, 1) << "isoCtx first setViewport must be 1 (explainable)";
-    core::invalidateDrawCache(); // global — must not clear instance cache
+    core::invalidateRECache(); // global current — must not clear local instance cache
     isoCtx.setViewport(10, 20, 300, 200);
     EXPECT_EQ(isoCtx.getSpyCounts().viewport, 1)
         << "global invalidate must not affect instance cache (duplicate still hit, explainable isolation)";
