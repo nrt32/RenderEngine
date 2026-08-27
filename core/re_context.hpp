@@ -47,8 +47,6 @@
 #include "core/vertex_array.hpp"
 #include "data/result.hpp"
 
-#include <glad/gl.h>
-
 struct GLFWwindow;
 
 namespace re::core {
@@ -158,120 +156,35 @@ class REContext {
     REContext() noexcept = default;
 
     // ---- instance state wrappers (operate on this instance's cache/spy) ----
+    // All GL-call bodies live out-of-line in core/re_context.cpp so this
+    // public header stays GL-call-free (no <glad/gl.h> leak). The header
+    // only declares the interface; the cache/spy bookkeeping plus the raw
+    // gl* calls are implemented in the .cpp where glad is included privately.
 
-    void setViewport(int x, int y, int width, int height) noexcept {
-        if (cache_.hasViewport && cache_.vpX == x && cache_.vpY == y &&
-            cache_.vpW == width && cache_.vpH == height) {
-            return;
-        }
-        cache_.hasViewport = true;
-        cache_.vpX = x;
-        cache_.vpY = y;
-        cache_.vpW = width;
-        cache_.vpH = height;
-        ++spy_.viewport;
-        glViewport(x, y, width, height);
-    }
+    void setViewport(int x, int y, int width, int height) noexcept;
 
-    bool viewportRect(int& x, int& y, int& width, int& height) const noexcept {
-        if (!cache_.hasViewport) return false;
-        x = cache_.vpX;
-        y = cache_.vpY;
-        width = cache_.vpW;
-        height = cache_.vpH;
-        return true;
-    }
+    bool viewportRect(int& x, int& y, int& width, int& height) const noexcept;
 
-    void setClearColor(float r, float g, float b, float a) noexcept {
-        if (cache_.hasClearColor && cache_.ccR == r && cache_.ccG == g &&
-            cache_.ccB == b && cache_.ccA == a) {
-            return;
-        }
-        cache_.hasClearColor = true;
-        cache_.ccR = r;
-        cache_.ccG = g;
-        cache_.ccB = b;
-        cache_.ccA = a;
-        ++spy_.clearColor;
-        glClearColor(r, g, b, a);
-    }
+    void setClearColor(float r, float g, float b, float a) noexcept;
 
-    void clearColor() noexcept { glClear(GL_COLOR_BUFFER_BIT); }
-    void clearDepth() noexcept { glClear(GL_DEPTH_BUFFER_BIT); }
+    void clearColor() noexcept;
+    void clearDepth() noexcept;
 
-    void enableDepthTest() noexcept {
-        if (cache_.hasDepthTest && cache_.depthEnabled) return;
-        cache_.hasDepthTest = true;
-        cache_.depthEnabled = true;
-        ++spy_.enableDepthTest;
-        glEnable(GL_DEPTH_TEST);
-    }
-    void disableDepthTest() noexcept {
-        if (cache_.hasDepthTest && !cache_.depthEnabled) return;
-        cache_.hasDepthTest = true;
-        cache_.depthEnabled = false;
-        ++spy_.disableDepthTest;
-        glDisable(GL_DEPTH_TEST);
-    }
+    void enableDepthTest() noexcept;
+    void disableDepthTest() noexcept;
 
-    void enableBlend() noexcept {
-        if (cache_.hasBlend && cache_.blendEnabled) return;
-        cache_.hasBlend = true;
-        cache_.blendEnabled = true;
-        ++spy_.enableBlend;
-        glEnable(GL_BLEND);
-    }
-    void disableBlend() noexcept {
-        if (cache_.hasBlend && !cache_.blendEnabled) return;
-        cache_.hasBlend = true;
-        cache_.blendEnabled = false;
-        ++spy_.disableBlend;
-        glDisable(GL_BLEND);
-    }
+    void enableBlend() noexcept;
+    void disableBlend() noexcept;
 
-    void enablePremultipliedOverBlend() noexcept {
-        const bool needEnable = !(cache_.hasBlend && cache_.blendEnabled);
-        const bool needFunc = !(cache_.hasBlendFunc &&
-                                cache_.blendSrc == GL_ONE &&
-                                cache_.blendDst == GL_ONE_MINUS_SRC_ALPHA);
-        if (!needEnable && !needFunc) return;
-        if (needEnable) {
-            cache_.hasBlend = true;
-            cache_.blendEnabled = true;
-            ++spy_.enableBlend;
-            glEnable(GL_BLEND);
-        }
-        if (needFunc) {
-            cache_.hasBlendFunc = true;
-            cache_.blendSrc = GL_ONE;
-            cache_.blendDst = GL_ONE_MINUS_SRC_ALPHA;
-            ++spy_.blendFunc;
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        }
-    }
+    void enablePremultipliedOverBlend() noexcept;
 
     /// Begin one draw pass — THE pass prologue (exactly ONE definition).
     /// Binds framebuffer, sets viewport, installs clear color and clears,
     /// then sets depth/blend state. Delegates to this instance's cached wrappers.
+    /// Out-of-line in re_context.cpp (GL-call-free header).
     void beginPass(Framebuffer* /*borrow*/ framebuffer, std::uint32_t width,
                    std::uint32_t height, float clearR, float clearG,
-                   float clearB, float clearA, bool depthTest = false) noexcept {
-        if (framebuffer == nullptr) {
-            bindDefaultFramebuffer();
-        } else {
-            framebuffer->bind();
-        }
-        setViewport(0, 0, static_cast<int>(width), static_cast<int>(height));
-        setClearColor(clearR, clearG, clearB, clearA);
-        clearColor();
-        if (depthTest) {
-            enableDepthTest();
-            clearDepth();
-        } else {
-            disableDepthTest();
-        }
-        disableBlend();
-    }
+                   float clearB, float clearA, bool depthTest = false) noexcept;
 
     SpyCounts getSpyCounts() const noexcept { return spy_; }
     void resetSpyCounts() noexcept { spy_ = SpyCounts{}; }

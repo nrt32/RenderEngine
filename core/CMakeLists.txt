@@ -26,11 +26,19 @@ target_include_directories(re_core PUBLIC
 
 target_link_libraries(re_core PUBLIC
     re_data
-    glfw
-    glad_gl_core_46
     spdlog::spdlog
     glm::glm
     re_project_warnings
+)
+
+# GL loader + windowing are private to core/ — no downstream header needs
+# <glad/gl.h> or <GLFW/glfw3.h> after the T5 firewall (re_context.hpp is
+# GL-call-free). Core's .cpp files still need them privately, and downstream
+# that directly includes GLFW/glad (utils/offscreen_context.cpp,
+# tests that probe GLFW) links them explicitly in their own CMakeLists.
+target_link_libraries(re_core PRIVATE
+    glfw
+    glad_gl_core_46
 )
 
 # EGL is used by the surfaceless fallback in utils/offscreen_context.cpp (the

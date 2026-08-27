@@ -46,6 +46,7 @@ add_executable(${RE_TEST_TARGET}
     t23_resize_test.cpp
     t1_hierarchy_gate_test.cpp
     t2_re_context_test.cpp
+    t5_header_firewall_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

@@ -52,6 +52,122 @@ thread_local REContext t_fallback;
 } // namespace
 
 // ---------------------------------------------------------------------------
+// REContext instance methods — out-of-line GL bodies (header GL-call-free)
+// ---------------------------------------------------------------------------
+
+void REContext::setViewport(int x, int y, int width, int height) noexcept {
+    if (cache_.hasViewport && cache_.vpX == x && cache_.vpY == y &&
+        cache_.vpW == width && cache_.vpH == height) {
+        return;
+    }
+    cache_.hasViewport = true;
+    cache_.vpX = x;
+    cache_.vpY = y;
+    cache_.vpW = width;
+    cache_.vpH = height;
+    ++spy_.viewport;
+    glViewport(x, y, width, height);
+}
+
+bool REContext::viewportRect(int& x, int& y, int& width, int& height) const noexcept {
+    if (!cache_.hasViewport) return false;
+    x = cache_.vpX;
+    y = cache_.vpY;
+    width = cache_.vpW;
+    height = cache_.vpH;
+    return true;
+}
+
+void REContext::setClearColor(float r, float g, float b, float a) noexcept {
+    if (cache_.hasClearColor && cache_.ccR == r && cache_.ccG == g &&
+        cache_.ccB == b && cache_.ccA == a) {
+        return;
+    }
+    cache_.hasClearColor = true;
+    cache_.ccR = r;
+    cache_.ccG = g;
+    cache_.ccB = b;
+    cache_.ccA = a;
+    ++spy_.clearColor;
+    glClearColor(r, g, b, a);
+}
+
+void REContext::clearColor() noexcept { glClear(GL_COLOR_BUFFER_BIT); }
+void REContext::clearDepth() noexcept { glClear(GL_DEPTH_BUFFER_BIT); }
+
+void REContext::enableDepthTest() noexcept {
+    if (cache_.hasDepthTest && cache_.depthEnabled) return;
+    cache_.hasDepthTest = true;
+    cache_.depthEnabled = true;
+    ++spy_.enableDepthTest;
+    glEnable(GL_DEPTH_TEST);
+}
+void REContext::disableDepthTest() noexcept {
+    if (cache_.hasDepthTest && !cache_.depthEnabled) return;
+    cache_.hasDepthTest = true;
+    cache_.depthEnabled = false;
+    ++spy_.disableDepthTest;
+    glDisable(GL_DEPTH_TEST);
+}
+
+void REContext::enableBlend() noexcept {
+    if (cache_.hasBlend && cache_.blendEnabled) return;
+    cache_.hasBlend = true;
+    cache_.blendEnabled = true;
+    ++spy_.enableBlend;
+    glEnable(GL_BLEND);
+}
+void REContext::disableBlend() noexcept {
+    if (cache_.hasBlend && !cache_.blendEnabled) return;
+    cache_.hasBlend = true;
+    cache_.blendEnabled = false;
+    ++spy_.disableBlend;
+    glDisable(GL_BLEND);
+}
+
+void REContext::enablePremultipliedOverBlend() noexcept {
+    const bool needEnable = !(cache_.hasBlend && cache_.blendEnabled);
+    const bool needFunc = !(cache_.hasBlendFunc &&
+                            cache_.blendSrc == GL_ONE &&
+                            cache_.blendDst == GL_ONE_MINUS_SRC_ALPHA);
+    if (!needEnable && !needFunc) return;
+    if (needEnable) {
+        cache_.hasBlend = true;
+        cache_.blendEnabled = true;
+        ++spy_.enableBlend;
+        glEnable(GL_BLEND);
+    }
+    if (needFunc) {
+        cache_.hasBlendFunc = true;
+        cache_.blendSrc = GL_ONE;
+        cache_.blendDst = GL_ONE_MINUS_SRC_ALPHA;
+        ++spy_.blendFunc;
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    }
+}
+
+void REContext::beginPass(Framebuffer* /*borrow*/ framebuffer, std::uint32_t width,
+                          std::uint32_t height, float clearR, float clearG,
+                          float clearB, float clearA, bool depthTest) noexcept {
+    if (framebuffer == nullptr) {
+        // Direct GL call for default FBO (no cache — always bind 0).
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    } else {
+        framebuffer->bind();
+    }
+    setViewport(0, 0, static_cast<int>(width), static_cast<int>(height));
+    setClearColor(clearR, clearG, clearB, clearA);
+    clearColor();
+    if (depthTest) {
+        enableDepthTest();
+        clearDepth();
+    } else {
+        disableDepthTest();
+    }
+    disableBlend();
+}
+
+// ---------------------------------------------------------------------------
 // Global per-context API
 // ---------------------------------------------------------------------------
 
