@@ -27,12 +27,16 @@
 
 #include <glad/gl.h>
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
+
+#include "core/gl_error.hpp"
 
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -67,6 +71,8 @@ void REContext::setViewport(int x, int y, int width, int height) noexcept {
     cache_.vpH = height;
     ++spy_.viewport;
     glViewport(x, y, width, height);
+    // VG11: debug hook — optional assert that no GL error is pending.
+    assert(!hasPendingGlError() && "REContext::setViewport left pending GL error");
 }
 
 bool REContext::viewportRect(int& x, int& y, int& width, int& height) const noexcept {
@@ -90,10 +96,17 @@ void REContext::setClearColor(float r, float g, float b, float a) noexcept {
     cache_.ccA = a;
     ++spy_.clearColor;
     glClearColor(r, g, b, a);
+    assert(!hasPendingGlError() && "REContext::setClearColor left pending GL error");
 }
 
-void REContext::clearColor() noexcept { glClear(GL_COLOR_BUFFER_BIT); }
-void REContext::clearDepth() noexcept { glClear(GL_DEPTH_BUFFER_BIT); }
+void REContext::clearColor() noexcept {
+    glClear(GL_COLOR_BUFFER_BIT);
+    assert(!hasPendingGlError() && "REContext::clearColor left pending GL error");
+}
+void REContext::clearDepth() noexcept {
+    glClear(GL_DEPTH_BUFFER_BIT);
+    assert(!hasPendingGlError() && "REContext::clearDepth left pending GL error");
+}
 
 void REContext::enableDepthTest() noexcept {
     if (cache_.hasDepthTest && cache_.depthEnabled) return;
@@ -101,6 +114,7 @@ void REContext::enableDepthTest() noexcept {
     cache_.depthEnabled = true;
     ++spy_.enableDepthTest;
     glEnable(GL_DEPTH_TEST);
+    assert(!hasPendingGlError() && "REContext::enableDepthTest left pending GL error");
 }
 void REContext::disableDepthTest() noexcept {
     if (cache_.hasDepthTest && !cache_.depthEnabled) return;
@@ -108,6 +122,7 @@ void REContext::disableDepthTest() noexcept {
     cache_.depthEnabled = false;
     ++spy_.disableDepthTest;
     glDisable(GL_DEPTH_TEST);
+    assert(!hasPendingGlError() && "REContext::disableDepthTest left pending GL error");
 }
 
 void REContext::enableBlend() noexcept {
@@ -116,6 +131,7 @@ void REContext::enableBlend() noexcept {
     cache_.blendEnabled = true;
     ++spy_.enableBlend;
     glEnable(GL_BLEND);
+    assert(!hasPendingGlError() && "REContext::enableBlend left pending GL error");
 }
 void REContext::disableBlend() noexcept {
     if (cache_.hasBlend && !cache_.blendEnabled) return;
@@ -123,6 +139,7 @@ void REContext::disableBlend() noexcept {
     cache_.blendEnabled = false;
     ++spy_.disableBlend;
     glDisable(GL_BLEND);
+    assert(!hasPendingGlError() && "REContext::disableBlend left pending GL error");
 }
 
 void REContext::enablePremultipliedOverBlend() noexcept {
@@ -312,6 +329,7 @@ data::Result<void> blit(const Framebuffer& source, int srcX, int srcY,
 }
 
 // REContext::readRgba8 — test_utils façade via REContext (raw glReadPixels stays here, core/ only).
+// VG4: overflow check + PACK_ALIGNMENT save/restore.
 data::Result<void> REContext::readRgba8(std::uint32_t x, std::uint32_t y,
                                         std::uint32_t width, std::uint32_t height,
                                         std::vector<std::uint8_t>& out) const {
@@ -319,12 +337,28 @@ data::Result<void> REContext::readRgba8(std::uint32_t x, std::uint32_t y,
         return data::makeError<void>(1, "readRgba8: no GL context (glReadPixels not loaded)");
     }
     const std::size_t bytesPerPixel = 4u;
-    const std::size_t total = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * bytesPerPixel;
+    // Overflow-safe total = width * height * 4 using 64-bit intermediate.
+    const std::uint64_t total64 =
+        static_cast<std::uint64_t>(width) * static_cast<std::uint64_t>(height) * bytesPerPixel;
+    if (total64 > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        return data::makeError<void>(2, "readRgba8: requested size overflows size_t");
+    }
+    const std::size_t total = static_cast<std::size_t>(total64);
+    // Additional check: if width or height !=0, total / (width*4) should equal height.
+    if (width != 0u && height != 0u) {
+        if (total / bytesPerPixel / width != static_cast<std::size_t>(height)) {
+            return data::makeError<void>(2, "readRgba8: requested size overflows size_t");
+        }
+    }
     out.resize(total);
+    // VG4: save/restore PACK_ALIGNMENT (caller may rely on default 4).
+    GLint oldAlign = 4;
+    glGetIntegerv(GL_PACK_ALIGNMENT, &oldAlign);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(static_cast<GLint>(x), static_cast<GLint>(y),
                  static_cast<GLsizei>(width), static_cast<GLsizei>(height),
                  GL_RGBA, GL_UNSIGNED_BYTE, out.data());
+    glPixelStorei(GL_PACK_ALIGNMENT, oldAlign);
     return data::Result<void>(data::value);
 }
 

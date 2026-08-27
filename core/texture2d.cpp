@@ -4,6 +4,7 @@
 
 #include <glad/gl.h>
 
+#include <cassert>
 #include <cstdint>
 
 namespace re::core {
@@ -40,11 +41,13 @@ Texture2D::~Texture2D() {
 }
 
 void Texture2D::bind(std::uint32_t unit) const noexcept {
+    assert(unit < 16u && "Texture2D::bind unit out of range 0..15");
     glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(unit));
     glBindTexture(GL_TEXTURE_2D, id_);
 }
 
 void Texture2D::unbind(std::uint32_t unit) const noexcept {
+    assert(unit < 16u && "Texture2D::unbind unit out of range 0..15");
     glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(unit));
     glBindTexture(GL_TEXTURE_2D, 0u);
 }

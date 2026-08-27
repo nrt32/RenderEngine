@@ -24,15 +24,13 @@
 #include <span>
 #include <vector>
 
+#include "data/aabb.hpp"
 #include "volume/color.hpp"
 
 namespace re::volume {
 
-/// An axis-aligned box in world space (`min <= max` component-wise).
-struct Aabb {
-    glm::vec3 min{0.0f}; ///< Minimum corner (component-wise).
-    glm::vec3 max{1.0f}; ///< Maximum corner (component-wise).
-};
+// VG8: single canonical Aabb — alias to data::Aabb (one definition, one default).
+using Aabb = data::Aabb;
 
 /// A ray: an origin and a direction. The direction may be any non-zero
 /// vector — the slab math is parametric, so scaling `direction` scales the t

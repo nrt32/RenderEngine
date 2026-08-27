@@ -168,12 +168,14 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
         }
         const data::Result<void> opaque = drawOpaque(scene, camera, target);
         if (opaque.failed()) {
-            transparency_->end(camera, target, ctx);
+            auto endCleanup = transparency_->end(camera, target, ctx);
+            (void)endCleanup;
             return opaque;
         }
         const data::Result<void> transparent = drawTransparent(scene, camera);
         if (transparent.failed()) {
-            transparency_->end(camera, target, ctx);
+            auto endCleanup = transparency_->end(camera, target, ctx);
+            (void)endCleanup;
             return transparent;
         }
         return transparency_->end(camera, target, ctx);

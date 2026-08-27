@@ -13,16 +13,14 @@
 
 #include <memory>
 
+#include "data/aabb.hpp"
 #include "render/asset_registry.hpp"
 #include "render/imaterial.hpp"
 
 namespace re::render::re_scene {
 
-/// Axis-aligned bounding box in world space (derived from model * local bounds).
-struct Aabb {
-    glm::vec3 min{0.0f};
-    glm::vec3 max{0.0f};
-};
+// VG8: single canonical Aabb — alias to data::Aabb (one definition, one default).
+using Aabb = data::Aabb;
 
 /// RE-minimal mesh object (reference, T9 V3.8).
 ///

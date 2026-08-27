@@ -22,20 +22,13 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 
+#include "data/aabb.hpp"
 #include "scene/plane_desc.hpp"
 
 namespace re::scene {
 
-/// Axis-aligned bounds for VolumeContext meshBounds (world-space AABB).
-struct Aabb {
-    glm::vec3 min{0.0f};
-    glm::vec3 max{0.0f};
-
-    bool operator==(const Aabb& o) const noexcept {
-        return min == o.min && max == o.max;
-    }
-    bool operator!=(const Aabb& o) const noexcept { return !(*this == o); }
-};
+// VG8: single canonical Aabb — alias to data::Aabb (one definition, one default).
+using Aabb = data::Aabb;
 
 /// View-scoped context — needed by every mapper (ISP role interface).
 struct ViewContext {

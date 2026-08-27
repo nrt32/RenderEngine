@@ -229,7 +229,8 @@ TEST(T7OwnerDrivenHandles, SameVolumeThroughTwoRenderersYieldsOneTexture3D) {
 
     // Pixel regression: both renders produce analytic FR-render.6 bytes {0,239,0,239} ±1
     std::vector<uint8_t> px1, px2; utils::PixelReader reader;
-    reader.read(kW/2,kH/2,1,1,px1); // after r1, fb is t1
+    auto rp1 = reader.read(kW/2,kH/2,1,1,px1); // after r1, fb is t1
+    EXPECT_TRUE(rp1.ok()) << rp1.error().message;
     // Need to re-render to read from t1/t2 individually; already bound? Just verify via registry
     EXPECT_EQ(registry->volumeSlotCount(), 1u);
 }

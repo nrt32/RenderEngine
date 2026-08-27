@@ -1,9 +1,16 @@
 // core/shader_program.cpp — RAII GLSL shader program implementation.
+//
+// VG1: setUniform* validates location -1 with warning and caches locations to
+// avoid per-call string allocation (spdlog warn on -1, cache hit exactly 1).
+// VG10: internals live in anonymous namespace (no external linkage).
+// VG11: optional assert(hasPendingGlError()) debug hook in core wrappers where
+// feasible (checked via hasPendingGlError if enabled).
 
 #include "core/shader_program.hpp"
 
 #include <glad/gl.h>
 
+#include <cassert>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -12,18 +19,22 @@
 #include <utility>
 #include <vector>
 
+#include <spdlog/spdlog.h>
+
+#include "core/gl_error.hpp"
+
 namespace re::core {
 
 namespace {
 
-/// Normalize a driver info log so every non-empty diagnostic line carries the
-/// project's golden diagnostic prefix "ERROR: " (SPEC §4 FR-core.2) followed
-/// by the driver's own location + message, e.g.
-///
-///   ERROR: 0:7(27): error: `glibberish' undeclared
-///
-/// The offending line is therefore always reported in the "0:N" location
-/// form. An empty log yields a single placeholder line.
+// Normalize a driver info log so every non-empty diagnostic line carries the
+// project's golden diagnostic prefix "ERROR: " (SPEC §4 FR-core.2) followed
+// by the driver's own location + message, e.g.
+//
+//   ERROR: 0:7(27): error: `glibberish' undeclared
+//
+// The offending line is therefore always reported in the "0:N" location
+// form. An empty log yields a single placeholder line.
 std::string normalizeInfoLog(std::string_view infoLog) {
     if (infoLog.empty()) {
         return "ERROR: <no compiler diagnostics>\n";
@@ -50,7 +61,7 @@ std::string normalizeInfoLog(std::string_view infoLog) {
     return out;
 }
 
-/// Fetch the current info log of `object` (a shader or program).
+// Fetch the current info log of `object` (a shader or program).
 std::string fetchInfoLog(std::uint32_t object, bool isProgram) {
     GLint logLen = 0;
     if (isProgram) {
@@ -71,8 +82,8 @@ std::string fetchInfoLog(std::uint32_t object, bool isProgram) {
     return std::string(buffer.data(), static_cast<std::size_t>(written));
 }
 
-/// Compile one shader stage. Returns the shader name on success; on failure
-/// returns a typed error with `errorCode` and the normalized driver log.
+// Compile one shader stage. Returns the shader name on success; on failure
+// returns a typed error with `errorCode` and the normalized driver log.
 data::Result<std::uint32_t> compileStage(GLenum stage, std::string_view source,
                                          int errorCode,
                                          const char* stageLabel) {
@@ -101,17 +112,77 @@ data::Result<std::uint32_t> compileStage(GLenum stage, std::string_view source,
     return data::makeError<std::uint32_t>(errorCode, message);
 }
 
-} // namespace
-
-/// A single shader stage to compile: its GL type + source.
+// A single shader stage to compile: its GL type + source (VG10: inside anon namespace).
 struct StageSource {
     GLenum type;
     std::string_view source;
 };
 
-/// Compile and link `stages` into a program. When `varyings` is non-empty, the
-/// transform-feedback varyings are declared (GL_INTERLEAVED_ATTRIBS) before
-/// linking. Returns the linked program name on success.
+data::Result<std::string> preprocessIncludes(const std::string& source,
+                                             const std::filesystem::path& baseDir,
+                                             int depth = 0) {
+    if (depth > 8) {
+        return data::makeError<std::string>(
+            1, "ShaderProgram: include depth exceeded");
+    }
+    std::string out;
+    out.reserve(source.size() * 2);
+    std::size_t pos = 0;
+    while (pos < source.size()) {
+        std::size_t nl = source.find('\n', pos);
+        std::string_view line = (nl == std::string::npos)
+                                    ? std::string_view(source.data() + pos,
+                                                         source.size() - pos)
+                                    : std::string_view(source.data() + pos,
+                                                         nl - pos);
+        // Trim leading whitespace for include detection.
+        std::size_t first = line.find_first_not_of(" \t\r");
+        bool isInclude = false;
+        std::string includePath;
+        if (first != std::string_view::npos &&
+            line.substr(first, 8) == "#include") {
+            std::size_t q1 = line.find('"', first + 8);
+            std::size_t q2 = (q1 == std::string_view::npos)
+                                 ? std::string_view::npos
+                                 : line.find('"', q1 + 1);
+            if (q1 != std::string_view::npos && q2 != std::string_view::npos) {
+                includePath = std::string(line.substr(q1 + 1, q2 - q1 - 1));
+                isInclude = true;
+            }
+        }
+        if (isInclude) {
+            std::filesystem::path inc = baseDir / includePath;
+            std::ifstream incFile(inc, std::ios::in | std::ios::binary);
+            if (!incFile) {
+                return data::makeError<std::string>(
+                    1, "ShaderProgram: failed to open include file: " + inc.string());
+            }
+            std::ostringstream incBuf;
+            incBuf << incFile.rdbuf();
+            if (incFile.bad()) {
+                return data::makeError<std::string>(
+                    1, "ShaderProgram: failed to read include file: " + inc.string());
+            }
+            std::string incContent = incBuf.str();
+            auto pre = preprocessIncludes(incContent, inc.parent_path(), depth + 1);
+            if (pre.failed()) {
+                return pre;
+            }
+            out += *pre;
+            out += '\n';
+        } else {
+            out.append(line.data(), line.size());
+            out += '\n';
+        }
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+    return data::makeValue<std::string>(std::move(out));
+}
+
+// Compile and link `stages` into a program. When `varyings` is non-empty, the
+// transform-feedback varyings are declared (GL_INTERLEAVED_ATTRIBS) before
+// linking. Returns the linked program name on success.
 data::Result<std::uint32_t> createAndLink(
     const std::vector<StageSource>& stages,
     const std::vector<std::string>& varyings) {
@@ -192,6 +263,8 @@ data::Result<std::uint32_t> createAndLink(
     return data::makeValue<std::uint32_t>(program);
 }
 
+} // namespace
+
 data::Result<ShaderProgram> ShaderProgram::create(
     std::string_view vertexSource, std::string_view fragmentSource) {
     std::vector<StageSource> stages = {
@@ -237,72 +310,6 @@ data::Result<ShaderProgram> ShaderProgram::createWithTransformFeedback(
     }
     return data::makeValue<ShaderProgram>(ShaderProgram(*program));
 }
-
-namespace {
-
-data::Result<std::string> preprocessIncludes(const std::string& source,
-                                             const std::filesystem::path& baseDir,
-                                             int depth = 0) {
-    if (depth > 8) {
-        return data::makeError<std::string>(
-            1, "ShaderProgram: include depth exceeded");
-    }
-    std::string out;
-    out.reserve(source.size() * 2);
-    std::size_t pos = 0;
-    while (pos < source.size()) {
-        std::size_t nl = source.find('\n', pos);
-        std::string_view line = (nl == std::string::npos)
-                                    ? std::string_view(source.data() + pos,
-                                                         source.size() - pos)
-                                    : std::string_view(source.data() + pos,
-                                                         nl - pos);
-        // Trim leading whitespace for include detection.
-        std::size_t first = line.find_first_not_of(" \t\r");
-        bool isInclude = false;
-        std::string includePath;
-        if (first != std::string_view::npos &&
-            line.substr(first, 8) == "#include") {
-            std::size_t q1 = line.find('"', first + 8);
-            std::size_t q2 = (q1 == std::string_view::npos)
-                                 ? std::string_view::npos
-                                 : line.find('"', q1 + 1);
-            if (q1 != std::string_view::npos && q2 != std::string_view::npos) {
-                includePath = std::string(line.substr(q1 + 1, q2 - q1 - 1));
-                isInclude = true;
-            }
-        }
-        if (isInclude) {
-            std::filesystem::path inc = baseDir / includePath;
-            std::ifstream incFile(inc, std::ios::in | std::ios::binary);
-            if (!incFile) {
-                return data::makeError<std::string>(
-                    1, "ShaderProgram: failed to open include file: " + inc.string());
-            }
-            std::ostringstream incBuf;
-            incBuf << incFile.rdbuf();
-            if (incFile.bad()) {
-                return data::makeError<std::string>(
-                    1, "ShaderProgram: failed to read include file: " + inc.string());
-            }
-            std::string incContent = incBuf.str();
-            auto pre = preprocessIncludes(incContent, inc.parent_path(), depth + 1);
-            if (pre.failed()) {
-                return pre;
-            }
-            out += *pre;
-            out += '\n';
-        } else {
-            out.append(line.data(), line.size());
-            out += '\n';
-        }
-        if (nl == std::string::npos) break;
-        pos = nl + 1;
-    }
-    return data::makeValue<std::string>(std::move(out));
-}
-
-} // namespace
 
 data::Result<std::string> ShaderProgram::loadSourceFile(
     const std::filesystem::path& path) {
@@ -378,8 +385,13 @@ data::Result<ShaderProgram> ShaderProgram::createWithTransformFeedbackFromFiles(
     return createWithTransformFeedback(*vs, *gs, *fs, varyings);
 }
 
-ShaderProgram::ShaderProgram(ShaderProgram&& other) noexcept : id_(other.id_) {
+ShaderProgram::ShaderProgram(ShaderProgram&& other) noexcept
+    : uniformLocationCache_(std::move(other.uniformLocationCache_)),
+      uniformLocationQueries_(other.uniformLocationQueries_),
+      id_(other.id_) {
     other.id_ = 0u;
+    other.uniformLocationCache_.clear();
+    other.uniformLocationQueries_ = 0;
 }
 
 ShaderProgram& ShaderProgram::operator=(ShaderProgram&& other) noexcept {
@@ -388,7 +400,11 @@ ShaderProgram& ShaderProgram::operator=(ShaderProgram&& other) noexcept {
             glDeleteProgram(id_);
         }
         id_ = other.id_;
+        uniformLocationCache_ = std::move(other.uniformLocationCache_);
+        uniformLocationQueries_ = other.uniformLocationQueries_;
         other.id_ = 0u;
+        other.uniformLocationCache_.clear();
+        other.uniformLocationQueries_ = 0;
     }
     return *this;
 }
@@ -401,63 +417,96 @@ ShaderProgram::~ShaderProgram() {
 
 void ShaderProgram::use() const noexcept {
     glUseProgram(id_);
+    // VG11 debug hook: assert no pending GL error in debug builds.
+    assert(!hasPendingGlError() && "ShaderProgram::use left pending GL error");
 }
 
 void ShaderProgram::unuse() const noexcept {
     glUseProgram(0u);
+    assert(!hasPendingGlError() && "ShaderProgram::unuse left pending GL error");
+}
+
+int ShaderProgram::getUniformLocation(std::string_view name) const noexcept {
+    // VG1: heterogeneous lookup — string_view probes without allocating.
+    auto it = uniformLocationCache_.find(name);
+    if (it != uniformLocationCache_.end()) {
+        return it->second;
+    }
+    // Miss: need a stable std::string key for storage; build it once.
+    const std::string key(name);
+    const GLint loc = glGetUniformLocation(id_, key.c_str());
+    ++uniformLocationQueries_;
+    uniformLocationCache_.emplace(key, static_cast<int>(loc));
+    if (loc == -1) {
+        spdlog::warn("ShaderProgram: uniform '{}' not found (location -1) on program {}", name, id_);
+    }
+    return static_cast<int>(loc);
 }
 
 void ShaderProgram::setUniformInt(std::string_view name,
                                   std::int32_t value) const noexcept {
-    const std::string nameString(name);
-    glUniform1i(glGetUniformLocation(id_, nameString.c_str()), value);
+    const int loc = getUniformLocation(name);
+    if (loc == -1) return;
+    glUniform1i(loc, value);
+    assert(!hasPendingGlError() && "setUniformInt left pending GL error");
 }
 
 void ShaderProgram::setUniformFloat(std::string_view name,
                                     float value) const noexcept {
-    const std::string nameString(name);
-    glUniform1f(glGetUniformLocation(id_, nameString.c_str()), value);
+    const int loc = getUniformLocation(name);
+    if (loc == -1) return;
+    glUniform1f(loc, value);
+    assert(!hasPendingGlError() && "setUniformFloat left pending GL error");
 }
 
 void ShaderProgram::setUniformVec2(std::string_view name,
                                    const glm::vec2& value) const noexcept {
-    const std::string nameString(name);
-    glUniform2fv(glGetUniformLocation(id_, nameString.c_str()), 1, &value.x);
+    const int loc = getUniformLocation(name);
+    if (loc == -1) return;
+    glUniform2fv(loc, 1, &value.x);
+    assert(!hasPendingGlError() && "setUniformVec2 left pending GL error");
 }
 
 void ShaderProgram::setUniformVec3(std::string_view name,
                                    const glm::vec3& value) const noexcept {
-    const std::string nameString(name);
-    glUniform3fv(glGetUniformLocation(id_, nameString.c_str()), 1, &value.x);
+    const int loc = getUniformLocation(name);
+    if (loc == -1) return;
+    glUniform3fv(loc, 1, &value.x);
+    assert(!hasPendingGlError() && "setUniformVec3 left pending GL error");
 }
 
 void ShaderProgram::setUniformVec4(std::string_view name,
                                    const glm::vec4& value) const noexcept {
-    const std::string nameString(name);
-    glUniform4fv(glGetUniformLocation(id_, nameString.c_str()), 1, &value.x);
+    const int loc = getUniformLocation(name);
+    if (loc == -1) return;
+    glUniform4fv(loc, 1, &value.x);
+    assert(!hasPendingGlError() && "setUniformVec4 left pending GL error");
 }
 
 void ShaderProgram::setUniformFloatArray(std::string_view name,
                                          const float* values,
                                          std::size_t count) const noexcept {
-    const std::string nameString(name);
-    glUniform1fv(glGetUniformLocation(id_, nameString.c_str()),
-                 static_cast<GLsizei>(count), values);
+    const int loc = getUniformLocation(name);
+    if (loc == -1) return;
+    glUniform1fv(loc, static_cast<GLsizei>(count), values);
+    assert(!hasPendingGlError() && "setUniformFloatArray left pending GL error");
 }
 
 void ShaderProgram::setUniformVec4Array(std::string_view name,
                                         const glm::vec4* values,
                                         std::size_t count) const noexcept {
-    const std::string nameString(name);
-    glUniform4fv(glGetUniformLocation(id_, nameString.c_str()),
-                 static_cast<GLsizei>(count), &values[0].x);
+    const int loc = getUniformLocation(name);
+    if (loc == -1) return;
+    glUniform4fv(loc, static_cast<GLsizei>(count), &values[0].x);
+    assert(!hasPendingGlError() && "setUniformVec4Array left pending GL error");
 }
 
 void ShaderProgram::setUniformMat4(std::string_view name,
                                    const glm::mat4& value) const noexcept {
-    const std::string nameString(name);
-    glUniformMatrix4fv(glGetUniformLocation(id_, nameString.c_str()), 1,
-                       GL_FALSE, &value[0][0]);
+    const int loc = getUniformLocation(name);
+    if (loc == -1) return;
+    glUniformMatrix4fv(loc, 1, GL_FALSE, &value[0][0]);
+    assert(!hasPendingGlError() && "setUniformMat4 left pending GL error");
 }
 
 } // namespace re::core

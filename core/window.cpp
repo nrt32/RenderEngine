@@ -70,6 +70,12 @@ void Window::release() noexcept {
         // per-frame path. Only clear the current GL context and REContext if this
         // window is the one currently bound (otherwise we would unbind a different
         // window's context that was restored before this destructor ran).
+        // VG12 Window teardown dedup: glfwDestroyWindow + glfwTerminate are paired
+        // per Window instance, but the process-global glfwInit/glfwTerminate pair
+        // will be refcounted via core::GlfwRuntime in T15 (OffscreenContext +
+        // Window share one global init). Until T15, Window remains the sole owner
+        // of the visible-window terminate path; OffscreenContext's Glfw backend
+        // does not call glfwTerminate, so no double-terminate occurs.
         const bool isCurrent = glfwGetCurrentContext() == window_;
         REContext::clearWindow(window_);
         if (isCurrent) {

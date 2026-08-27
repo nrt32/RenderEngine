@@ -3,9 +3,11 @@
 
 #include "io/mesh/obj_mesh_loader.hpp"
 
+#include <cerrno>
 #include <cstdlib>
 #include <fstream>
 #include <glm/vec3.hpp>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -34,15 +36,25 @@ std::string stripComment(const std::string& line) {
 
 // Parse the leading integer of a face index token ("i", "i/t", "i//n" or
 // "i/t/n"). Returns false if the token does not start with a positive
-// integer (negative/relative indices are rejected).
+// integer (negative/relative indices are rejected). VG5: strtol ERANGE
+// check + errno reset — giant indices like 99999999999999999999 must be
+// rejected as typed error, not silently wrapped, and errno must be cleared
+// before the call so a prior ERANGE does not pollute later parses.
 bool parseFaceVertexIndex(const std::string& token, std::uint32_t& out) {
     if (token.empty()) {
         return false;
     }
     const char* begin = token.c_str();
     char* end = nullptr;
+    errno = 0;
     const long parsed = std::strtol(begin, &end, 10);
+    if (errno == ERANGE) {
+        return false;
+    }
     if (end == begin || parsed <= 0) {
+        return false;
+    }
+    if (parsed > static_cast<long>(std::numeric_limits<std::uint32_t>::max())) {
         return false;
     }
     out = static_cast<std::uint32_t>(parsed);

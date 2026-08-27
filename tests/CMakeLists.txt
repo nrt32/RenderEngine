@@ -49,6 +49,7 @@ add_executable(${RE_TEST_TARGET}
     t1_hierarchy_gate_test.cpp
     t2_re_context_test.cpp
     t5_header_firewall_test.cpp
+    t12_validation_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
@@ -104,9 +105,11 @@ add_test(NAME ${RE_TEST_TARGET} COMMAND ${RE_TEST_TARGET})
 # single-threaded, deterministic. Same warnings/sanitizer floors as re_tests.
 add_executable(re_tests_death
     t22_debug_assert_death_test.cpp
+    t12_validation_death_test.cpp
 )
 target_link_libraries(re_tests_death
     PRIVATE
+        re_core
         re_data
         re_project_warnings
         re_project_sanitizers

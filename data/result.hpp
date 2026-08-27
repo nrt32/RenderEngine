@@ -87,8 +87,13 @@ struct Error {
 /// `T` may be `void` to signal success/failure with no payload. The value
 /// branch is stored in a `std::optional`, so `T` need not be
 /// default-constructible.
+///
+/// VG7: [[nodiscard]] on type — ignoring a Result discards a typed error.
+/// The Error is embedded (domain+code+message) and retained per T22; monadic
+/// helpers `map`/`andThen` are optional but preserved for chaining fallible
+/// calls without losing the domain tag.
 template <typename T>
-class Result {
+class [[nodiscard]] Result {
    public:
     /// Construct an error result.
     Result(ErrorTag, Error e) : ok_(false), err_(std::move(e)) {}
@@ -189,7 +194,7 @@ class Result {
 
 /// Specialization of Result for void payloads (pure success/error signalling).
 template <>
-class Result<void> {
+class [[nodiscard]] Result<void> {
    public:
     /// Construct an error result.
     Result(ErrorTag, Error e) : ok_(false), err_(std::move(e)) {}

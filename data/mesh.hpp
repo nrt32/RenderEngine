@@ -16,13 +16,9 @@
 #include <glm/vec3.hpp>
 #include <vector>
 
-namespace re::data {
+#include "data/aabb.hpp"
 
-/// Axis-aligned bounding box of a mesh (FR-data.2).
-struct Aabb {
-    glm::vec3 min{0.0f}; ///< Minimum corner (component-wise).
-    glm::vec3 max{0.0f}; ///< Maximum corner (component-wise).
-};
+namespace re::data {
 
 /// CPU triangle mesh: positions + triangle indices + derived face normals and
 /// AABB (SPEC §3 "data/ CPU containers, no GL").

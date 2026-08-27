@@ -4,6 +4,7 @@
 
 #include <glad/gl.h>
 
+#include <cassert>
 #include <cstdint>
 
 namespace re::core {
@@ -48,16 +49,35 @@ void Framebuffer::unbind() const noexcept {
 }
 
 void Framebuffer::attachColor(const Texture2D& texture) const noexcept {
+    // VG3: framebuffer must be bound before attachment (bind-state assert).
+    {
+        GLint bound = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &bound);
+        assert(bound == static_cast<GLint>(id_) &&
+               "Framebuffer::attachColor called without framebuffer bound");
+    }
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                            texture.id(), 0);
 }
 
 void Framebuffer::attachDepth(const Texture2D& texture) const noexcept {
+    {
+        GLint bound = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &bound);
+        assert(bound == static_cast<GLint>(id_) &&
+               "Framebuffer::attachDepth called without framebuffer bound");
+    }
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
                            texture.id(), 0);
 }
 
 bool Framebuffer::isComplete() const noexcept {
+    {
+        GLint bound = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &bound);
+        assert(bound == static_cast<GLint>(id_) &&
+               "Framebuffer::isComplete called without framebuffer bound");
+    }
     return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
 }
 

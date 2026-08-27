@@ -26,6 +26,7 @@
 #include <glm/vec3.hpp>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "data/result.hpp"
@@ -166,8 +167,59 @@ class ShaderProgram {
         return id_ != 0u;
     }
 
+    /// Number of cached uniform locations (VG1 spy: proves cache hit count).
+    std::size_t uniformCacheSize() const noexcept {
+        return uniformLocationCache_.size();
+    }
+
+    /// Number of actual glGetUniformLocation queries issued (VG1 spy: exactly 1
+    /// after two sets of same name, not >0).
+    int uniformLocationQueryCount() const noexcept {
+        return uniformLocationQueries_;
+    }
+
+    /// Reset uniform-location spy counters and cache (for tests).
+    void resetUniformCache() const noexcept {
+        uniformLocationCache_.clear();
+        uniformLocationQueries_ = 0;
+    }
+
    private:
     explicit ShaderProgram(std::uint32_t id) noexcept : id_(id) {}
+
+    // VG1 heterogeneous lookup — no per-call std::string alloc on cache hit.
+    // Transparent hash/equal let us probe the map with string_view directly,
+    // so the second setUniform("uTestInt") hits without constructing a
+    // temporary std::string (the GL query is still exactly 1, not >0).
+    struct UniformHash {
+        using is_transparent = void;
+        std::size_t operator()(std::string_view sv) const noexcept {
+            return std::hash<std::string_view>{}(sv);
+        }
+        std::size_t operator()(const std::string& s) const noexcept {
+            return std::hash<std::string_view>{}(s);
+        }
+    };
+    struct UniformEqual {
+        using is_transparent = void;
+        bool operator()(std::string_view a, std::string_view b) const noexcept {
+            return a == b;
+        }
+        bool operator()(const std::string& a, std::string_view b) const noexcept {
+            return a == b;
+        }
+        bool operator()(std::string_view a, const std::string& b) const noexcept {
+            return a == b;
+        }
+        bool operator()(const std::string& a, const std::string& b) const noexcept {
+            return a == b;
+        }
+    };
+    mutable std::unordered_map<std::string, int, UniformHash, UniformEqual> uniformLocationCache_{};
+    mutable int uniformLocationQueries_{0};
+
+    /// Resolve uniform location with cache (VG1). Returns -1 if not found.
+    int getUniformLocation(std::string_view name) const noexcept;
 
     std::uint32_t id_{0u};
 };
