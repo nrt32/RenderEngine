@@ -12,5 +12,6 @@ enum class FieldId : uint8_t {
     TransferFunction = 7,
     ClearColor = 8,
     DepthTest = 9,
+    Lights = 10,
 };
 }

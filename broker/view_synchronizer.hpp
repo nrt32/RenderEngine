@@ -125,6 +125,7 @@ class ViewSynchronizer : public IDirtyTracker {
          uint64_t projGen{static_cast<uint64_t>(-1)};
          uint64_t clearColorGen{static_cast<uint64_t>(-1)};
          uint64_t depthTestGen{static_cast<uint64_t>(-1)};
+         uint64_t lightsGen{static_cast<uint64_t>(-1)};
      };
      // ReView cache identity is the SHARED broker::StableKey (the same
      // definition the compositor's map keys on) — no local twin key exists

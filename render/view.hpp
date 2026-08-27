@@ -28,6 +28,7 @@
 #include "core/framebuffer.hpp"
 #include "data/result.hpp"
 #include "render/i_renderable.hpp"
+#include "render/light.hpp"
 #include "render/types.hpp"
 #include "render/view_target.hpp"
 
@@ -85,6 +86,12 @@ class View {
     /// pass issues its own explicit core::disableDepthTest().
     bool depthTest() const noexcept { return depthTest_; }
     void setDepthTest(bool enabled) noexcept { depthTest_ = enabled; }
+
+    /// Per-View lights (RE side, uniform-ready). Empty = unlit/2D fallback
+    /// (existing fixed headlight preserved so empty lights keeps FR gates
+    /// byte-identical). Non-empty uploads once before drawLayer loop (T19).
+    const std::vector<ReLight>& lights() const noexcept { return lights_; }
+    void setLights(std::vector<ReLight> ls) noexcept { lights_ = std::move(ls); }
 
     // --- ViewTarget ---------------------------------------------------------
 
@@ -184,6 +191,7 @@ class View {
     std::optional<ClipPlane> clipPlane_{std::nullopt};
     glm::vec4 clearColor_{0, 0, 0, 0};
     bool depthTest_{false};
+    std::vector<ReLight> lights_{};
     std::optional<ViewTarget> target_{std::nullopt};
     std::vector<std::unique_ptr<IRenderable>> items_{};
 };

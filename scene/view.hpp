@@ -11,6 +11,7 @@
 #include <glm/glm.hpp>
 
 #include "scene/camera.hpp"
+#include "scene/light.hpp"
 #include "scene/plane_desc.hpp"
 
 namespace re::scene {
@@ -45,12 +46,19 @@ struct View {
     uint64_t itemsGen{0};
     uint64_t clearColorGen{0};
     uint64_t depthTestGen{0};
+    uint64_t lightsGen{0};
     uint64_t generation{0}; // legacy coarse — equals max of per-field.
     /// Clear color of this screen section (consumed by the render-side pass
     /// prologue; see setClearColor).
     glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 0.0f};
     /// Depth-tested rendering opt-in (see setDepthTest). Default false.
     bool depthTest{false};
+    /// Per-View lights: empty vector = unlit (2D) or fixed headlight fallback
+    /// (Phong-only non-goal: existing mesh shader headlight preserved when
+    /// empty, so empty lights keeps FR-render.* 1/255 gates byte-identical).
+    /// Non-empty vector is translated via LightMapper → ReLight before the
+    /// drawLayer loop (one upload per view, not per item). T19 stretch.
+    std::vector<Light> lights{};
 
     /// Set rect and bump rectGen.
     void setRect(Rect r) noexcept {
@@ -113,6 +121,18 @@ struct View {
         if (depthTest != enabled) {
             depthTest = enabled;
             ++depthTestGen;
+            ++generation;
+        }
+    }
+    /// Set per-View lights and bump lightsGen + generation when changed.
+    /// Part of CompositeKey dirty tracking (SPEC §10): a light tweak dirties
+    /// only LightMapper cache via lightsGen, not whole View (per-field split).
+    /// Empty vector is the unlit/2D default; non-empty uploads ReLight uniforms
+    /// once per view before drawLayer (T19).
+    void setLights(std::vector<Light> ls) noexcept {
+        if (lights != ls) {
+            lights = std::move(ls);
+            ++lightsGen;
             ++generation;
         }
     }

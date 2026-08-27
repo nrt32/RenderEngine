@@ -53,6 +53,7 @@ add_executable(${RE_TEST_TARGET}
     t12_validation_test.cpp
     t13_nrrd_preprobe_test.cpp
     t15_glfw_runtime_test.cpp
+    t19_view_lights_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

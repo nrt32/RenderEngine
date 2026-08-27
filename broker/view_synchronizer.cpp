@@ -19,11 +19,13 @@
 
 #include "broker/camera_mapper.hpp"
 #include "broker/contour_mapper.hpp"
+#include "broker/light_mapper.hpp"
 #include "broker/mesh_object_mapper.hpp"
 #include "broker/mesh_slice_object_mapper.hpp"
 #include "broker/plane_mapper.hpp"
 #include "broker/plane_object_mapper.hpp"
 #include "broker/teapot_object_mapper.hpp"
+#include "broker/view_mapper.hpp"
 #include "broker/volume_object_mapper.hpp"
 #include "broker/volume_slice_object_mapper.hpp"
 #include "broker/view_compositor.hpp"
@@ -87,6 +89,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         curGen ^= std::hash<uint64_t>{}(v.itemsGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.clearColorGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.depthTestGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
+        curGen ^= std::hash<uint64_t>{}(v.lightsGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
     }
     // Include push dirties in generation so poll sees push as change (hybrid)
     for (auto& kv : pushDirties_) {
@@ -157,6 +160,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         // that field and the target recreate is skipped when not needed.
         bool depthDirty = isNew || cache.depthTestGen != av.depthTestGen || hasPushDirty(av.id, scene::FieldId::DepthTest);
         bool clearColorDirty = isNew || cache.clearColorGen != av.clearColorGen || hasPushDirty(av.id, scene::FieldId::ClearColor);
+        bool lightsDirty = isNew || cache.lightsGen != av.lightsGen || hasPushDirty(av.id, scene::FieldId::Lights);
         if (depthDirty) {
             rv->setDepthTest(av.depthTest);
             cache.depthTestGen = av.depthTestGen;
@@ -164,6 +168,27 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         if (clearColorDirty) {
             rv->setClearColor(av.clearColor);
             cache.clearColorGen = av.clearColorGen;
+        }
+        if (lightsDirty) {
+            // Translate app lights -> RE lights via LightMapper (vector<Light>
+            // per View, many per View, per SPEC §12.3; empty = unlit as before).
+            // One upload per view before drawLayer loop (RE derived uniform-ready).
+            // Per-field lightsGen participates in dirty check, not whole-view dump.
+            scene::TranslateContext lctx;
+            lctx.view.viewId = av.id;
+            lctx.view.viewPlane = av.plane;
+            lctx.view.viewMatrix = av.camera.viewMatrix();
+            lctx.view.projMatrix = av.camera.projMatrix();
+            auto* lightMapper = broker_ ? broker_->get<scene::Light, render::ReLight>() : nullptr;
+            // Prefer registered LightMapper; fallback inside ViewMapper keeps
+            // suite green when composition root hasn't registered it yet.
+            data::Result<std::vector<render::ReLight>> lr =
+                ViewMapper::mapLights(av.lights, lightMapper, lctx);
+            if (lr.failed()) {
+                return data::makeError<void>(lr.error().code, lr.error().message);
+            }
+            rv->setLights(std::move(*lr));
+            cache.lightsGen = av.lightsGen;
         }
 
         // Rect (size) — hash includes physical pixels

@@ -10,6 +10,8 @@ add_library(re_broker STATIC
     mesh_slice_object_mapper.cpp
     contour_mapper.cpp
     plane_mapper.cpp
+    light_mapper.cpp
+    view_mapper.cpp
     plane_object_mapper.cpp
     teapot_object_mapper.cpp
     volume_object_mapper.cpp
