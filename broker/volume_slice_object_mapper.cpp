@@ -15,6 +15,10 @@ data::Result<render::VolumeSliceInstance> VolumeSliceObjectMapper::map(
         return data::makeError<render::VolumeSliceInstance>(
             1, "VolumeSliceObjectMapper: null volume dataset reference");
     }
+    if (!registry_) {
+        return data::makeError<render::VolumeSliceInstance>(
+            4, "VolumeSliceObjectMapper: null AssetRegistry");
+    }
     if (!ctx.view.hasPlane()) {
         return data::makeError<render::VolumeSliceInstance>(
             2, "VolumeSliceObjectMapper: the view carries no plane — a "
@@ -46,8 +50,14 @@ data::Result<render::VolumeSliceInstance> VolumeSliceObjectMapper::map(
                    clip.error().message);
     }
 
+    auto h = registry_->registerVolume(app.volume);
+    if (h.failed()) {
+        return data::makeError<render::VolumeSliceInstance>(h.error().code,
+                                                           h.error().message);
+    }
     render::VolumeSliceInstance out;
-    out.dataset = app.volume; // shared ownership — instance co-owns the bytes
+    out.handle = *h;
+    out.dataset = app.volume; // retained for CPU dims, GPU identity is handle
     out.transferFunction = app.transferFunction;
     out.model = app.transform;
     out.plane = *clip;

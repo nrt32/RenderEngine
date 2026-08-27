@@ -350,15 +350,17 @@ TEST(T17RendererConsolidation, RegistryNoLongerCarriesLocalByteHashes) {
     // The mesh/volume/image FNV twins were deleted from asset_registry.cpp;
     // only the RE-side PhongMaterial VALUE hash remains local by design
     // (identity defined on the material value crossing into render/, §12.4).
+    // T7: lookupVolume/lookupImage lazy paths deleted (hashed at register time,
+    // never per frame) — only register paths remain.
     const std::string registry =
         readFile(kRepoRoot / "render" / "asset_registry.cpp");
     ASSERT_FALSE(registry.empty());
     EXPECT_EQ(countOccurrences(registry, "uint64_t meshContentHash"), 0);
     EXPECT_EQ(countOccurrences(registry, "uint64_t volumeContentHash"), 0);
     EXPECT_EQ(countOccurrences(registry, "uint64_t imageContentHash"), 0);
-    EXPECT_EQ(countOccurrences(registry, "data::computeContentHash("), 5)
-        << "mesh register + volume register/lookup + image register/lookup "
-           "resolve their content hashes through the ONE shared definition";
+    EXPECT_EQ(countOccurrences(registry, "data::computeContentHash("), 3)
+        << "mesh register + volume register + image register "
+           "resolve their content hashes through the ONE shared definition (T7 lookup deleted)";
 }
 
 } // namespace re::tests

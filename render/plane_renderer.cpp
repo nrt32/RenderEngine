@@ -130,14 +130,15 @@ data::Result<core::VertexArray*> PlaneRenderer::quadGeometry() {
 }
 
 data::Result<core::Texture2D*> PlaneRenderer::textureFor(
-    const std::shared_ptr<const data::Image>& image) {
-    // The shared asset store dedups by content hash (T14): identical pixel
-    // content — even through a second renderer instance or a distinct
-    // allocation — resolves to ONE store-owned GL texture. The lazy lookup
-    // never changes reference counts; owners manage explicit lifetimes via
-    // registerImage/unregisterImage. Unsupported channel counts surface as a
-    // typed error from the store's upload.
-    return assets_->lookupImage(image);
+    const ImageTextureHandle& handle) {
+    // Owner-driven T7: hashed at register time, O(1) handle resolve, never
+    // per-frame FNV-1a. The lookupImage lazy path is deleted — content-hash
+    // IS identity via the handle's contentHash field.
+    if (handle.isNull()) {
+        return data::makeError<core::Texture2D*>(
+            4, "PlaneRenderer: null image handle (register via AssetRegistry)");
+    }
+    return assets_->resolveImage(handle);
 }
 
 data::Result<void> PlaneRenderer::drawInstances(const PlaneScene& scene,
@@ -150,10 +151,30 @@ data::Result<void> PlaneRenderer::drawInstances(const PlaneScene& scene,
     program->setUniformInt("uTex", 0); // sampler reads texture unit 0
 
     for (const PlaneInstance& instance : scene.planes) {
-        if (!instance.geometry || !instance.image) {
-            continue;
+        if (!instance.geometry) {
+            return data::makeError<void>(
+                1, "PlaneRenderer: plane instance carries null geometry");
         }
-        auto texture = textureFor(instance.image);
+        // T7 owner-driven handles (SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame): volume/image identity is minted via AssetRegistry::registerImage at sync, handing the renderer an ImageTextureHandle; the renderer resolves O(1) via handle's contentHash (content-hash IS identity, no byObject pointer shim, no pinned refs==0 slots). Prefer explicit handle; fallback to legacy image→handle cache for pre-T7 direct tests (hashed once at first use, then O(1) cache hit) to keep old fixtures green while new code registers explicitly.
+        ImageTextureHandle handle = instance.handle;
+        if (handle.isNull()) {
+            if (!instance.image) {
+                return data::makeError<void>(
+                    1, "PlaneRenderer: plane instance carries null handle and null image");
+            }
+            auto it = legacyHandleCache_.find(instance.image.get());
+            if (it != legacyHandleCache_.end()) {
+                handle = it->second;
+            } else {
+                auto reg = assets_->registerImage(instance.image);
+                if (reg.failed()) {
+                    return data::makeError<void>(reg.error().code, reg.error().message);
+                }
+                handle = *reg;
+                legacyHandleCache_[instance.image.get()] = handle;
+            }
+        }
+        auto texture = textureFor(handle);
         if (texture.failed()) {
             return data::makeError<void>(texture.error().code,
                                          texture.error().message);

@@ -140,6 +140,29 @@ fixing hot-reload identity (Q3/Q28/Q35). Stale `AssetId{gen+1}` → typed
 `scene::computeContentHash` via ACL (`broker` may include both `scene/` and
 `render/`).
 
+**T7 owner-driven handles for volumes/images (landed):** broker mappers
+(`VolumeObjectMapper`, `VolumeSliceObjectMapper`, `PlaneObjectMapper`/`PlaneMapper`)
+register volumes/images through `SceneStore`/`broker::AssetStore`/`render::AssetRegistry`
+at sync, handing renderers `VolumeTextureHandle`/`ImageTextureHandle` instead of
+`shared_ptr<const T>`; renderers' `textureFor` becomes O(1) handle resolve
+(`assets_->resolveVolume(handle)` / `resolveImage(handle)`), never per-frame
+FNV-1a (`data/content_hash.hpp:31` hashed at load/register time, never per frame).
+The lazy-hash `lookupVolume`/`lookupImage` insertion paths that recomputed FNV-1a
+over every byte per instance per frame (`render/asset_registry.cpp:404,459` before T7)
+are deleted (keep explicit `registerVolume`→`resolveVolume` / `registerImage`→`resolveImage` only);
+the contract-violating comment about store-pinned `refs==0` lazy slots is removed.
+This also closes R8a/R8b: pinned refs==0 lazy slots can no longer appear and the
+`byObject_` pointer-key shim remains only for the mesh-kind diagnostic dual-key
+(V3.6 shim removed V4) — content-hash IS identity for volumes/images. Direct-renderer
+tests register explicitly in fixtures (or via the shared test helper
+`registerVolume`/`registerImage`); the renderer's fallback `legacyHandleCache_`
+keeps old dataset-only fixtures green by hashing once at first use and then O(1) hits,
+but new code and the T7 gate use explicit handles. Gate asserts (explainable):
+spy counter proves `hashStableBytes`/FNV executes zero times during a steady-state
+60-frame loop after warm-up (volume + plane); registry slot count constant across
+1000 distinct-image frames (no pinned-slot growth); same `VolumeDataset` registered
+through two `VolumeRenderer` instances yields one `Texture3D`; suite green N>=3.
+
 RE-minimal unchanged: `render/re_scene/` never copies `data::Mesh::positions`
 (`asset_indirection`).
 

@@ -323,6 +323,28 @@ SceneStore::resolveMeshAsset(AssetId id) const {
 data::Result<void> SceneStore::unregisterMeshAsset(AssetId id) {
     return meshAssets_.unregister(id);
 }
+data::Result<AssetId> SceneStore::registerVolumeAsset(
+    AssetRegistry<data::VolumeDataset>::SharedAsset vol) {
+    return volumeAssets_.registerAsset(std::move(vol));
+}
+data::Result<AssetRegistry<data::VolumeDataset>::SharedAsset>
+SceneStore::resolveVolumeAsset(AssetId id) const {
+    return volumeAssets_.resolve(id);
+}
+data::Result<void> SceneStore::unregisterVolumeAsset(AssetId id) {
+    return volumeAssets_.unregister(id);
+}
+data::Result<AssetId> SceneStore::registerImageAsset(
+    AssetRegistry<data::Image>::SharedAsset img) {
+    return imageAssets_.registerAsset(std::move(img));
+}
+data::Result<AssetRegistry<data::Image>::SharedAsset>
+SceneStore::resolveImageAsset(AssetId id) const {
+    return imageAssets_.resolve(id);
+}
+data::Result<void> SceneStore::unregisterImageAsset(AssetId id) {
+    return imageAssets_.unregister(id);
+}
 
 // ---------------------------------------------------------------------------
 // ViewStore

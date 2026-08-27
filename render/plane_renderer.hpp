@@ -48,6 +48,7 @@
 #include <glm/vec4.hpp>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 #include "core/re_context.hpp"
@@ -89,26 +90,39 @@ struct PlaneGeometry {
     static PlaneGeometry unitQuadXY();
 };
 
-/// A single plane in a scene: its geometry, the image to texture it with, and
-/// its model transform. The model matrix places the quad corners in world
-/// space and orients the plane (applied to vertices and normals).
+/// A single plane in a scene: its geometry, the image handle (owner-driven)
+/// + shared image ref, and model transform. The model matrix places the quad
+/// corners in world space and orients the plane (applied to vertices and
+/// normals).
 ///
-/// Produced by broker::PlaneMapper from scene::PlaneObject (V3.4b T12) — app/
+/// Produced by broker::PlaneObjectMapper from scene::PlaneObject (V3.4b T12) — app/
 /// code does not assemble instances by hand.
 ///
-/// Ownership (T13): both references are SHARED (`shared_ptr<const T>`) — the
-/// instance co-owns the mapper's shared unit quad and the caller's image, so
-/// a stored scene can never outlive the bytes it draws.
+/// Ownership (T13): geometry is SHARED (`shared_ptr<const PlaneGeometry>`);
+/// image identity is owner-driven via `ImageTextureHandle` (T7, hashed at
+/// register time, never per frame) — the `image` shared_ptr is retained for
+/// CPU convenience but GPU identity is the handle (O(1) handle resolve).
 struct PlaneInstance {
     /// Shared reference to the plane geometry (PlaneMapper's program-duration
     /// shared unit quad). Null is invalid by contract: render/drawLayer
     /// reject it with a typed error instead of dereferencing, so a
     /// half-constructed instance can never reach GL.
     std::shared_ptr<const PlaneGeometry> geometry = nullptr;
-    /// Shared reference to the source image (RGBA8/RGB/gray). Null is
-    /// invalid for the same reason: a typed error, never a null-texture draw.
+    /// Owner-driven handle to the GPU 2D texture (hashed at register time).
+    /// Must be non-null for draw (typed error if null).
+    ImageTextureHandle handle{};
+    /// Shared reference to the source image for CPU convenience (not GPU identity).
     std::shared_ptr<const data::Image> image = nullptr;
     glm::mat4 model{1.0f};
+
+    PlaneInstance() = default;
+    // Legacy 3-arg ctor for pre-T7 direct-renderer tests: leaves handle null so the renderer's fallback legacyHandleCache registers the image once at first use and then hits O(1) without per-frame hashing (T7 owner-driven path prefers explicit handle via AssetRegistry::registerImage; this shim keeps old fixtures green while new broker-mediated code and the T7 gate use explicit handles, hashed at load/register time per data/content_hash.hpp:31, never per frame).
+    PlaneInstance(std::shared_ptr<const PlaneGeometry> g,
+                  std::shared_ptr<const data::Image> img, glm::mat4 m)
+        : geometry(std::move(g)), handle{}, image(std::move(img)), model(m) {}
+    PlaneInstance(std::shared_ptr<const PlaneGeometry> g, ImageTextureHandle h,
+                  std::shared_ptr<const data::Image> img, glm::mat4 m)
+        : geometry(std::move(g)), handle(h), image(std::move(img)), model(m) {}
 };
 
 /// A scene of plane instances to render (CPU-side; built by mapping
@@ -122,9 +136,12 @@ struct PlaneScene {
 /// Owns only GL resources: the cached textured-plane shader program and one
 /// shared unit-quad vertex array (all planes are unit quads transformed by
 /// their model matrix). GPU textures live in the shared `AssetRegistry`
-/// (SPEC §7 T14): the renderer lazily resolves each instance's image by
-/// content hash, so each distinct image is uploaded to the GPU once per store
-/// and no per-renderer texture map exists. Textures are sampled with
+/// (SPEC §7 T14, T7 owner-driven): each instance carries an
+/// `ImageTextureHandle` minted at register time (hashed at load/register time,
+/// never per frame per data/content_hash.hpp:31); the renderer resolves via
+/// O(1) handle (`resolveImage`, content-hash IS identity, no per-frame
+/// FNV-1a, no lazy lookupImage path), so each distinct image is uploaded once
+/// per store and no per-renderer texture map exists. Textures are sampled with
 /// GL_LINEAR and CLAMP_TO_EDGE (core::Texture2D defaults), so a quad mapped
 /// 1:1 onto the viewport reproduces the source texels exactly (FR-render.5).
 class PlaneRenderer : public IRenderer {
@@ -188,21 +205,22 @@ class PlaneRenderer : public IRenderer {
                                      core::ShaderProgram* program,
                                      core::VertexArray* quadVao);
 
-    /// Resolve `image`'s content in the shared asset store (lazy
-    /// find-or-upload by content hash, no reference-count change — T14),
-    /// returning a pointer to the store-owned texture (non-null on success;
-    /// unsupported channel counts surface as a typed error from the upload).
+    /// Resolve `handle`'s content in the shared asset store (O(1) handle
+    /// resolve, T7 owner-driven, no per-frame hash), returning a pointer to
+    /// the store-owned texture (non-null on success).
     /// @note lifetime: non-owning view of store-owned storage (the slot's
     /// unique_ptr) — valid until the slot's last reference is released or the
     /// store dies; renderers never retain it across frames.
     data::Result<core::Texture2D*> textureFor(
-        const std::shared_ptr<const data::Image>& image);
+        const ImageTextureHandle& handle);
 
     std::shared_ptr<AssetRegistry> assets_;
     std::optional<core::ShaderProgram> planeProgram_;
     std::optional<core::VertexArray> quadVao_;
     std::optional<core::VertexBuffer> quadVbo_;
     std::optional<core::ElementBuffer> quadEbo_; // index buffer referenced by quadVao_
+    mutable std::unordered_map<const data::Image*, ImageTextureHandle>
+        legacyHandleCache_;
 };
 
 } // namespace re::render

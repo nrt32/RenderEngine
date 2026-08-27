@@ -36,15 +36,14 @@
 //
 // Renderer integration: all four technique renderers hold a shared_ptr to one
 // registry (mesh/slice/contour via constructor injection since V2 T5; volume/
-// plane likewise since T14). The volume/plane renderers additionally use the
-// lazy lookup path (`lookupVolume`/`lookupImage`), which finds-or-uploads by
-// content hash WITHOUT changing any reference count — a scene can be rendered
-// statelessly while owners manage explicit lifetimes through
-// register/unregister. Lazily-created entries are pinned by the store until an
-// owner claims (re-registers) and releases them, or until the store itself is
-// destroyed. The process-wide default instance behind the renderer defaults is
-// created by `shared()` and must be torn down with `resetShared()` while a GL
-// context is still current (the test fixture does this in TearDown).
+// plane likewise since T14) and resolve exclusively through owner-driven
+// handles (T7): volumes/images are registered at load/sync time via
+// registerVolume/registerImage (hashed at load/register time, never per frame
+// per data/content_hash.hpp:31) and renderers resolve via the handles with
+// O(1) resolveVolume/resolveImage — no per-frame hashing and no lazy
+// store-pinned slots. The process-wide default instance behind the renderer
+// defaults is created by `shared()` and must be torn down with `resetShared()`
+// while a GL context is still current (the test fixture does this in TearDown).
 //
 // render/ is GL-call-free: the store uploads geometry through
 // MeshGeometry::create and textures through core::Texture3D/Texture2D RAII
@@ -202,10 +201,12 @@ inline bool operator!=(const MaterialHandle& a,
 /// bytes (`shared_ptr<const CpuT>`, T13 ownership ladder), so a live slot
 /// always resolves to live bytes. Reference counting: `acquire` with
 /// `claimRefs = 1` models owner registration (create with refs 1, or increment
-/// on a hit); `claimRefs = 0` models the renderers' lazy find-or-upload (no
-/// reference change); `release` decrements and destroys/invaldates the slot
-/// only when the count reaches zero. Slots are reused from a free list with a
-/// fresh generation so outstanding handles to previous occupants stay stale.
+/// on a hit); `claimRefs = 0` was the former lazy find-or-upload path (no
+/// reference change, refs==0 pinned slots) deleted in T7 — all current callers
+/// use `1`, content-hash IS identity, no lazy insertion; `release` decrements
+/// and destroys/invalidates the slot only when the count reaches zero. Slots
+/// are reused from a free list with a fresh generation so outstanding handles
+/// to previous occupants stay stale.
 ///
 /// Not thread-safe (SPEC §5 single render thread).
 template <typename CpuT, typename GpuT>
@@ -227,7 +228,8 @@ class GpuSlotTable {
 
     /// Find `cpu`'s content by hash, or upload it via `factory`. `claimRefs`
     /// is added to the slot's reference count on BOTH paths (1 for owner
-    /// registration, 0 for lazy lookup). Returns the slot location.
+    /// registration; 0 was the deleted T7 lazy path, now unused). Returns the
+    /// slot location.
     data::Result<Location> acquire(const CpuPtr& cpu, std::uint64_t contentHash,
                                    std::uint32_t claimRefs, Factory factory) {
         if (!cpu) {
@@ -488,13 +490,6 @@ class AssetRegistry {
     /// invalidated when the last reference drops.
     data::Result<void> unregisterVolume(const VolumeTextureHandle& handle);
 
-    /// Lazy find-or-upload used by the volume renderer per frame: returns the
-    /// texture for `dataset`'s content WITHOUT changing any reference count.
-    /// A miss uploads and leaves the entry store-pinned (zero references)
-    /// until an owner claims it via registerVolume and releases it later.
-    data::Result<core::Texture3D*> lookupVolume(
-        const std::shared_ptr<const data::VolumeDataset>& dataset);
-
     /// Live reference count of the slot `handle` points at (gate evidence:
     /// registering twice yields refs 2, one release keeps it resolvable).
     data::Result<std::uint32_t> volumeRefs(
@@ -524,12 +519,6 @@ class AssetRegistry {
     /// Release one reference; the texture is destroyed and its handle
     /// invalidated when the last reference drops.
     data::Result<void> unregisterImage(const ImageTextureHandle& handle);
-
-    /// Lazy find-or-upload used by the plane renderer per frame: returns the
-    /// texture for `image`'s content WITHOUT changing any reference count
-    /// (same store-pinned-miss contract as `lookupVolume`).
-    data::Result<core::Texture2D*> lookupImage(
-        const std::shared_ptr<const data::Image>& image);
 
     /// Live reference count of the slot `handle` points at.
     data::Result<std::uint32_t> imageRefs(

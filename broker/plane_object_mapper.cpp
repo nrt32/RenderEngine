@@ -34,9 +34,19 @@ data::Result<render::PlaneInstance> PlaneObjectMapper::map(
         return data::makeError<render::PlaneInstance>(
             1, "PlaneObjectMapper: null image asset reference");
     }
+    if (!registry_) {
+        return data::makeError<render::PlaneInstance>(
+            2, "PlaneObjectMapper: null AssetRegistry");
+    }
+    auto h = registry_->registerImage(app.image);
+    if (h.failed()) {
+        return data::makeError<render::PlaneInstance>(h.error().code,
+                                                     h.error().message);
+    }
     render::PlaneInstance out;
     out.geometry = sharedUnitQuad(); // shared ownership — instance co-owns
-    out.image = app.image;           // shared ownership — instance co-owns
+    out.handle = *h;
+    out.image = app.image;           // retained for CPU convenience, GPU identity is handle
     out.model = app.transform;
     return data::makeValue<render::PlaneInstance>(out);
 }

@@ -33,6 +33,7 @@ add_executable(${RE_TEST_TARGET}
     t5_view_test.cpp
     t6_persistence_test.cpp
     t7_asset_identity_test.cpp
+    t7_owner_driven_handles_test.cpp
     t8_phong_tf_test.cpp
     t9_re_scene_inventory_test.cpp
     t12_plane_path_test.cpp

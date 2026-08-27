@@ -231,6 +231,20 @@ class SceneStore {
         AssetId id) const;
     /// Free asset slot; bumps generation.
     data::Result<void> unregisterMeshAsset(AssetId id);
+    /// Register volume asset (the store takes a SHARED reference — co-ownership
+    /// with the caller, T13); dedup by content hash (identical bytes alias).
+    /// Register volume asset — owner-driven like meshes (T7, SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame): the store takes a SHARED reference and dedups by content hash of stable bytes (positions+indices / voxel bytes / pixel bytes); two distinct allocations with identical bytes alias to same AssetId, and the handle's contentHash IS identity (no byObject pointer shim). This closes the per-frame FNV-1a violation and the pinned-slot growth.
+    data::Result<AssetId> registerVolumeAsset(
+        AssetRegistry<data::VolumeDataset>::SharedAsset vol);
+    data::Result<AssetRegistry<data::VolumeDataset>::SharedAsset> resolveVolumeAsset(
+        AssetId id) const;
+    data::Result<void> unregisterVolumeAsset(AssetId id);
+    /// Register image asset — same owner-driven contract as volumes/meshes (T7, SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame): the store co-owns the image via shared_ptr, dedups by content hash of stable pixel bytes, and the handle's contentHash IS identity (no byObject pointer shim, no pinned refs==0 slots), keeping the renderer's resolve O(1) and slot growth bounded.
+    data::Result<AssetId> registerImageAsset(
+        AssetRegistry<data::Image>::SharedAsset img);
+    data::Result<AssetRegistry<data::Image>::SharedAsset> resolveImageAsset(
+        AssetId id) const;
+    data::Result<void> unregisterImageAsset(AssetId id);
     /// Live mesh asset count (distinct content hashes).
     std::size_t meshAssetCount() const noexcept {
         return meshAssets_.liveCount();
@@ -238,6 +252,18 @@ class SceneStore {
     /// Total mesh asset slots (including free).
     std::size_t meshAssetSlotCount() const noexcept {
         return meshAssets_.slotCount();
+    }
+    std::size_t volumeAssetCount() const noexcept {
+        return volumeAssets_.liveCount();
+    }
+    std::size_t volumeAssetSlotCount() const noexcept {
+        return volumeAssets_.slotCount();
+    }
+    std::size_t imageAssetCount() const noexcept {
+        return imageAssets_.liveCount();
+    }
+    std::size_t imageAssetSlotCount() const noexcept {
+        return imageAssets_.slotCount();
     }
     /// Generic extensible accessors for templated store (OCP per kind).
     AssetRegistry<data::Mesh>& meshAssetRegistry() noexcept {

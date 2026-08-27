@@ -33,10 +33,10 @@ AppContext::AppContext(Params params) {
         std::make_unique<MeshObjectMapper>(assets_, materials));
     broker_->registerMapper(
         std::make_unique<MeshSliceObjectMapper>(assets_, materials));
-    broker_->registerMapper(std::make_unique<VolumeObjectMapper>());
-    broker_->registerMapper(std::make_unique<VolumeSliceObjectMapper>());
+    broker_->registerMapper(std::make_unique<VolumeObjectMapper>(assets_));
+    broker_->registerMapper(std::make_unique<VolumeSliceObjectMapper>(assets_));
     broker_->registerMapper(std::make_unique<PlaneMapper>());
-    broker_->registerMapper(std::make_unique<PlaneObjectMapper>());
+    broker_->registerMapper(std::make_unique<PlaneObjectMapper>(assets_));
     broker_->registerMapper(std::make_unique<ContourMapper>(assets_));
 
     bridge_ = ViewBridge::create(broker_, stack_);

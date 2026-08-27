@@ -81,13 +81,16 @@ data::Result<core::VertexArray*> VolumeRenderer::screenQuad() {
 }
 
 data::Result<core::Texture3D*> VolumeRenderer::textureFor(
-    const std::shared_ptr<const data::VolumeDataset>& dataset) {
-    // The shared asset store dedups by content hash (T14): identical voxel
-    // content — even through a second renderer instance or a distinct
-    // allocation — resolves to ONE store-owned GL texture. The lazy lookup
-    // never changes reference counts; owners manage explicit lifetimes via
-    // registerVolume/unregisterVolume.
-    return assets_->lookupVolume(dataset);
+    const VolumeTextureHandle& handle) {
+    // Owner-driven T7: hashed at register time, O(1) handle resolve, never
+    // per-frame FNV-1a (data/content_hash.hpp:31). The lookupVolume lazy
+    // path is deleted — content-hash IS identity via the handle's
+    // contentHash field, no pointer-key shim, no pinned refs==0 slots.
+    if (handle.isNull()) {
+        return data::makeError<core::Texture3D*>(
+            4, "VolumeRenderer: null volume handle (register via AssetRegistry)");
+    }
+    return assets_->resolveVolume(handle);
 }
 
 void VolumeRenderer::uploadTransferFunction(
@@ -115,8 +118,31 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
     program->setUniformInt("uVolume", 0); // sampler reads texture unit 0
 
     for (const VolumeInstance& instance : scene.volumes) {
+        // T7 owner-driven: prefer explicit handle; fallback to legacy
+        // dataset→handle cache for pre-T7 direct tests (hashed once at
+        // first use, then O(1) cache hit — no per-frame FNV-1a).
+        VolumeTextureHandle handle = instance.handle;
+        if (handle.isNull()) {
+            if (!instance.dataset) {
+                return data::makeError<void>(
+                    1, "VolumeRenderer: volume instance carries null handle and null dataset");
+            }
+            auto it = legacyHandleCache_.find(instance.dataset.get());
+            if (it != legacyHandleCache_.end()) {
+                handle = it->second;
+            } else {
+                auto reg = assets_->registerVolume(instance.dataset);
+                if (reg.failed()) {
+                    return data::makeError<void>(reg.error().code, reg.error().message);
+                }
+                handle = *reg;
+                legacyHandleCache_[instance.dataset.get()] = handle;
+            }
+        }
         if (!instance.dataset) {
-            continue;
+            return data::makeError<void>(
+                1, "VolumeRenderer: volume instance dataset is null "
+                   "(required for size/uniforms)");
         }
         if (instance.transferFunction.size() > kMaxTfPoints) {
             return data::makeError<void>(
@@ -124,7 +150,7 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
                        std::to_string(kMaxTfPoints) + " control points");
         }
 
-        auto texture = textureFor(instance.dataset);
+        auto texture = textureFor(handle);
         if (texture.failed()) {
             return data::makeError<void>(texture.error().code,
                                          texture.error().message);

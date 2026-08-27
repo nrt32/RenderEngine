@@ -395,24 +395,6 @@ data::Result<void> AssetRegistry::unregisterVolume(
                             handle.contentHash);
 }
 
-data::Result<core::Texture3D*> AssetRegistry::lookupVolume(
-    const std::shared_ptr<const data::VolumeDataset>& dataset) {
-    if (!dataset) {
-        return data::makeError<core::Texture3D*>(
-            kNullAssetCode, "AssetRegistry(volume): null dataset shared_ptr");
-    }
-    const uint64_t hash = data::computeContentHash(*dataset);
-    // claimRefs = 0: the lazy lookup never changes reference counts — a miss
-    // leaves the entry store-pinned until an owner claims/releases it.
-    auto loc = volumes_.acquire(dataset, hash,
-                                /*claimRefs=*/0u, &createVolumeTexture);
-    if (loc.failed()) {
-        return data::makeError<core::Texture3D*>(loc.error().code,
-                                                 loc.error().message);
-    }
-    return volumes_.resolve(loc->index, loc->generation, hash);
-}
-
 data::Result<std::uint32_t> AssetRegistry::volumeRefs(
     const VolumeTextureHandle& handle) const {
     return volumes_.refsAt(handle.index, handle.generation,
@@ -448,23 +430,6 @@ data::Result<core::Texture2D*> AssetRegistry::resolveImage(
 data::Result<void> AssetRegistry::unregisterImage(
     const ImageTextureHandle& handle) {
     return images_.release(handle.index, handle.generation, handle.contentHash);
-}
-
-data::Result<core::Texture2D*> AssetRegistry::lookupImage(
-    const std::shared_ptr<const data::Image>& image) {
-    if (!image) {
-        return data::makeError<core::Texture2D*>(
-            kNullAssetCode, "AssetRegistry(image): null image shared_ptr");
-    }
-    const uint64_t hash = data::computeContentHash(*image);
-    // claimRefs = 0 — see lookupVolume for the store-pinned-miss contract.
-    auto loc =
-        images_.acquire(image, hash, /*claimRefs=*/0u, &createImageTexture);
-    if (loc.failed()) {
-        return data::makeError<core::Texture2D*>(loc.error().code,
-                                                 loc.error().message);
-    }
-    return images_.resolve(loc->index, loc->generation, hash);
 }
 
 data::Result<std::uint32_t> AssetRegistry::imageRefs(

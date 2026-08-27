@@ -43,26 +43,45 @@
 // Typed errors (SPEC §5, no exceptions): code 1 null image pointer.
 // No raw gl* (guardrail gpu_api_ownership — render/ owns GL via core/).
 
+#include <memory>
+
 #include "broker/i_mapper.hpp"
+#include "render/asset_registry.hpp"
 #include "render/plane_renderer.hpp" // render::PlaneInstance / PlaneGeometry
 #include "scene/object.hpp"          // scene::PlaneObject
 #include "scene/translate_context.hpp"
 
 namespace re::broker {
 
-/// Plane mapper — pure translation scene::PlaneObject -> render::PlaneInstance.
+/// Plane mapper — pure translation scene::PlaneObject -> render::PlaneInstance (T7 owner-driven).
+///
+/// T7: registers the image through the shared `AssetRegistry` at sync time
+/// (hashed at load/register time, never per frame) and hands the renderer an
+/// `ImageTextureHandle` instead of a shared_ptr; the renderer resolves via O(1)
+/// handle (no per-frame FNV-1a).
 class PlaneObjectMapper : public IMapper<scene::PlaneObject,
                                    render::PlaneInstance> {
    public:
     using AppType = scene::PlaneObject;
     using ReType = render::PlaneInstance;
 
-    /// Pure translation: carries the image asset ref + transform across and
-    /// binds the mapper-owned shared unit quad as the instance geometry.
-    /// Typed errors: code 1 null image pointer.
+    explicit PlaneObjectMapper(
+        std::shared_ptr<render::AssetRegistry> registry =
+            render::AssetRegistry::shared())
+        : registry_(std::move(registry)) {}
+
+    /// Pure translation: registers image in AssetRegistry, binds shared unit quad.
+    /// Typed errors: code 1 null image, code 2 null registry, code 3 register failed.
     data::Result<render::PlaneInstance> map(
         const scene::PlaneObject& app,
         const scene::TranslateContext& ctx) const override;
+
+    const std::shared_ptr<render::AssetRegistry>& registry() const noexcept {
+        return registry_;
+    }
+
+   private:
+    std::shared_ptr<render::AssetRegistry> registry_;
 };
 
 } // namespace re::broker

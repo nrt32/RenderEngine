@@ -1,14 +1,11 @@
 #pragma once
 
-// broker/asset_store.hpp — Future AssetStore generational handle placeholder (SPEC §7/§10, T3 T).
+// broker/asset_store.hpp — Broker-side generational handle store (SPEC §7/§10, T3 T, T7 owner-driven).
 //
-// Skeleton for the SceneStore-owned AssetId path that lands in T7. Provides the
-// generational slot table and typed StaleHandle error (code 2) so that
+// Provides the generational slot table and typed StaleHandle error (code 2) so that
 // T3 can already assert the stale generation+1 lookup invariant without waiting
 // for T7's content-hash AssetId. render::AssetRegistry already implements the
-// same code path; this is the broker-owned counterpart that will later be keyed
-// by AssetId{generation,contentHash} and will dedup by content hash rather than
-// pointer identity (T7). No GL, no core/ includes.
+// same code path; this is the broker-owned counterpart keyed by AssetId{generation,contentHash} and deduping by content hash rather than pointer identity (T7, SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame). T7 landed: SceneStore now owns AssetId for Mesh/VolumeDataset/Image via templated AssetRegistry (scene/asset_registry.hpp), and broker mappers (VolumeObjectMapper, VolumeSliceObjectMapper, PlaneObjectMapper) register volumes/images through the shared render::AssetRegistry at sync, handing renderers VolumeTextureHandle/ImageTextureHandle for O(1) resolve (no per-frame FNV-1a, no lookupVolume/lookupImage lazy insertion paths, no pinned refs==0 slots — content-hash IS identity). This file remains the mesh-kind broker store (volume/image kinds live in SceneStore's templated registries and the render::AssetRegistry); its content-hash dedup and generational stale-handle contract mirror the render store. No GL, no core/ includes.
 //
 // Always returns typed errors, never crashes (SPEC §5, R4 evidence rule).
 

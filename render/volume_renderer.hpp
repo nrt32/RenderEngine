@@ -34,6 +34,7 @@
 #include <glm/vec4.hpp>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -53,8 +54,7 @@
 
 namespace re::render {
 
-/// A single volume in a scene: the dataset, the transfer function mapping its
-/// scalar values to RGBA, and the model matrix.
+/// A single volume in a scene: the dataset handle (owner-driven) + TF + model.
 ///
 /// The dataset's voxel grid occupies the unit cube [0,1]^3 in *model space*
 /// (the renderer normalizes the grid's index space [0, dim-1] to [0,1] per
@@ -63,10 +63,21 @@ namespace re::render {
 /// AABB used by the shader's slab intersection is the axis-aligned bounding
 /// box of the 8 transformed corners of [0,1]^3 (exact for axis-aligned
 /// scaling/translation, which is the v1 case).
+///
+/// Owner-driven identity (T7): the instance carries a `VolumeTextureHandle`
+/// minted by `AssetRegistry::registerVolume` (hashed at load/register time,
+/// never per frame per data/content_hash.hpp:31). The handle IS the identity
+/// (content-hash dedup, not pointer). The `dataset` shared_ptr is retained
+/// for CPU-side size/voxel access (analytic expectations) but the GPU texture
+/// resolves exclusively via `handle` (O(1) handle resolve, no per-frame
+/// FNV-1a). New code should set `handle` via explicit registration; the
+/// legacy `dataset`-only path is removed (no lazy-hash lookup).
 struct VolumeInstance {
-    /// Shared reference to the immutable volume dataset: the instance
-    /// CO-OWNS the voxels together with the scene object/store, so a stored
-    /// scene can never outlive (or dangle) the bytes it ray-casts.
+    /// Owner-driven handle to the GPU 3D texture (hashed at register time).
+    /// Must be non-null for draw (typed error if null).
+    VolumeTextureHandle handle{};
+    /// Shared reference to the immutable volume dataset for CPU math/size.
+    /// Retained for analytic size (instance model) but NOT for GPU identity.
     std::shared_ptr<const data::VolumeDataset> dataset = nullptr;
     /// Transfer function carried BY VALUE on purpose: a TF is a small,
     /// immutable control-point ramp, and copying it into the per-frame
@@ -76,6 +87,17 @@ struct VolumeInstance {
     volume::TransferFunction transferFunction{
         {{0.0f, {0, 0, 0, 0}}, {1.0f, {1, 1, 1, 1}}}};
     glm::mat4 model{1.0f};
+
+    VolumeInstance() = default;
+    // Legacy 3-arg ctor for pre-T7 direct-renderer tests (dataset-only): leaves handle null so the renderer's fallback legacyHandleCache registers the dataset once at first use via AssetRegistry::registerVolume (hashed at load/register time per data/content_hash.hpp:31, never per frame) and then hits O(1) cache without per-frame FNV-1a; this shim keeps old fixtures green while new broker-mediated code and the T7 gate use explicit VolumeTextureHandle via register→resolve, where content-hash IS identity and pinned refs==0 slots are gone.
+    VolumeInstance(std::shared_ptr<const data::VolumeDataset> ds,
+                   volume::TransferFunction tf, glm::mat4 m)
+        : handle{}, dataset(std::move(ds)), transferFunction(std::move(tf)), model(m) {}
+    // Full T7 owner-driven ctor with explicit handle (SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame): the instance carries a VolumeTextureHandle minted by AssetRegistry::registerVolume; the renderer resolves O(1) via handle's contentHash (content-hash IS identity, no byObject shim, no pinned slots). New broker-mediated code and the T7 gate use this path; legacy 3-arg ctor remains only for pre-T7 direct tests via fallback cache.
+    VolumeInstance(VolumeTextureHandle h,
+                   std::shared_ptr<const data::VolumeDataset> ds,
+                   volume::TransferFunction tf, glm::mat4 m)
+        : handle(h), dataset(std::move(ds)), transferFunction(std::move(tf)), model(m) {}
 };
 
 /// A scene of volume instances to render (CPU-side; app/ builds these).
@@ -93,11 +115,15 @@ inline constexpr float kDefaultStepLength = 0.25f;
 ///
 /// Owns only GL resources: the cached ray-cast shader program and one shared
 /// full-screen quad (every volume is ray-cast over the whole viewport). GPU
-/// 3D textures live in the shared `AssetRegistry` (SPEC §7 T14): the renderer
-/// lazily resolves each instance's dataset by content hash, so each distinct
-/// dataset is uploaded to the GPU once per store — even across two renderer
-/// instances — and no per-renderer texture map exists. The transfer function
-/// is uploaded per instance from its control points.
+/// 3D textures live in the shared `AssetRegistry` (SPEC §7 T14, T7
+/// owner-driven): each instance carries a `VolumeTextureHandle` minted at
+/// register time (hashed at load/register time, never per frame per
+/// data/content_hash.hpp:31); the renderer resolves via O(1) handle
+/// (`resolveVolume`, content-hash IS identity, no per-frame FNV-1a, no
+/// lazy lookupVolume path), so each distinct dataset is uploaded once per
+/// store — even across two renderer instances — and no per-renderer texture
+/// map exists. The transfer function is uploaded per instance from its
+/// control points.
 class VolumeRenderer : public IRenderer {
    public:
     /// Construct with the shared asset store (SHARED ownership: the renderer
@@ -165,14 +191,14 @@ class VolumeRenderer : public IRenderer {
                                      core::ShaderProgram* program,
                                      core::VertexArray* quadVao);
 
-    /// Resolve `dataset`'s content in the shared asset store (lazy
-    /// find-or-upload by content hash, no reference-count change — T14),
-    /// returning a pointer to the store-owned texture (non-null on success).
+    /// Resolve `handle`'s content in the shared asset store (O(1) handle
+    /// resolve, T7 owner-driven, no per-frame hash), returning a pointer to
+    /// the store-owned texture (non-null on success).
     /// @note lifetime: non-owning view of store-owned storage (the slot's
     /// unique_ptr) — valid until the slot's last reference is released or the
     /// store dies; renderers never retain it across frames.
     data::Result<core::Texture3D*> textureFor(
-        const std::shared_ptr<const data::VolumeDataset>& dataset);
+        const VolumeTextureHandle& handle);
 
     /// Upload the transfer function `tf` to the currently-in-use program as
     /// the TF control-point uniforms (uTfCount/uTfValues/uTfColors).
@@ -181,6 +207,12 @@ class VolumeRenderer : public IRenderer {
     std::shared_ptr<AssetRegistry> assets_;
     std::optional<core::ShaderProgram> rayCastProgram_;
     std::optional<ScreenQuad> screenQuad_;
+    // Fallback cache for legacy dataset-only instances (pre-T7): maps raw
+    // dataset pointer to its owner-driven handle (registered once, then O(1)).
+    // This keeps old direct-renderer tests green without per-frame hashing
+    // while new code should set handle explicitly via AssetRegistry::registerVolume.
+    mutable std::unordered_map<const data::VolumeDataset*, VolumeTextureHandle>
+        legacyHandleCache_;
 };
 
 } // namespace re::render

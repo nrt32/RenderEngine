@@ -12,8 +12,18 @@ data::Result<render::VolumeInstance> VolumeObjectMapper::map(
         return data::makeError<render::VolumeInstance>(
             1, "VolumeObjectMapper: null volume dataset reference");
     }
+    if (!registry_) {
+        return data::makeError<render::VolumeInstance>(
+            2, "VolumeObjectMapper: null AssetRegistry");
+    }
+    auto h = registry_->registerVolume(app.volume);
+    if (h.failed()) {
+        return data::makeError<render::VolumeInstance>(h.error().code,
+                                                      h.error().message);
+    }
     render::VolumeInstance out;
-    out.dataset = app.volume; // shared ownership — instance co-owns the bytes
+    out.handle = *h;
+    out.dataset = app.volume; // retained for CPU size/uniforms, GPU identity is handle
     out.transferFunction = app.transferFunction;
     out.model = app.transform;
     return data::makeValue<render::VolumeInstance>(out);

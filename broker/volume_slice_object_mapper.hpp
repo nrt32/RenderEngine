@@ -33,10 +33,12 @@
 // code 3 = the VoxelIndex → world conversion failed (propagated codes from
 // PlaneMapper's rule). No raw gl* (guardrail gpu_api_ownership).
 
+#include <memory>
 #include <optional>
 #include <unordered_map>
 
 #include "broker/i_mapper.hpp"
+#include "render/asset_registry.hpp"
 #include "render/types.hpp"
 #include "render/volume_slice_renderer.hpp" // render::VolumeSliceInstance
 #include "scene/object.hpp"
@@ -45,14 +47,20 @@
 namespace re::broker {
 
 /// Volume slice object mapper — cached translation scene::VolumeSliceObject
-/// (+ view plane) -> render::VolumeSliceInstance.
+/// (+ view plane) -> render::VolumeSliceInstance (T7 owner-driven).
 class VolumeSliceObjectMapper
     : public ICachedMapper<scene::VolumeSliceObject, render::VolumeSliceInstance> {
    public:
     using AppType = scene::VolumeSliceObject;
     using ReType = render::VolumeSliceInstance;
 
+    explicit VolumeSliceObjectMapper(
+        std::shared_ptr<render::AssetRegistry> registry =
+            render::AssetRegistry::shared())
+        : registry_(std::move(registry)) {}
+
     /// Pure translation (see header for the plane contract and error codes).
+    /// Registers volume via AssetRegistry (T7, no per-frame hash) and produces handle.
     data::Result<render::VolumeSliceInstance> map(
         const scene::VolumeSliceObject& app,
         const scene::TranslateContext& ctx) const override;
@@ -66,7 +74,12 @@ class VolumeSliceObjectMapper
     /// Invalidate cached entry for the given object id.
     void invalidate(uint64_t id) override;
 
+    const std::shared_ptr<render::AssetRegistry>& registry() const noexcept {
+        return registry_;
+    }
+
    private:
+    std::shared_ptr<render::AssetRegistry> registry_;
     struct Entry {
         uint64_t generation{0};
         scene::PlaneDesc plane{}; ///< The view plane the instance was built from.

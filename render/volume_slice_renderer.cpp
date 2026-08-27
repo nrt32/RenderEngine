@@ -60,13 +60,13 @@ data::Result<core::VertexArray*> VolumeSliceRenderer::screenQuad() {
 }
 
 data::Result<core::Texture3D*> VolumeSliceRenderer::textureFor(
-    const std::shared_ptr<const data::VolumeDataset>& dataset) {
-    // The shared asset store dedups by content hash: identical voxel content
-    // — even through a second renderer instance or a distinct allocation —
-    // resolves to ONE store-owned GL texture, shared with the ray-cast path.
-    // The lazy lookup never changes reference counts; owners manage explicit
-    // lifetimes via registerVolume/unregisterVolume.
-    return assets_->lookupVolume(dataset);
+    const VolumeTextureHandle& handle) {
+    // Owner-driven T7 (SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame): volume/image handles are minted via AssetRegistry::registerVolume/registerImage at sync, handing renderers VolumeTextureHandle/ImageTextureHandle; the renderer resolves O(1) via handle's contentHash (content-hash IS identity, no byObject pointer shim, no pinned refs==0 slots). The lazy lookupVolume/lookupImage insertion paths that recomputed FNV-1a over every byte per instance per frame are deleted, keeping explicit register→resolve only.
+    if (handle.isNull()) {
+        return data::makeError<core::Texture3D*>(
+            4, "VolumeSliceRenderer: null volume handle (register via AssetRegistry)");
+    }
+    return assets_->resolveVolume(handle);
 }
 
 void VolumeSliceRenderer::uploadTransferFunction(
@@ -87,7 +87,29 @@ void VolumeSliceRenderer::uploadTransferFunction(
 data::Result<void> VolumeSliceRenderer::drawOne(
     const VolumeSliceInstance& instance, const Camera& camera,
     core::ShaderProgram* program) {
-    auto texture = textureFor(instance.dataset);
+    VolumeTextureHandle handle = instance.handle;
+    if (handle.isNull()) {
+        if (!instance.dataset) {
+            return data::makeError<void>(
+                1, "VolumeSliceRenderer: slice instance carries null handle and null dataset");
+        }
+        auto it = legacyHandleCache_.find(instance.dataset.get());
+        if (it != legacyHandleCache_.end()) {
+            handle = it->second;
+        } else {
+            auto reg = assets_->registerVolume(instance.dataset);
+            if (reg.failed()) {
+                return data::makeError<void>(reg.error().code, reg.error().message);
+            }
+            handle = *reg;
+            legacyHandleCache_[instance.dataset.get()] = handle;
+        }
+    }
+    if (!instance.dataset) {
+        return data::makeError<void>(
+            1, "VolumeSliceRenderer: slice instance dataset is null");
+    }
+    auto texture = textureFor(handle);
     if (texture.failed()) {
         return data::makeError<void>(texture.error().code,
                                      texture.error().message);

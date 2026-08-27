@@ -264,8 +264,15 @@ TEST(T14UnifiedAssetStore, TwoDefaultVolumeRenderersShareOneTexture3D) {
     auto dataset =
         std::make_shared<const data::VolumeDataset>(makeUniformDataset(kUniformVoxel));
     volume::TransferFunction tf = makeGreenTransferFunction();
+    auto handleForScene = r1.assets()->registerVolume(dataset);
+    ASSERT_TRUE(handleForScene.ok()) << handleForScene.error().message;
+    render::VolumeInstance instForScene;
+    instForScene.handle = *handleForScene;
+    instForScene.dataset = dataset;
+    instForScene.transferFunction = tf;
+    instForScene.model = glm::mat4(1.0f);
     render::VolumeScene scene;
-    scene.volumes.push_back(render::VolumeInstance{dataset, tf, glm::mat4(1.0f)});
+    scene.volumes.push_back(instForScene);
 
     RenderedTarget targetA = makeTarget(kTargetWidth, kTargetHeight);
     RenderedTarget targetB = makeTarget(kTargetWidth, kTargetHeight);
@@ -283,11 +290,9 @@ TEST(T14UnifiedAssetStore, TwoDefaultVolumeRenderersShareOneTexture3D) {
     expectPixelNear(pixelA, 0, 239, 0, 239);
     expectPixelNear(pixelB, 0, 239, 0, 239);
 
-    // One GPU object behind both renderers: resolving the dataset's content
-    // through either store reference yields the SAME texture pointer and GL id
-    // (GL reserves 0, so a live texture name is non-zero).
-    auto texViaRenderer1 = r1.assets()->lookupVolume(dataset);
-    auto texViaRenderer2 = r2.assets()->lookupVolume(dataset);
+    // One GPU object behind both renderers: resolving via handle yields SAME pointer
+    auto texViaRenderer1 = r1.assets()->resolveVolume(*handleForScene);
+    auto texViaRenderer2 = r2.assets()->resolveVolume(*handleForScene);
     ASSERT_TRUE(texViaRenderer1.ok()) << texViaRenderer1.error().message;
     ASSERT_TRUE(texViaRenderer2.ok()) << texViaRenderer2.error().message;
     EXPECT_EQ(*texViaRenderer1, *texViaRenderer2)
@@ -444,7 +449,7 @@ TEST(T14UnifiedAssetStore, ImageRefcountMirrorsVolumeContract) {
     EXPECT_EQ(dead.error().code, 2)
         << "stale image handle after free → code 2 (typed error, no crash)";
 
-    auto nullRes = store->lookupImage(nullptr);
+    auto nullRes = store->registerImage(nullptr);
     EXPECT_TRUE(nullRes.failed());
     EXPECT_EQ(nullRes.error().code, 4);
 }
@@ -565,16 +570,23 @@ TEST(T14UnifiedAssetStore, LazyLookupNeverChurnsRefsAndRecoversAfterFree) {
     ASSERT_NE(original, nullptr);
     EXPECT_TRUE(original->valid());
 
-    // Lazy lookups (the renderer path) neither add nor remove references.
-    auto lazy1Res = store->lookupVolume(ds);
-    ASSERT_TRUE(lazy1Res.ok()) << lazy1Res.error().message;
-    core::Texture3D* lazy1 = *lazy1Res;
-    EXPECT_EQ(lazy1, original) << "lookup finds the registered object";
-    EXPECT_EQ(volumeRefsOf(*store, *handle), 1u)
-        << "lazy lookup must not change the reference count";
-    auto lazy2Res = store->lookupVolume(ds);
-    ASSERT_TRUE(lazy2Res.ok());
-    EXPECT_EQ(*lazy2Res, original);
+    // Owner-driven T7 (SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame): explicit register→resolve is the only path — the lazy lookupVolume/lookupImage insertion paths that recomputed FNV-1a over every byte per instance per frame and left store-pinned refs==0 slots are deleted, so content-hash IS identity and slot growth is bounded. Re-registering identical content returns same handle, refs increase.
+    auto dup = store->registerVolume(ds);
+    ASSERT_TRUE(dup.ok());
+    EXPECT_EQ(dup->index, handle->index);
+    EXPECT_EQ(volumeRefsOf(*store, *handle), 2u)
+        << "second registration increments refs (explicit owner-driven)";
+    // Release dup, back to 1
+    ASSERT_TRUE(store->unregisterVolume(*dup).ok());
+    EXPECT_EQ(volumeRefsOf(*store, *handle), 1u);
+
+    auto lazy1 = store->resolveVolume(*handle);
+    ASSERT_TRUE(lazy1.ok());
+    EXPECT_EQ(*lazy1, original) << "resolve finds the registered object";
+    EXPECT_EQ(volumeRefsOf(*store, *handle), 1u);
+    auto lazy2 = store->resolveVolume(*handle);
+    ASSERT_TRUE(lazy2.ok());
+    EXPECT_EQ(*lazy2, original);
     EXPECT_EQ(volumeRefsOf(*store, *handle), 1u);
 
     // Full release invalidates the entry...
@@ -584,15 +596,15 @@ TEST(T14UnifiedAssetStore, LazyLookupNeverChurnsRefsAndRecoversAfterFree) {
     ASSERT_TRUE(dead.failed());
     EXPECT_EQ(dead.error().code, 2);
 
-    // ...but the lazy path recovers content-addressed: a fresh upload serves
-    // the next frame (no stale GPU data can ever be served for freed
-    // content).
-    auto recoveredRes = store->lookupVolume(ds);
-    ASSERT_TRUE(recoveredRes.ok()) << recoveredRes.error().message;
+    // ...but explicit re-register recovers: a fresh upload serves next frame
+    auto recoveredHandle = store->registerVolume(ds);
+    ASSERT_TRUE(recoveredHandle.ok()) << recoveredHandle.error().message;
+    auto recoveredRes = store->resolveVolume(*recoveredHandle);
+    ASSERT_TRUE(recoveredRes.ok());
     core::Texture3D* recovered = *recoveredRes;
     ASSERT_NE(recovered, nullptr);
     EXPECT_TRUE(recovered->valid())
-        << "after invalidation the store re-uploads on demand";
+        << "after invalidation explicit register re-uploads";
     EXPECT_EQ(store->volumeSlotCount(), 1u);
 }
 
@@ -610,9 +622,15 @@ TEST(T14UnifiedAssetStore, TwoDefaultPlaneRenderersShareOneTexture2D) {
     auto image = std::make_shared<const data::Image>(makeSolidImage(64, 64));
     auto geometry = std::make_shared<const render::PlaneGeometry>(
         render::PlaneGeometry::unitQuadXY());
+    auto hImg = r1.assets()->registerImage(image);
+    ASSERT_TRUE(hImg.ok()) << hImg.error().message;
+    render::PlaneInstance pInst;
+    pInst.geometry = geometry;
+    pInst.handle = *hImg;
+    pInst.image = image;
+    pInst.model = glm::mat4(1.0f);
     render::PlaneScene scene;
-    scene.planes.push_back(
-        render::PlaneInstance{geometry, image, glm::mat4(1.0f)});
+    scene.planes.push_back(pInst);
 
     RenderedTarget targetA = makeTarget(kTargetWidth, kTargetHeight);
     RenderedTarget targetB = makeTarget(kTargetWidth, kTargetHeight);
@@ -629,8 +647,8 @@ TEST(T14UnifiedAssetStore, TwoDefaultPlaneRenderersShareOneTexture2D) {
     expectPixelNear(pixelA, kSolidR, kSolidG, kSolidB, kSolidA);
     expectPixelNear(pixelB, kSolidR, kSolidG, kSolidB, kSolidA);
 
-    auto tex1 = r1.assets()->lookupImage(image);
-    auto tex2 = r2.assets()->lookupImage(image);
+    auto tex1 = r1.assets()->resolveImage(*hImg);
+    auto tex2 = r2.assets()->resolveImage(*hImg);
     ASSERT_TRUE(tex1.ok());
     ASSERT_TRUE(tex2.ok());
     EXPECT_EQ(*tex1, *tex2)
@@ -654,8 +672,15 @@ TEST(T14UnifiedAssetStore, ExplicitStoreIsolationKeepsCountsExact) {
     auto dataset = std::make_shared<const data::VolumeDataset>(
         makeUniformDataset(kUniformVoxel));
     volume::TransferFunction tf = makeGreenTransferFunction();
+    auto hExp = store->registerVolume(dataset);
+    ASSERT_TRUE(hExp.ok());
+    render::VolumeInstance instExp;
+    instExp.handle = *hExp;
+    instExp.dataset = dataset;
+    instExp.transferFunction = tf;
+    instExp.model = glm::mat4(1.0f);
     render::VolumeScene scene;
-    scene.volumes.push_back(render::VolumeInstance{dataset, tf, glm::mat4(1.0f)});
+    scene.volumes.push_back(instExp);
 
     RenderedTarget targetA = makeTarget(kTargetWidth, kTargetHeight);
     RenderedTarget targetB = makeTarget(kTargetWidth, kTargetHeight);

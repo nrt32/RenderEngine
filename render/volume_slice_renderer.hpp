@@ -49,6 +49,7 @@
 #include <glm/vec3.hpp>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -74,17 +75,20 @@ namespace re::render {
 /// mirroring the VolumeRenderer contract.
 inline constexpr std::size_t kMaxVolumeSliceTfPoints = 8u;
 
-/// One GPU-extracted slice: the volume to sample, its transfer function, the
-/// model matrix placing the dataset's unit cube in world space, and the
-/// world-space plane to extract along.
+/// One GPU-extracted slice: the volume handle (owner-driven) + TF + model + plane.
 struct VolumeSliceInstance {
-    /// Shared reference to the immutable volume dataset: the instance
-    /// CO-OWNS the voxels together with the scene object/store, so a stored
-    /// scene can never outlive (or dangle) the bytes it samples. Null is
-    /// invalid by contract: render/drawLayer reject it with a typed error,
-    /// never a silently empty layer (a missing slice is visually
-    /// indistinguishable from an empty viewport).
+    /// Owner-driven handle to the GPU 3D texture (hashed at register time).
+    /// Must be non-null for draw (typed error if null).
+    VolumeTextureHandle handle{};
+    /// Shared reference to the immutable volume dataset for CPU math/size.
+    /// Retained for dimensions but GPU identity is the handle (T7, no per-frame hash).
     std::shared_ptr<const data::VolumeDataset> dataset = nullptr;
+
+    VolumeSliceInstance() = default;
+    VolumeSliceInstance(VolumeTextureHandle h,
+                        std::shared_ptr<const data::VolumeDataset> ds,
+                        volume::TransferFunction tf, glm::mat4 m, ClipPlane p)
+        : handle(h), dataset(std::move(ds)), transferFunction(std::move(tf)), model(m), plane(p) {}
     /// Transfer function carried BY VALUE on purpose: a TF is a small,
     /// immutable control-point ramp, and copying it into the per-frame
     /// instance removes any pointer that could dangle or be nulled mid-frame.
@@ -114,10 +118,13 @@ struct VolumeSliceScene {
 /// Owns only GL resources: the cached extraction shader program and one
 /// shared full-screen quad (every slice covers the whole viewport; coverage
 /// outside the plane/volume intersection writes transparent black). GPU 3D
-/// textures resolve through the shared `AssetRegistry`
-/// (`lookupVolume`, lazy find-or-upload by content hash), so the extraction
-/// path never duplicates a dataset upload and no per-renderer texture map
-/// exists.
+/// textures resolve through the shared `AssetRegistry` (SPEC §7 T14, T7
+/// owner-driven): each slice carries a `VolumeTextureHandle` minted at
+/// register time (hashed at load/register time, never per frame per
+/// data/content_hash.hpp:31); the renderer resolves via O(1) handle
+/// (`resolveVolume`, content-hash IS identity, no per-frame FNV-1a, no lazy
+/// lookupVolume path), so the extraction path never duplicates a dataset
+/// upload and no per-renderer texture map exists.
 class VolumeSliceRenderer {
    public:
     /// Construct with the shared asset store (SHARED ownership: the renderer
@@ -169,14 +176,14 @@ class VolumeSliceRenderer {
     /// screenQuad_ `optional<>` member) — valid while this renderer is.
     data::Result<core::VertexArray*> screenQuad();
 
-    /// Resolve `dataset`'s content in the shared asset store (lazy
-    /// find-or-upload by content hash, no reference-count change),
-    /// returning a pointer to the store-owned texture (non-null on success).
+    /// Resolve `handle`'s content in the shared asset store (O(1) handle
+    /// resolve, T7 owner-driven, no per-frame hash), returning a pointer to
+    /// the store-owned texture (non-null on success).
     /// @note lifetime: non-owning view of store-owned storage (the slot's
-    /// unique_ptr) — valid until the slot's last reference is released or
-    /// the store dies; renderers never retain it across frames.
+    /// unique_ptr) — valid until the slot's last reference is released or the
+    /// store dies; renderers never retain it across frames.
     data::Result<core::Texture3D*> textureFor(
-        const std::shared_ptr<const data::VolumeDataset>& dataset);
+        const VolumeTextureHandle& handle);
 
     /// Upload the transfer function `tf` to the currently-in-use program as
     /// the TF control-point uniforms (uTfCount/uTfValues/uTfColors).
@@ -193,6 +200,8 @@ class VolumeSliceRenderer {
     std::shared_ptr<AssetRegistry> assets_;
     std::optional<core::ShaderProgram> program_;
     std::optional<ScreenQuad> screenQuad_;
+    mutable std::unordered_map<const data::VolumeDataset*, VolumeTextureHandle>
+        legacyHandleCache_;
 };
 
 } // namespace re::render

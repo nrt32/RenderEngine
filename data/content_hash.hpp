@@ -16,6 +16,7 @@
 // avoids glm::vec3 padding variance. Values are deterministic across runs,
 // which is what makes cross-layer identity assertions possible.
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -25,11 +26,27 @@
 
 namespace re::data {
 
+/// Spy counter for T7 gate: counts how many times content hashing executes.
+/// Hashed at load/register time, never per frame (data/content_hash.hpp:31).
+/// The T7 gate asserts this stays 0 during steady-state 60-frame loops.
+inline std::atomic<uint64_t>& contentHashSpy() {
+    static std::atomic<uint64_t> s{0u};
+    return s;
+}
+inline uint64_t contentHashCallCount() noexcept {
+    return contentHashSpy().load(std::memory_order_relaxed);
+}
+inline void resetContentHashCallCount() noexcept {
+    contentHashSpy().store(0u, std::memory_order_relaxed);
+}
+
 /// FNV-1a 64-bit hash of raw stable bytes (deterministic,
 /// pointer-independent): basis 1469598103934665603, prime 1099511628211.
 /// Skeleton for SHA-256-of-canonical-bytes per SPEC §10.1 — truncated to 64
 /// bits for the gates; hashed at load/register time, never per frame.
+/// Spy: increments contentHashSpy() for T7 gate (hash must be 0 per frame).
 inline uint64_t hashStableBytes(const void* data, std::size_t size) noexcept {
+    contentHashSpy().fetch_add(1u, std::memory_order_relaxed);
     const uint8_t* bytes = static_cast<const uint8_t*>(data);
     uint64_t h = 1469598103934665603ULL; // FNV offset basis
     for (std::size_t i = 0; i < size; ++i) {
@@ -47,6 +64,7 @@ inline uint64_t hashStableBytes(const void* data, std::size_t size) noexcept {
 /// glm::vec3 padding variance (12 bytes logical per vertex); the position and
 /// index counts are fed first so empty vs non-empty inputs separate cleanly.
 inline uint64_t computeContentHash(const data::Mesh& mesh) noexcept {
+    contentHashSpy().fetch_add(1u, std::memory_order_relaxed);
     uint64_t h = 1469598103934665603ULL;
     // Feed position count + index count to separate empty vs non-empty cleanly.
     uint64_t vCount = static_cast<uint64_t>(mesh.positions().size());
@@ -92,6 +110,7 @@ inline uint64_t computeContentHash(const data::Mesh& mesh) noexcept {
 /// Content hash for a VolumeDataset — dims as u32, then the voxel floats.
 inline uint64_t computeContentHash(
     const data::VolumeDataset& vol) noexcept {
+    contentHashSpy().fetch_add(1u, std::memory_order_relaxed);
     uint64_t h = 1469598103934665603ULL;
     auto feedU32 = [&](uint32_t v) {
         const uint8_t* b = reinterpret_cast<const uint8_t*>(&v);
@@ -115,6 +134,7 @@ inline uint64_t computeContentHash(
 
 /// Content hash for an Image — w/h/channels as i32, then the pixel bytes.
 inline uint64_t computeContentHash(const data::Image& img) noexcept {
+    contentHashSpy().fetch_add(1u, std::memory_order_relaxed);
     uint64_t h = 1469598103934665603ULL;
     auto feedI32 = [&](int32_t v) {
         const uint8_t* b = reinterpret_cast<const uint8_t*>(&v);
