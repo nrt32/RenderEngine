@@ -189,4 +189,47 @@ int sampleMaxFrames(int defaultFrames) noexcept {
     return parsed > 0 ? parsed : defaultFrames;
 }
 
+data::Result<void> syncRenderPresent(broker::AppContext& ctx,
+                                     const std::vector<scene::View>& views) {
+    // The ONE site for the `sync → renderAll → presentAll` façade sequence that
+    // was previously pasted verbatim into six ISample::renderFrame
+    // implementations (arch review AS2). Sync translates dirty scene fields via
+    // the broker's per-type mappers into cached Re state; renderAll draws every
+    // ReView into its own ViewTarget; presentAll blits each target 1:1 into its
+    // window rect (null destination = the window's default framebuffer).
+    auto s = ctx.bridge().sync(views, ctx.store());
+    if (s.failed()) {
+        return s;
+    }
+    auto r = ctx.bridge().renderAll();
+    if (r.failed()) {
+        return r;
+    }
+    return ctx.bridge().presentAll(nullptr);
+}
+
+int runSample(const char* windowTitle, int width, int height,
+              int defaultFrames,
+              std::function<std::unique_ptr<ISample>()> factory) {
+    // The ONE site for the `load → window → harness → run` mains that were
+    // sextuplicated across mesh/plane/volume/slice/oit/mpr samples (arch review
+    // AS2). The factory encapsulates the sample-specific asset loading and
+    // ISample construction (including its CT TF factory call where applicable);
+    // this helper owns window creation, harness wiring and the bounded run loop.
+    // Shared constants kWindowWidth/kWindowHeight etc. are defined in
+    // sample_harness.hpp so the six mains no longer carry private copies.
+    auto windowResult = core::Window::create(width, height, windowTitle);
+    if (windowResult.failed()) {
+        spdlog::error("sample: {}", windowResult.error().message);
+        return 1;
+    }
+    auto sample = factory();
+    if (!sample) {
+        spdlog::error("sample: factory failed to create sample");
+        return 1;
+    }
+    SampleHarness harness(std::move(*windowResult), std::move(sample));
+    return harness.run(sampleMaxFrames(defaultFrames));
+}
+
 } // namespace re::app

@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include "app/ct_transfer_function.hpp"
 #include "app/sample_harness.hpp"
 #include "broker/app_context.hpp"
 #include "core/window.hpp"
@@ -54,27 +55,8 @@ namespace data = re::data;
 namespace scene = re::scene;
 namespace volume = re::volume;
 
-// The harness window size: the OPENING size only — every per-frame value
-// (view rect, camera aspect) derives from the live framebuffer dims instead.
-constexpr int kWindowWidth = 800;
-constexpr int kWindowHeight = 600;
-// Default number of frames before the sample exits cleanly.
-constexpr int kDefaultFrames = 300;
-// Perspective vertical field of view in degrees (~60 deg).
-constexpr float kFovYDeg = 60.0f;
-
-/// A CT window/level transfer function over the sample_ct value range
-/// ([-3024, 2529], SPEC §7): air (low) transparent, soft tissue opaque/bright.
-/// Deterministic control points (FR-vol.1); monotonic alpha ramp.
-volume::TransferFunction makeCtTransferFunction() {
-    using CP = volume::TransferFunction::ControlPoint;
-    return volume::TransferFunction(
-        {CP{-1024.0f, volume::RgbaColor{0.0f, 0.0f, 0.0f, 0.0f}},
-         CP{-300.0f, volume::RgbaColor{0.05f, 0.05f, 0.10f, 0.05f}},
-         CP{40.0f, volume::RgbaColor{0.90f, 0.50f, 0.20f, 0.90f}},
-         CP{300.0f, volume::RgbaColor{0.90f, 0.50f, 0.20f, 1.00f}},
-         CP{2500.0f, volume::RgbaColor{1.00f, 1.00f, 1.00f, 1.00f}}});
-}
+// Window size, FOV and frame count are shared via app::kWindowWidth etc.
+// (AS2 constants dedup).
 
 /// The volume sample: owns the CT dataset + transfer function + AppContext and
 /// renders one bridged frame per renderFrame call.
@@ -95,15 +77,15 @@ class VolumeSample final : public app::ISample {
         const uint64_t volId = ctx_.store().addVolumeObject(std::move(vo));
 
         const glm::vec3 center(0.5f, 0.5f, 0.5f);
-        framing_.fovDeg = kFovYDeg;
+        framing_.fovDeg = app::kDefaultFovYDeg;
         framing_.nearPlane = 0.1f;
         framing_.farPlane = 10.0f;
         view_.id = 1;
         view_.camera =
             scene::Camera(glm::vec3(0.5f, 0.5f, 3.0f), center,
                           glm::vec3(0.0f, 1.0f, 0.0f));
-        app::fitPerspectiveViewToPixels(view_, framing_, kWindowWidth,
-                                        kWindowHeight);
+        app::fitPerspectiveViewToPixels(view_, framing_, app::kWindowWidth,
+                                        app::kWindowHeight);
         view_.setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
         view_.setItemIds({volId});
     }
@@ -115,23 +97,10 @@ class VolumeSample final : public app::ISample {
     }
 
     data::Result<void> renderFrame(int width, int height) override {
-        // Live dims first: rect + camera aspect always derive from THIS
-        // frame's framebuffer size (change-guarded setters make a no-resize
-        // frame free), then the bridge path: sync → renderAll (ray-cast into
-        // the ReView target) → presentAll blits 1:1 to the window's default
-        // framebuffer (a null framebuffer destination means the on-screen
-        // default framebuffer; the view rect equals the live pixel size).
+        // Live dims first, then the single-site bridge façade (AS2).
         applyLiveDims(width, height);
         views_ = {view_};
-        auto s = ctx_.bridge().sync(views_, ctx_.store());
-        if (s.failed()) {
-            return s;
-        }
-        auto r = ctx_.bridge().renderAll();
-        if (r.failed()) {
-            return r;
-        }
-        return ctx_.bridge().presentAll(nullptr);
+        return app::syncRenderPresent(ctx_, views_);
     }
 
     const char* title() const override {
@@ -169,24 +138,19 @@ class VolumeSample final : public app::ISample {
 } // namespace
 
 int main() {
-    const std::string volumePath =
-        std::string(RE_SOURCE_DIR) + "/data/volumes/sample_ct.nrrd";
-    auto volumeResult = re::io::loadNrrdVolume(volumePath);
-    if (volumeResult.failed()) {
-        spdlog::error("volume sample: failed to load '{}': {}", volumePath,
-                      volumeResult.error().message);
-        return 1;
-    }
-
-    auto windowResult = core::Window::create(
-        kWindowWidth, kWindowHeight, "RenderEngine - Volume Sample");
-    if (windowResult.failed()) {
-        spdlog::error("volume sample: {}", windowResult.error().message);
-        return 1;
-    }
-
-    auto sample = std::make_unique<VolumeSample>(std::move(*volumeResult),
-                                                 makeCtTransferFunction());
-    app::SampleHarness harness(std::move(*windowResult), std::move(sample));
-    return harness.run(app::sampleMaxFrames(kDefaultFrames));
+    // Single-site entry via app::runSample (AS2).
+    return app::runSample(
+        "RenderEngine - Volume Sample", app::kWindowWidth, app::kWindowHeight,
+        app::kDefaultFrames, []() -> std::unique_ptr<app::ISample> {
+            const std::string volumePath =
+                std::string(RE_SOURCE_DIR) + "/data/volumes/sample_ct.nrrd";
+            auto volumeResult = re::io::loadNrrdVolume(volumePath);
+            if (volumeResult.failed()) {
+                spdlog::error("volume sample: failed to load '{}': {}",
+                              volumePath, volumeResult.error().message);
+                return nullptr;
+            }
+            return std::make_unique<VolumeSample>(
+                std::move(*volumeResult), app::RE_CT_TF());
+        });
 }

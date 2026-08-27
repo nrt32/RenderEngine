@@ -54,6 +54,7 @@
 #include <utility>
 #include <vector>
 
+#include "app/ct_transfer_function.hpp"
 #include "app/mpr_slice.hpp"
 #include "app/sample_harness.hpp"
 #include "broker/app_context.hpp"
@@ -81,18 +82,15 @@ namespace volume = re::volume;
 
 using MprAxis = app::MprAxis;
 
-// The harness window size: the OPENING size only (SPEC FR-app.2 pins
-// 1280x960 as the default MPR window) — the per-frame grid re-resolves from
-// the live framebuffer dims instead.
-constexpr int kWindowWidth = 1280;
-constexpr int kWindowHeight = 960;
-// Default number of frames before the sample exits cleanly.
-constexpr int kDefaultFrames = 300;
-
-// Auto-scroll cadence: every kFramesPerStep rendered frames the round-robin
-// next slice axis advances one voxel layer. Deterministic, and slow enough
-// that the scroll is watchable interactively while a bounded headless smoke
-// run (RE_SAMPLE_MAX_FRAMES=20) stays on the initial mid-volume state.
+// MPR window size via app::kMprWindowWidth/kMprWindowHeight (AS2) — the
+// OPENING size only; live grid re-resolves from framebuffer dims. Frame count
+// via app::kDefaultFrames; CT ramp via the shared factory in
+// app/ct_transfer_function.hpp (AS1 single definition).
+// Auto-scroll cadence: every
+// kFramesPerStep rendered frames the round-robin next slice axis advances one
+// voxel layer. Deterministic, and slow enough that the scroll is watchable
+// interactively while a bounded headless smoke run (RE_SAMPLE_MAX_FRAMES=20)
+// stays on the initial mid-volume state.
 constexpr std::uint32_t kFramesPerStep = 45u;
 
 // The golden box mesh (FR-app.3): a box spanning these voxel-index bounds,
@@ -107,19 +105,6 @@ constexpr glm::vec3 kGoldenBoxMax(96.0f, 96.0f, 60.0f);
 // flat +Z lighting the +Z face of the box shades to exactly this color; faces
 // with normals not aligned to +Z shade to black (docs/render.md / docs/mpr.md).
 constexpr glm::vec4 kBoxMaterialColor(0.2f, 0.4f, 0.8f, 1.0f);
-
-/// A CT window/level transfer function over the sample_ct value range
-/// ([-3024, 2529], SPEC §7): air (low) transparent, soft tissue opaque/bright.
-/// Deterministic control points (FR-vol.1); monotonic alpha ramp.
-volume::TransferFunction makeCtTransferFunction() {
-    using CP = volume::TransferFunction::ControlPoint;
-    return volume::TransferFunction(
-        {CP{-1024.0f, volume::RgbaColor{0.0f, 0.0f, 0.0f, 0.0f}},
-         CP{-300.0f, volume::RgbaColor{0.05f, 0.05f, 0.10f, 0.05f}},
-         CP{40.0f, volume::RgbaColor{0.90f, 0.50f, 0.20f, 0.90f}},
-         CP{300.0f, volume::RgbaColor{0.90f, 0.50f, 0.20f, 1.00f}},
-         CP{2500.0f, volume::RgbaColor{1.00f, 1.00f, 1.00f, 1.00f}}});
-}
 
 /// Build the initial slice-state: hold each 2D view on the middle slice of its
 /// axis. This is the state the auto-scroll animation advances from; it drives
@@ -221,7 +206,7 @@ class MPRView final : public app::ISample {
         // The initial 2x2 grid at the OPENING window size; every frame
         // re-resolves it from the live pixel dims (see renderFrame).
         const std::array<app::MprViewport, 4> grid =
-            app::mprViewports(kWindowWidth, kWindowHeight);
+            app::mprViewports(app::kMprWindowWidth, app::kMprWindowHeight);
         for (std::size_t i = 0; i < 3u; ++i) {
             const auto [freeW, freeH] =
                 app::sliceFreeAxes(*dataset_, axes[i]);
@@ -275,19 +260,13 @@ class MPRView final : public app::ISample {
         // display-frame), cameras (slice extents + crosshair interplay).
         applySliceState();
 
-        // The bridge path: sync → renderAll → presentAll blits each target
-        // 1:1 into its pinned window rect. The monadic chain (T22) collapses
-        // the three nested `if (failed()) return` dances: the first failure
-        // short-circuits the chain and propagates its Error unchanged.
+        // Bridge façade via the single-site helper (AS2 syncRenderPresent):
+        // sync → renderAll → presentAll blits each target 1:1 into its pinned
+        // window rect. The helper is the ONE site for the triple previously
+        // pasted into six renderFrame implementations (the andThen chain is
+        // equivalent to the helper's sequential checks).
         frame_.assign(views_.begin(), views_.end());
-        auto presented =
-            ctx_.bridge()
-                .sync(frame_, ctx_.store())
-                .andThen(
-                    [this]() { return ctx_.bridge().renderAll(); })
-                .andThen([this]() {
-                    return ctx_.bridge().presentAll(nullptr);
-                });
+        auto presented = app::syncRenderPresent(ctx_, frame_);
         if (presented.failed()) {
             return presented;
         }
@@ -531,24 +510,20 @@ class MPRView final : public app::ISample {
 } // namespace
 
 int main() {
-    const std::string volumePath =
-        std::string(RE_SOURCE_DIR) + "/data/volumes/sample_ct.nrrd";
-    auto volumeResult = re::io::loadNrrdVolume(volumePath);
-    if (volumeResult.failed()) {
-        spdlog::error("mpr sample: failed to load '{}': {}", volumePath,
-                      volumeResult.error().message);
-        return 1;
-    }
-
-    auto windowResult = core::Window::create(kWindowWidth, kWindowHeight,
-                                             "RenderEngine - MPR Sample");
-    if (windowResult.failed()) {
-        spdlog::error("mpr sample: {}", windowResult.error().message);
-        return 1;
-    }
-
-    auto sample = std::make_unique<MPRView>(std::move(*volumeResult),
-                                            makeCtTransferFunction());
-    app::SampleHarness harness(std::move(*windowResult), std::move(sample));
-    return harness.run(app::sampleMaxFrames(kDefaultFrames));
+    // Single-site entry via app::runSample (AS2).
+    return app::runSample(
+        "RenderEngine - MPR Sample", app::kMprWindowWidth,
+        app::kMprWindowHeight, app::kDefaultFrames,
+        []() -> std::unique_ptr<app::ISample> {
+            const std::string volumePath =
+                std::string(RE_SOURCE_DIR) + "/data/volumes/sample_ct.nrrd";
+            auto volumeResult = re::io::loadNrrdVolume(volumePath);
+            if (volumeResult.failed()) {
+                spdlog::error("mpr sample: failed to load '{}': {}",
+                              volumePath, volumeResult.error().message);
+                return nullptr;
+            }
+            return std::make_unique<MPRView>(std::move(*volumeResult),
+                                             app::RE_CT_TF());
+        });
 }

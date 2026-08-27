@@ -54,15 +54,8 @@ namespace core = re::core;
 namespace data = re::data;
 namespace scene = re::scene;
 
-// The harness window size: the OPENING size only — every per-frame value
-// (view rect, camera aspect) derives from the live framebuffer dims instead.
-constexpr int kWindowWidth = 800;
-constexpr int kWindowHeight = 600;
-// Default number of frames before the sample exits cleanly (gate overrides via
-// RE_SAMPLE_MAX_FRAMES).
-constexpr int kDefaultFrames = 300;
-// Perspective vertical field of view in degrees (~60 deg).
-constexpr float kFovYDeg = 60.0f;
+// Window size, frame count and FOV are shared via app::kWindowWidth etc.
+// (AS2 constants dedup).
 
 /// The slice sample: owns the loaded teapot + AppContext and renders one
 /// bridged clipped frame per renderFrame call.
@@ -104,16 +97,16 @@ class SliceSample final : public app::ISample {
         // aspect are re-derived from live pixel dims every frame.
         const glm::vec3 center = 0.5f * (b.min + b.max);
         const float radius = 0.5f * glm::length(b.max - b.min);
-        const float dist = radius / std::tan(0.5f * glm::radians(kFovYDeg));
-        framing_.fovDeg = kFovYDeg;
+        const float dist = radius / std::tan(0.5f * glm::radians(app::kDefaultFovYDeg));
+        framing_.fovDeg = app::kDefaultFovYDeg;
         framing_.nearPlane = 0.1f;
         framing_.farPlane = 2.0f * (dist + radius);
 
         view_.id = 1;
         view_.camera = scene::Camera(center + glm::vec3(0.0f, 0.0f, dist),
                                      center, glm::vec3(0.0f, 1.0f, 0.0f));
-        app::fitPerspectiveViewToPixels(view_, framing_, kWindowWidth,
-                                        kWindowHeight);
+        app::fitPerspectiveViewToPixels(view_, framing_, app::kWindowWidth,
+                                        app::kWindowHeight);
         view_.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         view_.setItemIds({sliceId});
         view_.setPlane(plane);
@@ -126,22 +119,10 @@ class SliceSample final : public app::ISample {
     }
 
     data::Result<void> renderFrame(int width, int height) override {
-        // Live dims first: rect + camera aspect always derive from THIS
-        // frame's framebuffer size (change-guarded setters make a no-resize
-        // frame free), then the bridge path: sync → renderAll → presentAll
-        // (null destination = window default framebuffer). The ReView target
-        // rect equals the live pixel size, so the blit is 1:1.
+        // Live dims first, then the single-site bridge façade (AS2).
         applyLiveDims(width, height);
         views_ = {view_};
-        auto s = ctx_.bridge().sync(views_, ctx_.store());
-        if (s.failed()) {
-            return s;
-        }
-        auto r = ctx_.bridge().renderAll();
-        if (r.failed()) {
-            return r;
-        }
-        return ctx_.bridge().presentAll(nullptr);
+        return app::syncRenderPresent(ctx_, views_);
     }
 
     const char* title() const override {
@@ -181,23 +162,18 @@ class SliceSample final : public app::ISample {
 } // namespace
 
 int main() {
-    const std::string meshPath =
-        std::string(RE_SOURCE_DIR) + "/data/meshes/teapot.obj";
-    auto meshResult = re::io::loadObjMesh(meshPath);
-    if (meshResult.failed()) {
-        spdlog::error("slice sample: failed to load '{}': {}", meshPath,
-                      meshResult.error().message);
-        return 1;
-    }
-
-    auto windowResult = core::Window::create(
-        kWindowWidth, kWindowHeight, "RenderEngine - Slice Sample");
-    if (windowResult.failed()) {
-        spdlog::error("slice sample: {}", windowResult.error().message);
-        return 1;
-    }
-
-    auto sample = std::make_unique<SliceSample>(std::move(*meshResult));
-    app::SampleHarness harness(std::move(*windowResult), std::move(sample));
-    return harness.run(app::sampleMaxFrames(kDefaultFrames));
+    // Single-site entry via app::runSample (AS2).
+    return app::runSample(
+        "RenderEngine - Slice Sample", app::kWindowWidth, app::kWindowHeight,
+        app::kDefaultFrames, []() -> std::unique_ptr<app::ISample> {
+            const std::string meshPath =
+                std::string(RE_SOURCE_DIR) + "/data/meshes/teapot.obj";
+            auto meshResult = re::io::loadObjMesh(meshPath);
+            if (meshResult.failed()) {
+                spdlog::error("slice sample: failed to load '{}': {}", meshPath,
+                              meshResult.error().message);
+                return nullptr;
+            }
+            return std::make_unique<SliceSample>(std::move(*meshResult));
+        });
 }

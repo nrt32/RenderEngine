@@ -24,8 +24,11 @@
 // before the frame. Fixed-size offscreen runs never fire the callback, so the
 // headless gate path is unchanged.
 
+#include <functional>
 #include <memory>
+#include <vector>
 
+#include "broker/app_context.hpp"
 #include "core/window.hpp"
 #include "data/result.hpp"
 #include "scene/view.hpp"
@@ -140,6 +143,47 @@ class SampleHarness {
     std::unique_ptr<ISample> sample_;
     bool imGuiInitialized_{false};
 };
+
+// ---------------------------------------------------------------------------
+// Shared sample constants + helpers (T17 AS1/AS2 — batch app polish).
+// ---------------------------------------------------------------------------
+
+/// Shared OIT/mesh/plane/volume window size — the OPENING size only; every
+/// per-frame view rect and camera aspect derives from the LIVE framebuffer dims
+/// via fitPerspectiveViewToPixels / aspectFromDims (T23), so compile-time
+/// constants never feed projections.
+inline constexpr int kWindowWidth = 800;
+inline constexpr int kWindowHeight = 600;
+/// MPR window size (SPEC FR-app.2 pins 1280×960 as the default MPR window).
+inline constexpr int kMprWindowWidth = 1280;
+inline constexpr int kMprWindowHeight = 960;
+/// Default number of frames before a sample exits cleanly (gate overrides via
+/// RE_SAMPLE_MAX_FRAMES). Single source for the six samples (AS2 constants).
+inline constexpr int kDefaultFrames = 300;
+/// Default perspective vertical field of view in degrees (~60 deg).
+inline constexpr float kDefaultFovYDeg = 60.0f;
+
+/// Per-frame bridge helper (AS2) — dedups the `sync → renderAll → presentAll`
+/// triple that previously appeared verbatim in six `ISample::renderFrame`
+/// implementations. The helper is the ONE site for the broker façade sequence:
+/// sync translates dirty scene fields into cached Re state, renderAll draws every
+/// ReView into its own target, presentAll blits each target 1:1 into its window
+/// rect (null destination = the window's default framebuffer). Returns the first
+/// typed error encountered, or success.
+data::Result<void> syncRenderPresent(broker::AppContext& ctx,
+                                     const std::vector<scene::View>& views);
+
+/// Main-entry helper (AS2) — dedups the `load → window → harness → run` mains
+/// that were sextuplicated across mesh/plane/volume/slice/oit/mpr samples plus
+/// their `kWindowWidth/kWindowHeight/kDefaultFrames` constants. The factory
+/// creates the sample (including any asset loading it needs) and returns a
+/// ready-to-run ISample; the helper owns window creation, harness wiring and
+/// the bounded run loop. Returns the process exit code (0 on clean stop).
+/// The factory must return nullptr on failure (and log via spdlog); the helper
+/// then returns 1 without opening a window.
+int runSample(const char* windowTitle, int width, int height,
+              int defaultFrames,
+              std::function<std::unique_ptr<ISample>()> factory);
 
 /// Read the RE_SAMPLE_MAX_FRAMES environment variable, defaulting to
 /// `defaultFrames` when unset/empty. Bounds the sample run loop so the gate can

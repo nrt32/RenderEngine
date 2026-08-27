@@ -71,12 +71,8 @@ namespace data = re::data;
 namespace oit = re::app::oit_scene;
 namespace scene = re::scene;
 
-// The harness window size: the OPENING size only — every per-frame value
-// (view rect, camera aspect) derives from the live framebuffer dims instead.
-constexpr int kWindowWidth = 800;
-constexpr int kWindowHeight = 600;
-// Default number of frames before the sample exits cleanly.
-constexpr int kDefaultFrames = 300;
+// Window size and frame count are shared via app::kWindowWidth etc. (AS2
+// constants dedup — the OPENING size only; live dims drive every frame).
 
 /// The OIT sample: owns the loaded bunny + the AppContext composition root and
 /// drives one bridged frame per renderFrame call.
@@ -98,24 +94,22 @@ class OitSample final : public app::ISample {
         // Opaque layer values first (draw order within the pass), then the
         // transparent set — the compositor captures them out-of-band anyway,
         // but keeping store order aligned with the documented arrangement
-        // makes the scene readable.
-        ctx_.store().addMeshObject(makeBoxObject(oit::kGoldMin, oit::kGoldMax,
-                                                 oit::kGoldColor));
-        ctx_.store().addMeshObject(
-            makeBunnyObject(bunnyBounds));
-        ctx_.store().addMeshObject(makeBoxObject(oit::kNearGlassMin,
-                                                 oit::kNearGlassMax,
-                                                 oit::kNearGlassColor));
-        ctx_.store().addMeshObject(makeBoxObject(oit::kFarGlassMin,
-                                                 oit::kFarGlassMax,
-                                                 oit::kFarGlassColor));
+        // makes the scene readable. Capture returned ObjectIds (AS3) instead
+        // of hardcoding {1,2,3,4} — stable across store policy changes.
+        const uint64_t idGold = ctx_.store().addMeshObject(
+            makeBoxObject(oit::kGoldMin, oit::kGoldMax, oit::kGoldColor));
+        const uint64_t idBunny =
+            ctx_.store().addMeshObject(makeBunnyObject(bunnyBounds));
+        const uint64_t idNear = ctx_.store().addMeshObject(makeBoxObject(
+            oit::kNearGlassMin, oit::kNearGlassMax, oit::kNearGlassColor));
+        const uint64_t idFar = ctx_.store().addMeshObject(makeBoxObject(
+            oit::kFarGlassMin, oit::kFarGlassMax, oit::kFarGlassColor));
 
         view_.id = 1;
-        applyLiveDims(kWindowWidth, kWindowHeight);
+        applyLiveDims(app::kWindowWidth, app::kWindowHeight);
         view_.setClearColor(oit::kClearColor);
         view_.setDepthTest(true);
-        // All four object ids (1..4): addMeshObject assigns sequential ids.
-        view_.setItemIds({1u, 2u, 3u, 4u});
+        view_.setItemIds({idGold, idBunny, idNear, idFar});
     }
 
     /// The resize hook: apply the new pixel dims immediately so the very next
@@ -128,18 +122,10 @@ class OitSample final : public app::ISample {
         // Live aspect from THIS frame's harness pixel size first (the
         // arrangement camera is aspect-corrected so no window shape stretches
         // the scene; change-guarded setters make a no-resize frame free),
-        // then the bridge path: sync → renderAll → presentAll.
+        // then the single-site bridge façade (AS2 syncRenderPresent).
         applyLiveDims(width, height);
         views_ = {view_};
-        auto s = ctx_.bridge().sync(views_, ctx_.store());
-        if (s.failed()) {
-            return s;
-        }
-        auto r = ctx_.bridge().renderAll();
-        if (r.failed()) {
-            return r;
-        }
-        return ctx_.bridge().presentAll(nullptr);
+        return app::syncRenderPresent(ctx_, views_);
     }
 
     const char* title() const override {
@@ -207,23 +193,20 @@ class OitSample final : public app::ISample {
 } // namespace
 
 int main() {
-    const std::string meshPath =
-        std::string(RE_SOURCE_DIR) + "/data/meshes/bunny.obj";
-    auto meshResult = re::io::loadObjMesh(meshPath);
-    if (meshResult.failed()) {
-        spdlog::error("oit sample: failed to load '{}': {}", meshPath,
-                      meshResult.error().message);
-        return 1;
-    }
-
-    auto windowResult = core::Window::create(kWindowWidth, kWindowHeight,
-                                             "RenderEngine - OIT Sample");
-    if (windowResult.failed()) {
-        spdlog::error("oit sample: {}", windowResult.error().message);
-        return 1;
-    }
-
-    auto sample = std::make_unique<OitSample>(std::move(*meshResult));
-    app::SampleHarness harness(std::move(*windowResult), std::move(sample));
-    return harness.run(app::sampleMaxFrames(kDefaultFrames));
+    // Single-site entry via app::runSample (AS2: load→window→run dedup). The
+    // factory encapsulates the bunny load so the main is one call; window size
+    // and frame count are the shared constants (AS2).
+    return app::runSample(
+        "RenderEngine - OIT Sample", app::kWindowWidth, app::kWindowHeight,
+        app::kDefaultFrames, []() -> std::unique_ptr<app::ISample> {
+            const std::string meshPath =
+                std::string(RE_SOURCE_DIR) + "/data/meshes/bunny.obj";
+            auto meshResult = re::io::loadObjMesh(meshPath);
+            if (meshResult.failed()) {
+                spdlog::error("oit sample: failed to load '{}': {}", meshPath,
+                              meshResult.error().message);
+                return nullptr;
+            }
+            return std::make_unique<OitSample>(std::move(*meshResult));
+        });
 }

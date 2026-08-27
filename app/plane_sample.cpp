@@ -51,6 +51,7 @@
 #include <string>
 #include <utility>
 
+#include "app/ct_transfer_function.hpp"
 #include "app/mpr_slice.hpp"
 #include "app/sample_harness.hpp"
 #include "broker/app_context.hpp"
@@ -74,29 +75,9 @@ namespace data = re::data;
 namespace scene = re::scene;
 namespace volume = re::volume;
 
-// The harness window size: the OPENING size only — the per-frame view rects
-// derive from the live framebuffer dims (left/right halves of the CURRENT
-// size) instead.
-constexpr int kWindowWidth = 800;
-constexpr int kWindowHeight = 600;
-constexpr int kViewWidth = kWindowWidth / 2;
-constexpr int kViewHeight = kWindowHeight;
-// Default number of frames before the sample exits cleanly.
-constexpr int kDefaultFrames = 300;
-
-/// A CT window/level transfer function over the sample_ct value range
-/// ([-3024, 2529]): air (low densities) transparent, soft tissue opaque and
-/// bright. Deterministic control points; mirrors the ramp the other samples
-/// use, so all samples display consistent tissue colors.
-volume::TransferFunction makeCtTransferFunction() {
-    using CP = volume::TransferFunction::ControlPoint;
-    return volume::TransferFunction(
-        {CP{-1024.0f, volume::RgbaColor{0.0f, 0.0f, 0.0f, 0.0f}},
-         CP{-300.0f, volume::RgbaColor{0.05f, 0.05f, 0.10f, 0.05f}},
-         CP{40.0f, volume::RgbaColor{0.90f, 0.50f, 0.20f, 0.90f}},
-         CP{300.0f, volume::RgbaColor{0.90f, 0.50f, 0.20f, 1.00f}},
-         CP{2500.0f, volume::RgbaColor{1.00f, 1.00f, 1.00f, 1.00f}}});
-}
+// Window size via app::kWindowWidth etc. (AS2); view halves derive from live
+// dims (AS2). Frame count via app::kDefaultFrames; CT ramp via the shared
+// factory in app/ct_transfer_function.hpp (AS1 single definition).
 
 /// The plane sample: owns the CT dataset + transfer function + AppContext and
 /// shows two GPU-extracted planes through two bridged ReViews.
@@ -125,7 +106,7 @@ class PlaneSample final : public app::ISample {
         const uint64_t axialId = ctx_.store().addVolumeSliceObject(std::move(axial));
 
         views_[0].id = 1;
-        views_[0].rect = scene::Rect{0, 0, kViewWidth, kViewHeight};
+        views_[0].rect = scene::Rect{0, 0, app::kWindowWidth / 2, app::kWindowHeight};
         views_[0].camera =
             broker::makeSliceCamera(static_cast<float>(freeW),
                                     static_cast<float>(freeH));
@@ -154,7 +135,7 @@ class PlaneSample final : public app::ISample {
         const glm::vec3 obliquePoint(0.5f, 0.5f, 0.5f);
 
         views_[1].id = 2;
-        views_[1].rect = scene::Rect{kViewWidth, 0, kViewWidth, kViewHeight};
+        views_[1].rect = scene::Rect{app::kWindowWidth / 2, 0, app::kWindowWidth / 2, app::kWindowHeight};
         // Camera looking straight down the oblique plane's normal at the cube
         // center: eye on +n at distance 3, square ortho window ±0.75 (the
         // diagonal cross-section rectangle of the unit cube is √2 × 1, so
@@ -181,28 +162,17 @@ class PlaneSample final : public app::ISample {
 
     data::Result<void> renderFrame(int width, int height) override {
         // Clear the window behind the two-view split (a background, not a
-        // viewport blend — the views are placed by the engine blit).
+        // viewport blend — the views are placed by the engine blit; stashed
+        // until presentAll compositing lands per AS7).
         core::bindDefaultFramebuffer();
         core::setViewport(0, 0, width, height);
         core::setClearColor(0.02f, 0.02f, 0.03f, 1.0f);
         core::clearColor();
 
-        // Live dims first: both rects re-split the CURRENT window size (left
-        // half | right half; change-guarded setters make a no-resize frame
-        // free), then the bridge path for BOTH views: after the first sync
-        // the poll early-out makes sync free, and renderAll/presentAll
-        // compose and present the two targets every frame.
+        // Live dims first, then the single-site bridge façade (AS2).
         applyLiveRects(width, height);
         frame_.assign(views_.begin(), views_.end());
-        auto s = ctx_.bridge().sync(frame_, ctx_.store());
-        if (s.failed()) {
-            return s;
-        }
-        auto r = ctx_.bridge().renderAll();
-        if (r.failed()) {
-            return r;
-        }
-        return ctx_.bridge().presentAll(nullptr);
+        return app::syncRenderPresent(ctx_, frame_);
     }
 
     const char* title() const override {
@@ -246,28 +216,19 @@ class PlaneSample final : public app::ISample {
 } // namespace
 
 int main() {
-    // Load the committed CT volume before anything else: the extracted planes
-    // come from real scan data, not from procedural stand-ins. Loading first
-    // means a missing or corrupt file fails fast with a typed error and exit
-    // code 1 — never half-initialized GL state.
-    const std::string volumePath =
-        std::string(RE_SOURCE_DIR) + "/data/volumes/sample_ct.nrrd";
-    auto volumeResult = re::io::loadNrrdVolume(volumePath);
-    if (volumeResult.failed()) {
-        spdlog::error("plane sample: failed to load '{}': {}", volumePath,
-                      volumeResult.error().message);
-        return 1;
-    }
-
-    auto windowResult = core::Window::create(kWindowWidth, kWindowHeight,
-                                             "RenderEngine - Plane Sample");
-    if (windowResult.failed()) {
-        spdlog::error("plane sample: {}", windowResult.error().message);
-        return 1;
-    }
-
-    auto sample = std::make_unique<PlaneSample>(std::move(*volumeResult),
-                                                makeCtTransferFunction());
-    app::SampleHarness harness(std::move(*windowResult), std::move(sample));
-    return harness.run(app::sampleMaxFrames(kDefaultFrames));
+    // Single-site entry via app::runSample (AS2: load→window→run dedup).
+    return app::runSample(
+        "RenderEngine - Plane Sample", app::kWindowWidth, app::kWindowHeight,
+        app::kDefaultFrames, []() -> std::unique_ptr<app::ISample> {
+            const std::string volumePath =
+                std::string(RE_SOURCE_DIR) + "/data/volumes/sample_ct.nrrd";
+            auto volumeResult = re::io::loadNrrdVolume(volumePath);
+            if (volumeResult.failed()) {
+                spdlog::error("plane sample: failed to load '{}': {}",
+                              volumePath, volumeResult.error().message);
+                return nullptr;
+            }
+            return std::make_unique<PlaneSample>(std::move(*volumeResult),
+                                                 app::RE_CT_TF());
+        });
 }
