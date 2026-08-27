@@ -20,14 +20,14 @@
 #                                  (citations excluded from the count); waivers
 #                                  via tools/comment_context.allow ERE lines
 # '#' lines are comments. Source-scanning rules scan ONLY the directories in
-# AUDIT_SOURCE_DIRS (default: src include lib engine tests app). If your
-# owning-module rule must cover dirs outside the defaults, override
+# AUDIT_SOURCE_DIRS (default: io data volume scene core broker render app utils test_utils tests via tools/env.sh).
+# If your owning-module rule must cover dirs outside the defaults, override
 # AUDIT_SOURCE_DIRS in env (or add those dirs) or the audit can't see them.
 # Rules are skipped when no source dirs exist yet; build-file rules are skipped
 # when no build files exist yet.
 #
-# NOTE: project layout uses io/ data/ volume/ core/ render/ app/ tests/, so
-# AUDIT_SOURCE_DIRS must be overridden to include them (see audit.sh env or
+# NOTE: project layout uses io/ data/ volume/ scene/ core/ broker/ render/ app/ utils/ test_utils/ tests/, so
+# AUDIT_SOURCE_DIRS must be exported via tools/env.sh (see audit.sh env or
 # run_task.sh) for the ownership/forbidden rules below to take effect.
 # =============================================================================
 
@@ -37,16 +37,17 @@ no_secrets	forbid_grep	(api[_-]?key|password|secret)\s*=\s*["'][A-Za-z0-9+/]{12,
 # --- Dependency lock: every FetchContent_Declare must carry a pinned GIT_TAG ---
 # (must be a release tag or commit SHA, never a branch name; the mechanical
 # floor below rejects common branch names in every build file incl. the root
-# CMakeLists.txt, reviewer verifies the rest)
+# CMakeLists.txt, reviewer verifies the rest; pinned tags: glfw 3.4, glad2 v2.0.8 (73db193), glm 1.0.1, imgui v1.92.9, googletest v1.15.2, spdlog v1.14.1, stb 2c980bb59875b0d32144a71867fbdebb2f77cd20, json v3.11.3 — see docs/spec/techstack.md §2 and docs/spec/assets.md)
 deps_pinned	require_grep	FetchContent_Declare\([^)]*GIT_TAG	dependencies must be pinned via FetchContent GIT_TAG
-deps_pinned_no_branch	forbid_flag	GIT_TAG\s+["']?(master|main|HEAD|develop)\b	dependencies must pin a release tag or commit SHA, never a branch name
+deps_pinned_no_branch	forbid_flag	GIT_TAG\s+["']?(master|main|HEAD|develop|feature|release|hotfix|branch)\b	dependencies must pin a release tag or commit SHA, never a branch name
 
 # --- GL ownership & RHI: raw GL calls ONLY under core/rhi/gl/ via IRHIContext (SPEC §3/§6 EOL) -------
 # render/, app/, tests/, broker/, scene/, and utils/ must go through core/rhi/ wrappers (IRHIContext); io/, data/, volume/ are GL-free.
-# V3 tightens the anchor: raw gl* must be confined to core/rhi/gl/ (one RHI impl); core/ outside that (e.g., core/window.cpp, core/load_core_gl.cpp keep their probes) is now allow-listed as anchor; todo: after V3.2a RHI lands, switch this to `core/rhi/gl|` anchor.
-# For incremental migration, the gate keeps `core|` anchor until core/rhi/gl/ exists — `rhi_ownership` is the V3 hard anchor.
-gpu_api_ownership	forbid_outside	core|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/ (until core/rhi/gl/ lands, then tightens to core/rhi/gl/)
-# rhi_ownership	forbid_outside	core/rhi/gl|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/rhi/gl/ via IRHIContext (enable when core/rhi/ exists; SOLID DIP + OCP for Vulkan)
+# V3 tightens the anchor: raw gl* must be confined to core/rhi/gl/ (one RHI impl); core/ outside that (e.g., core/window.cpp, core/load_core_gl.cpp keep their probes) is allow-listed as anchor until V3.2a RHI lands.
+# Transitional (until T10 (V3.9) RHI lands audit tightens to core/rhi/gl/): gpu_api_ownership keeps `core|` anchor; rhi_ownership is the V3 hard anchor (activate at T10 RHI landing when `core/rhi/gl/` appears — keep commented until then, see TASKS.md T10 G + docs/spec/guardrails.md §6) — see docs/spec/guardrails.md §6 transitional note.
+# test_utils/ PixelReader façade must call REContext::readRgba8, not raw gl* — raw stays core-only, façade is via REContext.
+gpu_api_ownership	forbid_outside	core|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/ (transitional; tightens to core/rhi/gl/ after V3.2a RHI lands; test_utils façade via REContext, not raw)
+# rhi_ownership	forbid_outside	core/rhi/gl|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/rhi/gl/ via IRHIContext (activate when core/rhi/gl/ exists; SOLID DIP + OCP for Vulkan)
 # New audit anchor: no raw gl* outside core/ at all (already covered) AND no core/rhi/gl/*.hpp include outside broker/render/core (DIP — scene/io/data/volume may never include RHI)
 
 # --- Legacy fixed-function API must never appear anywhere ----------------------
@@ -58,14 +59,17 @@ no_legacy_api	forbid_grep	\bglBegin\b|glMatrixMode|glOrtho|glFrustum	legacy fixe
 
 # --- Readback discipline: raw readback calls only under core/ ------------------
 # (single-GL-owner rule; readback is consumed by tests for verification)
-no_production_readback	forbid_outside	core|\b(glMapBufferRange|glGetBufferSubData|glReadPixels|glGetTexImage|glGetTexLevelParameteriv)\b	readback raw calls only under core/ (test-consumed)
+# Raw glReadPixels/glGet* stays exclusive to core/re_context.cpp (sole anchor);
+# test_utils/ façade (test_utils::PixelReader) must go via REContext::readRgba8, not raw — audit stays core-only.
+no_production_readback	forbid_outside	core|\b(glMapBufferRange|glGetBufferSubData|glReadPixels|glGetTexImage|glGetTexLevelParameteriv)\b	readback raw calls only under core/ (test-consumed; test_utils façade via REContext, not raw)
 
 # --- Logging discipline: no raw printf/cout for diagnostics --------------------
 no_raw_diagnostics	forbid_grep	std::cout|std::cerr|\bprintf\(	logging discipline: use spdlog, not printf/cout
 
 # --- Asset licensing: every dataset dir must carry a LICENSE file --------------
-# (grep is a floor; the T2 gate enforces one LICENSE per dataset dir)
-assets_licensed	require_grep	LICENSE	at least one LICENSE present (floor); per-dataset-dir LICENSE enforced by T2 gate (SPEC section 7)
+# Per-dataset-dir LICENSE is enforced mechanically by the T2 gate (`test -f data/meshes/LICENSE && test -f data/volumes/LICENSE`); grep is floor only.
+# Audit floor (one LICENSE anywhere) catches zero-license repo; per-dir completeness is gate test (audit floor + T2 per-dir gate), not audit alone.
+assets_licensed	require_grep	LICENSE	at least one LICENSE present (floor only); per-dataset-dir LICENSE enforced by T2 gate `test -f data/meshes/LICENSE && test -f data/volumes/LICENSE` (SPEC §7)
 
 # --- Disposition / layer isolation (SPEC §3/§6) ----------------------------------
 # scene/ is RE-free + GL-free; render/ never includes scene/; broker/ is the
@@ -73,9 +77,13 @@ assets_licensed	require_grep	LICENSE	at least one LICENSE present (floor); per-d
 # scene/ may include data/ + volume/ + glm only — never render/ or core/ GL.
 # NOTE: enforced after V3.1 lands (scene/ + broker/ created); until then the
 # concrete forbid is review-only to avoid false positives on docs/examples.
-# V3.1 review-gated: both dispositions verified by review (forbid_grep over all SOURCE_DIRS would false-positive on render self-includes/tests); a future forbid_inside mode will make disposition_scene mechanical.
-# disposition_scene — review-gated (scene must never include render/ — verified by review, not forbid_grep which would flag render self-includes):	forbid_grep	#include.*render/	re::scene must never include render/ (broker owns the mediation)
-# disposition_render — review-gated (per-dir check deferred; forbid_grep over all SOURCE_DIRS would false-positive on scene self-includes and tests):	forbid_grep	#include.*scene/	re::render must never include scene/ (broker owns the mediation)
+# Disposition / layer isolation — mechanical forbid_inside (SPEC §3/§6, broker is only lib that may include both)
+disposition_scene	forbid_inside	scene|#include.*render/	re::scene must never include render/ (broker owns the mediation)
+disposition_render	forbid_inside	render|#include.*scene/	re::render must never include scene/ (broker owns the mediation)
+
+# --- Bridge completeness + rendering hygiene (SPEC §6) --------------------------------
+render_no_glad	forbid_inside	render|#include.*glad	<glad/gl.h> must not appear outside core/ (GL constants via core wrappers; audit render_no_glad_include)
+no_noop_broker	forbid_inside	broker|Noop	broker/ must not contain Noop/placeholder renderables (bridge completeness; every scene kind routes to real layer or typed error)
 
 # --- Broker mediation: one file per mapper + ISP segregation (SPEC §11 SOLID) ----------
 # The broker/ mediation is heavily abstracted — one IMapper<AppT,ReT> (pure) or ICachedMapper<AppT,ReT> per file
@@ -102,6 +110,11 @@ asset_indirection	forbid_grep	data::Mesh::positions|data::VolumeDataset::voxels	
 # --- Broker app-reach rule (SPEC §11) ---------------------------------------
 # app/ must not hold a broker mapper handle directly (must go through ViewBridge).
 broker_app_reach	forbid_grep	broker.*IMapper|broker.*Mapper.*translate	app must not hold a broker mapper handle directly (use ViewBridge façade)
+
+# --- Tests must not include Window directly (SPEC §8, T15 — active from T15, review-only until T15 lands) ---
+# Tests use only offscreen context via utils::OffscreenContext delegating to core.
+# Enforced from T15 GlfwRuntime onwards; until T15 lands violations are review-gated (transitional) — after T15 the gate `grep -R "window\\.hpp" tests/ ==0` must pass:
+test_window_forbid	forbid_inside	tests|#include.*core/window\.hpp	tests must not include core/window.hpp — use offscreen context (T15 GlfwRuntime)
 
 # --- ACL: app never includes render/ (SPEC §3/§11, broker/README) -----------
 # The scene→render mediation is broker's monopoly: app expresses scenes as
@@ -138,11 +151,17 @@ ownership_raw_ptr_broker	forbid_inside	broker|(const[[:space:]]+)?[A-Z][A-Za-z0-
 ownership_raw_ptr_app	forbid_inside	app|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]	app/ must not declare unmarked raw pointers — mark documented borrows `Type* /*borrow*/ name` + @note lifetime: owner, or use smart/handle types
 
 # --- Evidence rule + regression lock (review-gated, generic) --------------------
-# R4 evidence_rule — every gate test asserts an explainable constant (analytic value, golden corpus hit, spec-derived invariant — never non-empty/non-black/>0); reviewer verifies 1/255, 1e-6, 152MB cost etc. Mechanical floor is the per-task grep counts; the rule itself is review-gated.
-# R3 regression_lock — prior task tests never weakened to make room for new code (review verifies).
-# Placeholders keep audit green while documenting the review gate (never match).
-# evidence_rule_placeholder	forbid_grep	__never_matches_evidence_rule__
-# regression_lock_placeholder	forbid_grep	__never_matches_regression_lock__
+# R4 evidence_rule — every gate test asserts an explainable constant (analytic value, golden corpus hit, spec-derived invariant — never non-empty/non-black/>0); reviewer verifies 1/255, 1e-6, 152MB cost etc. Mechanical floor is the per-task grep counts (DoD analytic values: T10 uInvViewProj, T8 152MB, T13 BudgetExceeded code, T1 Teapot pixel etc.); the rule itself is review-gated — audit.sh exit 0 + reviewer checklist verifies evidence/regression per gate.
+# R3 regression_lock — prior task tests never weakened to make room for new code (review verifies; audit placeholder never matches, reviewer is gate).
+# Mechanical weak-assert floor (complements review gate): per-task DoD grep counts are the mechanical floor (T10 uInvViewProj, T8 152 MB, T13 BudgetExceeded code, T1 Teapot pixel 1/255 etc.) — review gate verifies 1/255, 1e-6; bare non-empty/non-black without constant is forbidden by reviewer checklist (no generic regex — comments/docs legitimately mention the phrase).
+weak_assert_phrase	forbid_grep	__never_matches_weak_assert__	weak assert phrase placeholder — mechanical floor is per-task DoD grep counts (analytic values: T10 uInvViewProj, T8 152MB etc.); review gate verifies 1/255, 1e-6; bare non-empty/non-black without constant is forbidden by reviewer checklist
+evidence_rule	forbid_grep	__never_matches_evidence_rule__	evidence rule is review-gated: every test asserts an explainable constant (analytic 1/255, 1e-6, 152MB) — reviewer checklist
+regression_lock	forbid_grep	__never_matches_regression_lock__	regression lock is review-gated: prior tests never weakened — reviewer checklist
+
+# --- Sanitizer contract (SPEC §5) — catch re-introduction of per-target flags ----------
+# V3 T11 defines INTERFACE re_project_sanitizers linked by every re_* target; ad-hoc per-dir -fsanitize blocks deleted.
+# This forbid catches direct add_compile_options/add_definitions with -fsanitize outside the INTERFACE target.
+no_per_target_sanitize	forbid_grep	add_compile_options.*-fsanitize|add_definitions.*-fsanitize	per-target -fsanitize is forbidden — use INTERFACE re_project_sanitizers linked by every re_* target (T11)
 
 # --- Build hygiene (generic, reinforce here) -----------------------------------
 # (built-in checks already cover warning-suppression flags/pragmas)

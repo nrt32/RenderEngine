@@ -234,10 +234,10 @@ section is a `render::View` (`ReView`) that owns **one `ViewTarget`**
 (`Texture2D+Framebuffer` sized `rect.w×h`) + a `Camera` +
 `optional<ClipPlane>` (`2D` when present, `3D` when `nullopt`) +
 `list<IRenderable>` (`VolumeSlice+MeshSlice` for `2D`, `Volume+Mesh` for `3D`).
-Each `IRenderable` is type-erased `drawLayer(Camera,DrawContext&)` — `View`
+Each `IRenderable` is type-erased `drawLayer(Camera,REContext& (formerly DrawContext&, T2))` — `View`
 never knows the renderer. Each renderer (`Mesh/Plane/Volume/SliceRenderer`)
-gains `drawLayer(SceneT,Camera,DrawContext&)` that assumes `ReView` already
-`bind+viewport+clear` via the same `DrawContext`; the single-item
+gains `drawLayer(SceneT,Camera,REContext&)` that assumes `ReView` already
+`bind+viewport+clear` via the same `REContext`; the single-item
 `render(SceneT,Camera,RenderTarget)` keeps its own `clear` for direct tests.
 No app-side viewport blending: the engine `View::blitTo(destination)` is the
 present. The MPR sample's 2×2 grid (docs/mpr.md) will be driven through this
@@ -247,11 +247,11 @@ present. The MPR sample's 2×2 grid (docs/mpr.md) will be driven through this
 |---|---|
 | `ViewRect` | a window-section rectangle in GL pixel coordinates (origin bottom-left, matching `core::setViewport`): `x`/`y`/`width`/`height`. The per-view window-section handle the app shares with the engine (still in `render/types.hpp`). |
 | `ViewTarget` | per-view FBO: the color-attachment `core::Texture2D` plus the `core::Framebuffer` that renders into it (textures stay alive for framebuffer lifetime), plus an OPTIONAL `DEPTH_COMPONENT24` depth-attachment texture when created with `DepthMode::Enabled` (`hasDepth()`/`depth()`; default `DepthMode::ColorOnly`). Sized `rect.w×h`; an enabled-depth target asserts framebuffer completeness WITH its depth attachment at creation, and `resize()` preserves the mode. `View` delegates FBO lifecycle to it (SRP via composition). |
-| `IRenderable` | type-erased draw (`render/i_renderable.hpp`): `virtual Result<void> drawLayer(Camera,DrawContext&)=0`. Each renderer provides `drawLayer(SceneT,Camera,DrawContext&)` assuming already bound+cleared; `View::addItem<SceneT>(SceneT,Renderer*)` wraps it. `View` never knows the renderer (DIP/OCP). |
+| `IRenderable` | type-erased draw (`render/i_renderable.hpp`): `virtual Result<void> drawLayer(Camera,REContext&)=0`. Each renderer provides `drawLayer(SceneT,Camera,REContext&)` assuming already bound+cleared; `View::addItem<SceneT>(SceneT,Renderer*)` wraps it. `View` never knows the renderer (DIP/OCP). |
 | `View` (`ReView`) | one per screen section: the `ViewRect`, the per-view `Camera`, the `optional<ClipPlane>` (`2D` vs `3D`), the `clearColor`, the per-view `depthTest` flag (default false — see "Depth support" below), the owned `ViewTarget` (`rect.w×h`), and the heterogeneous `vector<IRenderable>`. `ensureTarget()` creates/recreates the `ViewTarget` when size OR depth mode changed; `render(ctx)` binds the FBO, runs the shared prologue (clear + depth state per the flag) then iterates `drawLayer` without clearing between layers; `blitTo(destination)` copies the FBO into its pinned window rect via `core::blit`. Alias `ReView` kept for grep distinctness where both `scene::View` and `render::View` are in scope. |
 | `core::blit` | the `core/` wrapper around `glBlitFramebuffer` (guardrail `gpu_api_ownership`: raw GL call lives in `core/draw.cpp`). Copies a color pixel rectangle from a source FBO to a destination framebuffer (`nullptr` = default framebuffer 0), GL_NEAREST, scaled to the destination rect. v1 FBOs are color-only, so only `GL_COLOR_BUFFER_BIT` is blitted. |
 
-**Compositing semantics (View side).** `View::render(ctx)` uses the `DrawContext`
+**Compositing semantics (View side).** `View::render(ctx)` uses the `REContext`
 instance passed by the caller (per-frame, SRP via instance — SPEC §11.6 EOL-5) to
 run the shared prologue exactly once — `setViewport(0,0,w,h)` / `setClearColor` /
 `clearColor`, then the depth branch (`disableDepthTest` by default; `enableDepthTest`
@@ -602,7 +602,7 @@ Composition contract per frame (`oit_scene::composeFrame`):
    attachment (`DepthMode::Enabled`, the T18 support) and the shared pass
    prologue enables + clears the depth test, so golden box and bunny resolve
    overlaps by depth rather than draw order.
-2. **Depth handed back before capture** — `DrawContext::disableDepthTest()`
+2. **Depth handed back before capture** — `REContext::disableDepthTest()`
    runs on the SAME context instance that enabled it (its cache tracks the
    enable, so the raw disable always issues regardless of the global-function
    cache state), keeping both OIT passes in their established depth-off
@@ -824,9 +824,9 @@ pixel is exactly the stroke color.
 
 **Layer semantics + viewport plumbing.** `drawLayer(object|scene, camera,
 ctx)` assumes ReView already bind+viewport+clear via the same
-`core::DrawContext` and draws without clearing (View composes layers). The
+`core::REContext` and draws without clearing (View composes layers). The
 thick-line expansion needs the viewport pixel size; it is read from the
-DrawContext's cached viewport (`ctx.viewportRect()`, a new pure-cache
+REContext's cached viewport (`ctx.viewportRect()`, a new pure-cache
 accessor in `core/draw.hpp`) rather than a raw GL query, keeping render/
 GL-call-free. A cold context (no `setViewport` yet) is a typed error. The
 direct single-scene `render(scene, camera, target)` keeps its own
@@ -896,7 +896,7 @@ GPU-extracted CT planes instead of a procedural gradient quad; image-backed
 textured planes (e.g. future overlay images on top of an extracted slice)
 remain this renderer's contract. Since V3.4b (T12) it is the **sole
 owner of every textured-plane draw**: all displays reach the GPU only through
-this renderer — `drawLayer(PlaneScene, Camera, DrawContext&)` inside a ReView's
+this renderer — `drawLayer(PlaneScene, Camera, REContext&)` inside a ReView's
 IRenderable list (samples), or `render(scene, camera, target)` for direct
 single-target tests. There is no CPU quad parsing anywhere outside `render/`:
 the app side sends only `scene::PlaneObject{image asset ref, transform,
@@ -914,7 +914,7 @@ scene::PlaneObject{shared image asset ref, transform, presentation} (app/scene)
        binds its ONE program-duration shared unit quad as geometry
      = render::PlaneInstance{shared quad, shared image, model}
         └─ render::View::addItem(PlaneScene, &PlaneRenderer)
-             └─ View::render(): bind FBO + viewport + clear (DrawContext),
+             └─ View::render(): bind FBO + viewport + clear (REContext),
                 then PlaneRenderer::drawLayer per layer (no clear between)
                   └─ plane.vert.glsl / plane.frag.glsl (RE_GLSL_VERSION 450)
              └─ View::blitTo(dst): engine present via core::blit (GL_NEAREST,
@@ -1136,7 +1136,7 @@ implementation.
 Like `ContourRenderer`, this renderer deliberately does **not** join the
 `render::Scene` IRenderer dispatch variant (whose 4-alternative size is pinned
 by its own dispatch gate): ReView composes it through the type-erased
-`drawLayer(VolumeSliceScene, Camera, DrawContext&)` path and direct tests call
+`drawLayer(VolumeSliceScene, Camera, REContext&)` path and direct tests call
 the concrete typed overload. GPU 3D textures resolve through the shared
 asset store (`lookupVolume`, content-hash dedup), so an extracted slice and a
 ray-cast of one dataset share a single upload.
@@ -1184,7 +1184,7 @@ renderer" rule, SPEC §6):
 - **Pass prologue** — binding the target framebuffer, setting the viewport,
   clearing to the clear color, and setting depth test + blending state existed
   verbatim in every direct `render()` entry point. It is now
-  **`core::DrawContext::beginPass(framebuffer, width, height, r, g, b, a, depthTest = false)`**
+  **`core::REContext::beginPass`(framebuffer, width, height, r, g, b, a, depthTest = false)`**
   (`core/draw.hpp`), called once by each of the six direct-render entry points
   (`Mesh/Plane/Volume/Slice/Contour/VolumeSliceRenderer::render`) and by
   `View::render` — the composition owner whose single clear replaces per-layer

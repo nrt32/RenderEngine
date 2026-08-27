@@ -13,7 +13,7 @@ project.
 ## 2. File & module naming
 - Headers `snake_case.hpp`, sources `snake_case.cpp`; one primary class per
   file, named after the class (`phong_material.hpp` → `PhongMaterial`).
-- Module directories (lowercase): `io/ data/ volume/ scene/ core/ broker/ utils/ render/ app/ tests/` (`scene/` GL-free value lib, `broker/` only lib that may include both `scene/`+`render/`, `utils/` offscreen context + pixel reader — see `docs/spec/modules.md` §3).
+- Module directories (lowercase): `io/ data/ volume/ scene/ core/ broker/ utils/ render/ app/ tests/` + peer `test_utils/` (peer test-support lib, GL via `REContext` only — T18; `AUDIT_SOURCE_DIRS` includes `test_utils`) (`scene/` GL-free value lib, `broker/` only lib that may include both `scene/`+`render/`, `utils/` offscreen context + pixel reader — see `docs/spec/modules.md` §3).
 
 ## 3. Type names
 - Classes/structs/enums/aliases: `PascalCase` (`PhongMaterial`, `VolumeDataset`).
@@ -38,8 +38,8 @@ project.
 - One namespace per module under root namespace `re`:
   `re::io::`, `re::data::`, `re::volume::`, `re::scene::`, `re::core::`,
   `re::broker::`, `re::render::`, `re::app::`.
-- **`scene/` naming:** types inside `re::app::` carry **no `App` prefix**
-  (`app::MeshObject`, `app::Camera`, `app::View` — the namespace **is** the
+- **`scene/` naming:** types inside `re::scene::` carry **no `App` prefix**
+  (`scene::MeshObject`, `scene::Camera`, `scene::View` — the namespace **is** the
   prefix). The RE mirror in `re::render::` uses `Re` where needed for grep
   distinctness (`ReMeshObject`, `ReView`) or keeps `render::` qualification
   where both are included (only `broker/` includes both).
@@ -52,7 +52,7 @@ project.
   - `IMapper<AppT,ReT>{map(Ctx)}` pure vs `ICachedMapper:IMapper{mapCached,invalidate}`
     ISP-split — one file per mapper (`camera_mapper.*`, `mesh_object_mapper.*`,
     `view_bridge.*` etc.; `ViewBridge` is coordinator not mapper — guardrail
-    `broker_per_type`), `Broker{registerMapper<T>(unique_ptr<IMapper<T>>), get<T>()}`
+    `broker_per_type` + `isp_mapper_forbid`), header `broker/i_mapper.hpp` declares both `IMapper` + `ICachedMapper` together (single header, ISP-segregated by inheritance) for include simplicity; `broker/i_cached_mapper.hpp` retained as alias include (`#include "i_mapper.hpp"`) so `app/` DIP graph stays stable per `docs/spec/broker.md` §11.2.1 Q33 — `T4`/`T5` gate `grep -c DrawContext docs/spec/*.md==0` outside historical alias ensures `REContext` rename. `Broker{registerMapper<T>(unique_ptr<IMapper<T>>), get<T>()}`
     keyed by `std::type_index` (OCP — no `enum` switch), `IViewBridge{sync,renderAll,
     presentAll}` façade composing `ViewSynchronizer` (cache/dirty) + `ViewCompositor`
     (dispatch/present) SRP-split (T3 V3.2b). App never holds `IMapper`; only

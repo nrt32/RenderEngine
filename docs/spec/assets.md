@@ -44,6 +44,8 @@ echo "4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e  /tmp/CT-
 python3 tools/convert_nrrd.py /tmp/CT-chest.nrrd data/volumes/sample_ct.nrrd  # downsample ≤128³, raw NRRD, python3 >=3.10 stdlib only
 ```
 
+**Reproducibility:** `tools/convert_nrrd.py` is pinned to the repo commit (in-repo, stdlib-only, `python3 >=3.10`; no pip deps, no external hash) — verification is `python3 --version` and stdlib-only check plus `sha256sum tools/convert_nrrd.py` pin (reproducibility gate: re-running `python3 tools/convert_nrrd.py /tmp/CT-chest.nrrd` yields byte-identical `data/volumes/sample_ct.nrrd` SHA `816375cdcbb...` — deterministic downsample, no numpy randomness); the derived `data/volumes/sample_ct.nrrd` SHA `816375cdcbb...` is the binding artifact. `data/README.md` (sources, URLs, licenses, checksums) is also a T2 deliverable (see T2 doc-map).
+
 **Verified SHA256s of the committed files (T2):**
 - `data/meshes/bunny.obj` — `1eb35d1e21ce99e5ce911353b6be278990713448dd9e8f5c9387f9de39b32205` (matches source)
 - `data/meshes/teapot.obj` — `1b5396fedd74b577e32cef41146582c2f2e1a050d5b4915193c0ac1ad4187ed4` (matches source)
@@ -51,6 +53,11 @@ python3 tools/convert_nrrd.py /tmp/CT-chest.nrrd data/volumes/sample_ct.nrrd  # 
 
 These are asserted by the T2 gate (SHA256 of each committed file, plus the NRRD
 dims ≤128³ and the bunny.obj hand-counted vertex count).
+
+**Dependency pins (FetchContent `GIT_TAG`, verified SHAs — SPEC §2/§6 `deps_pinned`):**
+- `stb_image` — `https://github.com/nothings/stb` — commit `2c980bb59875b0d32144a71867fbdebb2f77cd20` — Public Domain — `GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20` (verified in `CMakeLists.txt:106`)
+- `nlohmann/json 3.11.3` — `https://github.com/nlohmann/json` — tag `v3.11.3` (commit `9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03`) — MIT — `GIT_TAG v3.11.3` (verified in `CMakeLists.txt:114`)
+- All other FetchContent deps pinned via release tag: `glfw 3.4`, `glad v2.0.8 (73db193)`, `glm 1.0.1`, `imgui v1.92.9`, `googletest v1.15.2`, `spdlog v1.14.1` — see `docs/spec/techstack.md` §2 and `CMakeLists.txt:48-100`.
 
 ### Asset persistence (V3 research — robust/cleaner/extensible)
 

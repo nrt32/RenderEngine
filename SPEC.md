@@ -32,7 +32,7 @@ section files directly.
   Ubuntu inside WSL (Windows 11, WSLg). Renders meshes, volumes, planes, mesh
   slices, and OIT; the MPR sample shows T/C/S + 3D views in one window (§1).
 - **Stack:** GLFW 3.4, glad2 v2.0.8, GLM 1.0.1, Dear ImGui v1.92.9, GoogleTest
-  v1.15.x, spdlog v1.14.1, stb — all pinned via FetchContent `GIT_TAG` (§2, §6).
+  v1.15.2, spdlog v1.14.1, stb — all pinned via FetchContent `GIT_TAG` (§2, §6).
 - **Modules:** `io/ data/ volume/ scene/ core/ broker/ utils/ render/ app/ tests/` — `core/`
   is the sole owner of raw GL calls (§3); `scene/` `re::scene` `STATIC` is the GL/RE-free app-side
   scene value library (`View{rect,plane,itemIds,gen}`, `Camera{pan/rotate/zoom/orbit → viewMatrix()}`,
@@ -42,9 +42,10 @@ section files directly.
   (math), ε=1e-4 (plane geometry) (§4).
 - **Guardrails:** dependency lock, GL ownership, forbidden patterns, evidence +
   regression lock, asset licensing, build hygiene (§6).
+- **Roles:** runner (`tools/run_task.sh`) / implementer / reviewer / orchestrator (user-facing) — see `AGENTS.md` loop-framework + `NAMING_CONVENTIONS.md` §10.
 - **Assets:** committed in-repo under `data/`, licensed, SHA256-pinned (§7).
 - **Env:** `source tools/env.sh` is the launch prerequisite; convenience
   scripts in `tools/` reconstruct the §8 build/test contract (§8).
-- **V2 roadmap:** eight completed V2 items (§9, archived as `V2-T1..V2-T8`) plus the pure-redesign V3 backlog `T9..T18` (`scene/` value lib → `CompositeKey`/`DrawContext` → `broker/` SRP-split → `View`/`ReView`/`IRenderable` → persistence → `SceneStore`-owned `AssetId` → RE-minimal), mirrored by the numbered backlog in `TASKS.md` (`T9: V3.1` .. `T18: V3.9`, §10-§12). `V3.x` survives only as Spec alias — the accepted standard is `Tn: Title / D / T / G`.
+- **V2 roadmap:** eight completed V2 items (§9, archived as `V2-T1..V2-T8`) plus the pure-redesign V3 backlog `T1..T19` (`scene/` value lib → `CompositeKey`/`REContext` (formerly `DrawContext`, T2 rename) → `broker/` SRP-split → `View`/`ReView`/`IRenderable` → persistence → `SceneStore`-owned `AssetId` → RE-minimal), mirrored by the numbered backlog in `TASKS.md` (`T1: hierarchy` .. `T19: View lights`, §10-§12). `V3.x` survives only as Spec alias in `roadmap.md` §9.1 — the accepted standard is `Tn: Title / D / T / G`.
 - **Persistence/layouts:** `ReView`/`Re*Object`/assets persist by `CompositeKey{Version,LayoutId,Id,Gen,Hash}` — not by `id` alone or `size` — a camera orbit dirties only `CameraMapper` (per-field `viewGen`), a `2D→3D` toggle on the same `ViewId` rebinds plane+items without map churn (§10).
 - **Materials/lights (pure redesign):** `V3` keeps `render::IMaterial→PhongMaterial` single path + fixed headlight (PBR/`Slice`/`Contour`+`ILight` deferred as §1 non-goal); `TransferFunction` stays beside `VolumeMaterial` in `VolumePresentation`; even hierarchies (`Mesh/Volume/Slice/Contour → Phong/PBR`, `Directional/Point/Spot` per `View`) are deferred to §12 inventory only (§12.4). `scene::Camera` (`pan/rotate/zoom/orbit`) sends only `view matrix` to RE (§3.1).

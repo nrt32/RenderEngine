@@ -59,7 +59,7 @@
 #include "app/mpr_slice.hpp"
 #include "app/sample_harness.hpp"
 #include "broker/app_context.hpp"
-#include "core/window.hpp"
+#include "core/framebuffer_size_state.hpp"
 #include "data/mesh.hpp"
 #include "data/result.hpp"
 #include "render/view.hpp"

@@ -7,8 +7,11 @@
 
 ### System packages (not in repo, provisioned by /loop-setup)
 - GCC/G++ (>= 12, for C++20), `cmake` (>= 3.24), `ninja` (optional), `git`,
-  `clang-format` (T1 ships the config; NAMING_CONVENTIONS §7 enforces it).
-- GL dev headers: `libgl1-mesa-dev`, `libegl1-mesa-dev`, `libx11-dev`,
+  `clang-format` (T1 ships the config; NAMING_CONVENTIONS §7 enforces it),
+  `xvfb` (required for T12/T13 sample smoke under WSLg fallback — headless gate).
+  Host verified on **Ubuntu 22.04/WSL2, GCC 12.3**; `libgl1-mesa-dev` provides
+  `libglx-dev` alias (either package satisfies `glxinfo` verification).
+- GL dev headers: `libgl1-mesa-dev` (alias `libglx-dev`), `libegl1-mesa-dev`, `libx11-dev`,
   `libxrandr-dev`, `libxcursor-dev`, `libxi-dev`, `libxinerama-dev`
   (GLFW build deps), plus mesa GL drivers for WSLg (`mesa-utils` for
   `glxinfo` verification).
@@ -16,14 +19,19 @@
   test runs: no display needed (offscreen GL context). `xvfb` is a **REQUIRED**
   package — the sample smoke gates (T12/T13) run under WSLg when present,
   otherwise under `xvfb`.
-- Build tools: `curl`/`wget` (asset fetch at setup), `python3` (conversion
+- Build tools: `curl`/`wget` (asset fetch at setup), `python3 >=3.10` (conversion
   tooling for NRRD downsample at setup — `tools/convert_nrrd.py`, **stdlib
-  only, no pip deps**), `unzip`.
+  only, no pip deps**; `python3 --version` ≥3.10 required, verified stdlib-only
+  via `python3 -c "import sys; print(sys.version)"`), `unzip`.
 - `ccache` (recommended, not required) — compiler cache so rebuilds after
   `tools/clean.sh` (or spurious recompiles) hit cached objects. If the system
   package is unavailable (no sudo), a user-local static binary under
   `~/.local/bin/ccache` is fine; `tools/configure.sh` auto-detects it via
   PATH and wires it in as the CMake compiler launcher.
+- **Leak-gate env:** `MESA_GL_VERSION_OVERRIDE=4.6` and `GALLIUM_DRIVER=llvmpipe`
+  are set in `tools/env.sh` for `ctest` leak gate — do not override; running
+  the gate on `d3d12` path yields nondeterministic LSAN attribution per `nfr.md:5`.
+  `ASAN_OPTIONS`/`LSAN_OPTIONS` suppressions for llvmpipe/d3d12 are documented in `docs/spec/nfr.md` T12 and `tools/env.sh` (suppression file `tools/lsan.supp` when present).
 
 ### Toolchain
 - Compiler: GCC 12+ (Ubuntu default on 22.04+).
@@ -36,8 +44,11 @@
   set explicitly). `tools/env.sh` sets it to `tools/configure.sh && cmake
   --build build -j$(nproc) && ctest --test-dir build --output-on-failure`,
   i.e. conditional configure + incremental build + full suite.
-- `AUDIT_SOURCE_DIRS="io data volume scene core broker render app utils tests"` — required for
+- `AUDIT_SOURCE_DIRS="io data volume scene core broker render app utils test_utils tests"` — required for
   audit ownership rules to see our non-default layout.
+- `MESA_GL_VERSION_OVERRIDE=4.6` + `GALLIUM_DRIVER=llvmpipe` — required leak-gate driver (per `nfr.md:33` + `tools/env.sh`; deterministic LLVMPipe, not d3d12). Do not override.
+- `ASAN_OPTIONS` / `LSAN_OPTIONS` + suppression file `tools/lsan.supp` — llvmpipe/d3d12 false-positive suppressions (documented `nfr.md` T11/T12 + `tools/env.sh`).
+- `ccache` — optional compiler cache; `tools/configure.sh` auto-detects `ccache` on `PATH` and wires as CMake launcher (see `nfr.md` incremental builds).
 
 ### Convenience scripts (tools/)
 The repo ships thin wrappers around the §8 build/test/env contract so manual

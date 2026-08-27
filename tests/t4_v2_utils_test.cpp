@@ -41,9 +41,9 @@ namespace {
 // ---------------------------------------------------------------------------
 
 // The committed tools/env.sh export line for AUDIT_SOURCE_DIRS (TASKS.md
-// R15 + the V3 DoD line: "io data volume scene core broker render app utils tests").
+// R15 + the V3 DoD line: "io data volume scene core broker render app utils test_utils tests" — test_utils present from start).
 constexpr const char* kAuditSourceDirsLiteral =
-    "export AUDIT_SOURCE_DIRS=\"io data volume scene core broker render app utils tests\"";
+    "export AUDIT_SOURCE_DIRS=\"io data volume scene core broker render app utils test_utils tests\"";
 
 // 8x8 RGBA8 color target.
 constexpr std::uint32_t kTargetWidth = 8u;
