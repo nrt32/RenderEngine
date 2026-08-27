@@ -40,40 +40,18 @@ SliceRenderer::SliceRenderer(std::shared_ptr<AssetRegistry> registry)
     : registry_(std::move(registry)) {}
 
 data::Result<core::ShaderProgram*> SliceRenderer::clipProgram() {
-    if (clipProgram_.has_value()) {
-        return data::makeValue<core::ShaderProgram*>(&*clipProgram_);
-    }
     const std::filesystem::path dir = RE_SHADER_DIR;
-    auto program = core::ShaderProgram::createWithGeometryFromFiles(
+    return clipProgram_.getOrLoadWithGeometryFromFiles(
         dir / "slice.vert.glsl", dir / "slice_clip.geom.glsl",
         dir / "slice_clip.frag.glsl");
-    if (program.failed()) {
-        return data::makeError<core::ShaderProgram*>(program.error().code,
-                                                     program.error().message);
-    }
-    clipProgram_ = std::move(*program);
-    return data::makeValue<core::ShaderProgram*>(&*clipProgram_);
 }
 
 data::Result<core::ShaderProgram*> SliceRenderer::captureProgram() {
-    if (captureProgram_.has_value()) {
-        return data::makeValue<core::ShaderProgram*>(&*captureProgram_);
-    }
-    // Capture the single `gWorldPos` varying (world-space cross-section
-    // vertex). Capture begins with the triangle primitive mode (the geometry
-    // stage outputs a triangle_strip) via core::TransformFeedback::begin at
-    // draw time.
     const std::vector<std::string> varyings = {"gWorldPos"};
     const std::filesystem::path dir = RE_SHADER_DIR;
-    auto program = core::ShaderProgram::createWithTransformFeedbackFromFiles(
+    return captureProgram_.getOrLoadWithTransformFeedbackFromFiles(
         dir / "slice.vert.glsl", dir / "slice_capture.geom.glsl",
         dir / "slice_capture.frag.glsl", varyings);
-    if (program.failed()) {
-        return data::makeError<core::ShaderProgram*>(program.error().code,
-                                                     program.error().message);
-    }
-    captureProgram_ = std::move(*program);
-    return data::makeValue<core::ShaderProgram*>(&*captureProgram_);
 }
 
 data::Result<core::TransformFeedback*> SliceRenderer::captureFeedback() {

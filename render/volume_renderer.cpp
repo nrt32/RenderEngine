@@ -18,6 +18,8 @@
 
 #include "core/re_context.hpp"
 #include "core/shader_program.hpp"
+#include "render/render_constants.hpp"
+#include "render/shader_cache.hpp"
 #include "volume/color.hpp"
 
 namespace re::render {
@@ -25,14 +27,9 @@ namespace re::render {
 VolumeRenderer::VolumeRenderer(std::shared_ptr<AssetRegistry> assets)
     : assets_(std::move(assets)) {}
 
-// Ray-cast shaders live as .glsl files under render/shaders/ (SPEC §9 V2.6)
-// and are loaded via core::ShaderProgram's file helpers. The fragment shader
-// mirrors the pure volume/ math (FR-vol.1/2/3).
-
-// Maximum transfer-function control points the shader accepts (uniform array
-// size in the GLSL). A volume::TransferFunction with more points is
-// rejected with a typed error.
-constexpr std::size_t kMaxTfPoints = 8u;
+// Ray-cast shaders live as .glsl files under render/shaders/ and are loaded
+// via the shared LazyProgramCache. The fragment shader mirrors the pure
+// volume math.
 
 std::pair<glm::vec3, glm::vec3> VolumeRenderer::worldAabb(
     const VolumeInstance& instance) {
@@ -54,18 +51,9 @@ std::pair<glm::vec3, glm::vec3> VolumeRenderer::worldAabb(
 }
 
 data::Result<core::ShaderProgram*> VolumeRenderer::rayCastProgram() {
-    if (rayCastProgram_.has_value()) {
-        return data::makeValue<core::ShaderProgram*>(&*rayCastProgram_);
-    }
     const std::filesystem::path dir = RE_SHADER_DIR;
-    auto program = core::ShaderProgram::createFromFiles(
+    return rayCastProgram_.getOrLoadFromFiles(
         dir / "volume_raycast.vert.glsl", dir / "volume_raycast.frag.glsl");
-    if (program.failed()) {
-        return data::makeError<core::ShaderProgram*>(program.error().code,
-                                                     program.error().message);
-    }
-    rayCastProgram_ = std::move(*program);
-    return data::makeValue<core::ShaderProgram*>(&*rayCastProgram_);
 }
 
 data::Result<core::VertexArray*> VolumeRenderer::screenQuad() {
@@ -94,19 +82,21 @@ data::Result<core::Texture3D*> VolumeRenderer::textureFor(
 }
 
 void VolumeRenderer::uploadTransferFunction(
-    const volume::TransferFunction& tf) const {
+    const volume::TransferFunction& tf, core::ShaderProgram* program) const {
     const std::size_t count = tf.size();
-    std::vector<float> values(count);
-    std::vector<glm::vec4> colors(count);
+    // Stack allocation: transfer functions are capped at eight points, so
+    // per-frame heap allocation is unnecessary. Reusing stack arrays avoids
+    // per-instance vector allocations on the hot path.
+    float values[kMaxTfPoints];
+    glm::vec4 colors[kMaxTfPoints];
     for (std::size_t i = 0u; i < count; ++i) {
         const auto& cp = tf.controlPoints()[i];
         values[i] = cp.value;
         colors[i] = glm::vec4(cp.color.r, cp.color.g, cp.color.b, cp.color.a);
     }
-    rayCastProgram_->setUniformInt("uTfCount",
-                                   static_cast<std::int32_t>(count));
-    rayCastProgram_->setUniformFloatArray("uTfValues", values.data(), count);
-    rayCastProgram_->setUniformVec4Array("uTfColors", colors.data(), count);
+    program->setUniformInt("uTfCount", static_cast<std::int32_t>(count));
+    program->setUniformFloatArray("uTfValues", values, count);
+    program->setUniformVec4Array("uTfColors", colors, count);
 }
 
 data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
@@ -114,7 +104,8 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
                                                  core::ShaderProgram* program,
                                                  core::VertexArray* quadVao) {
     program->use();
-    program->setUniformMat4("uViewProj", camera.proj * camera.view);
+    const glm::mat4 invViewProj = glm::inverse(camera.proj * camera.view);
+    program->setUniformMat4("uInvViewProj", invViewProj);
     program->setUniformInt("uVolume", 0); // sampler reads texture unit 0
 
     for (const VolumeInstance& instance : scene.volumes) {
@@ -169,7 +160,7 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
         program->setUniformMat4("uInvModel", invModel);
         program->setUniformVec3("uSize", size);
         program->setUniformFloat("uStepLength", kDefaultStepLength);
-        uploadTransferFunction(instance.transferFunction);
+        uploadTransferFunction(instance.transferFunction, program);
 
         auto draw =
             core::drawElements(*quadVao, kQuadTriangleIndices.size());

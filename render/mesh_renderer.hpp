@@ -34,6 +34,7 @@
 #include "render/imaterial.hpp"
 #include "render/itransparency_pipeline.hpp"
 #include "render/mesh_geometry.hpp"
+#include "render/shader_cache.hpp"
 #include "render/types.hpp"
 
 namespace re::render {
@@ -145,7 +146,7 @@ class MeshRenderer : public IRenderer {
     std::shared_ptr<AssetRegistry> registry_;
     std::shared_ptr<ITransparencyPipeline> transparency_;
 
-    std::optional<core::ShaderProgram> opaqueProgram_;
+    LazyProgramCache opaqueProgram_;
 };
 
 } // namespace re::render

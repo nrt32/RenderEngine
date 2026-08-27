@@ -63,17 +63,13 @@
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
 #include "render/asset_registry.hpp"
+#include "render/render_constants.hpp"
 #include "render/screen_quad.hpp"
+#include "render/shader_cache.hpp"
 #include "render/types.hpp" // Camera / RenderTarget / ClipPlane
 #include "volume/transfer_function.hpp"
 
 namespace re::render {
-
-/// Maximum transfer-function control points the extraction shader accepts
-/// (the uniform array size in volume_slice.frag.glsl). A
-/// volume::TransferFunction with more points is rejected with a typed error,
-/// mirroring the VolumeRenderer contract.
-inline constexpr std::size_t kMaxVolumeSliceTfPoints = 8u;
 
 /// One GPU-extracted slice: the volume handle (owner-driven) + TF + model + plane.
 struct VolumeSliceInstance {
@@ -185,9 +181,10 @@ class VolumeSliceRenderer {
     data::Result<core::Texture3D*> textureFor(
         const VolumeTextureHandle& handle);
 
-    /// Upload the transfer function `tf` to the currently-in-use program as
-    /// the TF control-point uniforms (uTfCount/uTfValues/uTfColors).
-    void uploadTransferFunction(const volume::TransferFunction& tf) const;
+    /// Upload the transfer function `tf` to `program` as the TF control-point
+    /// uniforms (uTfCount/uTfValues/uTfColors).
+    void uploadTransferFunction(const volume::TransferFunction& tf,
+                                core::ShaderProgram* program) const;
 
     /// Shared per-instance draw sequence used by both entry points (the
     /// caller has already validated the store and prepared the program):
@@ -198,7 +195,7 @@ class VolumeSliceRenderer {
                                core::ShaderProgram* program);
 
     std::shared_ptr<AssetRegistry> assets_;
-    std::optional<core::ShaderProgram> program_;
+    LazyProgramCache program_;
     std::optional<ScreenQuad> screenQuad_;
     mutable std::unordered_map<const data::VolumeDataset*, VolumeTextureHandle>
         legacyHandleCache_;

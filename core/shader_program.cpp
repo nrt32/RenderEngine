@@ -238,6 +238,72 @@ data::Result<ShaderProgram> ShaderProgram::createWithTransformFeedback(
     return data::makeValue<ShaderProgram>(ShaderProgram(*program));
 }
 
+namespace {
+
+data::Result<std::string> preprocessIncludes(const std::string& source,
+                                             const std::filesystem::path& baseDir,
+                                             int depth = 0) {
+    if (depth > 8) {
+        return data::makeError<std::string>(
+            1, "ShaderProgram: include depth exceeded");
+    }
+    std::string out;
+    out.reserve(source.size() * 2);
+    std::size_t pos = 0;
+    while (pos < source.size()) {
+        std::size_t nl = source.find('\n', pos);
+        std::string_view line = (nl == std::string::npos)
+                                    ? std::string_view(source.data() + pos,
+                                                         source.size() - pos)
+                                    : std::string_view(source.data() + pos,
+                                                         nl - pos);
+        // Trim leading whitespace for include detection.
+        std::size_t first = line.find_first_not_of(" \t\r");
+        bool isInclude = false;
+        std::string includePath;
+        if (first != std::string_view::npos &&
+            line.substr(first, 8) == "#include") {
+            std::size_t q1 = line.find('"', first + 8);
+            std::size_t q2 = (q1 == std::string_view::npos)
+                                 ? std::string_view::npos
+                                 : line.find('"', q1 + 1);
+            if (q1 != std::string_view::npos && q2 != std::string_view::npos) {
+                includePath = std::string(line.substr(q1 + 1, q2 - q1 - 1));
+                isInclude = true;
+            }
+        }
+        if (isInclude) {
+            std::filesystem::path inc = baseDir / includePath;
+            std::ifstream incFile(inc, std::ios::in | std::ios::binary);
+            if (!incFile) {
+                return data::makeError<std::string>(
+                    1, "ShaderProgram: failed to open include file: " + inc.string());
+            }
+            std::ostringstream incBuf;
+            incBuf << incFile.rdbuf();
+            if (incFile.bad()) {
+                return data::makeError<std::string>(
+                    1, "ShaderProgram: failed to read include file: " + inc.string());
+            }
+            std::string incContent = incBuf.str();
+            auto pre = preprocessIncludes(incContent, inc.parent_path(), depth + 1);
+            if (pre.failed()) {
+                return pre;
+            }
+            out += *pre;
+            out += '\n';
+        } else {
+            out.append(line.data(), line.size());
+            out += '\n';
+        }
+        if (nl == std::string::npos) break;
+        pos = nl + 1;
+    }
+    return data::makeValue<std::string>(std::move(out));
+}
+
+} // namespace
+
 data::Result<std::string> ShaderProgram::loadSourceFile(
     const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::in | std::ios::binary);
@@ -251,7 +317,12 @@ data::Result<std::string> ShaderProgram::loadSourceFile(
         return data::makeError<std::string>(
             1, "ShaderProgram: failed to read shader file: " + path.string());
     }
-    return data::makeValue<std::string>(buffer.str());
+    std::string raw = buffer.str();
+    auto pre = preprocessIncludes(raw, path.parent_path(), 0);
+    if (pre.failed()) {
+        return pre;
+    }
+    return data::makeValue<std::string>(std::move(*pre));
 }
 
 data::Result<ShaderProgram> ShaderProgram::createFromFiles(

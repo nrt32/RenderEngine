@@ -28,18 +28,9 @@ MeshRenderer::MeshRenderer(std::shared_ptr<AssetRegistry> registry,
     : registry_(std::move(registry)), transparency_(std::move(transparency)) {}
 
 data::Result<core::ShaderProgram*> MeshRenderer::opaqueProgram() {
-    if (opaqueProgram_.has_value()) {
-        return data::makeValue<core::ShaderProgram*>(&*opaqueProgram_);
-    }
     const std::filesystem::path dir = RE_SHADER_DIR;
-    auto program = core::ShaderProgram::createFromFiles(
+    return opaqueProgram_.getOrLoadFromFiles(
         dir / "mesh_opaque.vert.glsl", dir / "mesh_opaque.frag.glsl");
-    if (program.failed()) {
-        return data::makeError<core::ShaderProgram*>(program.error().code,
-                                                     program.error().message);
-    }
-    opaqueProgram_ = std::move(*program);
-    return data::makeValue<core::ShaderProgram*>(&*opaqueProgram_);
 }
 
 data::Result<void> MeshRenderer::drawInstances(const MeshScene& scene,

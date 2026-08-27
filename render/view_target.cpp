@@ -10,8 +10,7 @@
 
 #include "render/view_target.hpp"
 
-#include <vector>
-
+#include "core/re_context.hpp"
 #include "core/texture2d.hpp"
 
 namespace re::render {
@@ -41,9 +40,11 @@ data::Result<ViewTarget> ViewTarget::create(std::uint32_t width,
         depth->uploadDepth(width, height);
         depth->unbind(0u);
     }
-    std::vector<std::uint8_t> zeros(static_cast<std::size_t>(width) * height * 4u, 0u);
+    // Allocate texture storage without host-side zero fill; the first use
+    // clears via the shared REContext beginPass, and a resize clears via
+    // glClear rather than uploading a temporary zero buffer.
     color->bind(0u);
-    color->upload(width, height, zeros.data());
+    color->upload(width, height, nullptr);
     color->unbind(0u);
     fb->bind();
     fb->attachColor(*color);
@@ -57,6 +58,15 @@ data::Result<ViewTarget> ViewTarget::create(std::uint32_t width,
     if (!fb->isComplete()) {
         fb->unbind();
         return data::makeError<ViewTarget>(1, "ViewTarget: framebuffer incomplete");
+    }
+    // Clear the newly allocated color attachment to transparent black via the
+    // shared REContext cache rather than a host zero upload. The clear is
+    // issued through the REContext so the cache stays coherent with later
+    // beginPass calls.
+    {
+        auto& ctx = core::REContext::current();
+        ctx.setClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        ctx.clearColor();
     }
     fb->unbind();
     return data::makeValue<ViewTarget>(

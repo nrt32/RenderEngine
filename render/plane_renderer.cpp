@@ -33,11 +33,12 @@ PlaneRenderer::PlaneRenderer(std::shared_ptr<AssetRegistry> assets)
 // directly so a plane whose UV maps the image exactly onto the viewport
 // reproduces the source texels (FR-render.5).
 
-// Interleaved vertex layout: position (3 floats) + UV (2 floats) + normal
-// (3 floats) = 8 floats per vertex.
-constexpr std::size_t kStrideBytes = 8u * sizeof(float);
+// Interleaved vertex layout: position (3 floats) + UV (2 floats) = 5 floats
+// per vertex. The normal attribute previously uploaded here is dead: the
+// fragment shader samples the texture directly and never uses a normal, so
+// the pipeline drops it.
+constexpr std::size_t kStrideBytes = 5u * sizeof(float);
 constexpr std::size_t kUvOffsetBytes = 3u * sizeof(float);
-constexpr std::size_t kNormalOffsetBytes = 5u * sizeof(float);
 
 PlaneGeometry PlaneGeometry::unitQuadXY() {
     PlaneGeometry g;
@@ -52,18 +53,9 @@ PlaneGeometry PlaneGeometry::unitQuadXY() {
 }
 
 data::Result<core::ShaderProgram*> PlaneRenderer::planeProgram() {
-    if (planeProgram_.has_value()) {
-        return data::makeValue<core::ShaderProgram*>(&*planeProgram_);
-    }
     const std::filesystem::path dir = RE_SHADER_DIR;
-    auto program = core::ShaderProgram::createFromFiles(
+    return planeProgram_.getOrLoadFromFiles(
         dir / "plane.vert.glsl", dir / "plane.frag.glsl");
-    if (program.failed()) {
-        return data::makeError<core::ShaderProgram*>(program.error().code,
-                                                     program.error().message);
-    }
-    planeProgram_ = std::move(*program);
-    return data::makeValue<core::ShaderProgram*>(&*planeProgram_);
 }
 
 data::Result<core::VertexArray*> PlaneRenderer::quadGeometry() {
@@ -86,22 +78,21 @@ data::Result<core::VertexArray*> PlaneRenderer::quadGeometry() {
                                                    ebo.error().message);
     }
 
-    // Interleaved unit-quad vertices: position + UV + normal, indexed by
-    // corner order (corner0..corner3) matching PlaneGeometry::unitQuadXY.
-    // This is NOT the shared NDC ScreenQuad: the plane shader samples per-
-    // vertex UVs and needs the normal attribute, so the interleaved 8-float
-    // layout stays here — only the two-triangle index pattern comes from the
-    // one shared definition kQuadTriangleIndices (render/screen_quad.hpp).
+    // Interleaved unit-quad vertices: position + UV, indexed by corner order
+    // (corner0..corner3) matching PlaneGeometry::unitQuadXY. This is not
+    // the shared NDC ScreenQuad: the plane shader samples per-vertex UVs, so
+    // the interleaved position+UV layout stays here — only the two-triangle
+    // index pattern comes from the shared definition.
     const PlaneGeometry unit = PlaneGeometry::unitQuadXY();
     const std::vector<float> verts = {
         unit.corners[0].x, unit.corners[0].y, unit.corners[0].z, unit.uv[0].x,
-        unit.uv[0].y,      unit.normal.x,     unit.normal.y,     unit.normal.z,
+        unit.uv[0].y,
         unit.corners[1].x, unit.corners[1].y, unit.corners[1].z, unit.uv[1].x,
-        unit.uv[1].y,      unit.normal.x,     unit.normal.y,     unit.normal.z,
+        unit.uv[1].y,
         unit.corners[2].x, unit.corners[2].y, unit.corners[2].z, unit.uv[2].x,
-        unit.uv[2].y,      unit.normal.x,     unit.normal.y,     unit.normal.z,
+        unit.uv[2].y,
         unit.corners[3].x, unit.corners[3].y, unit.corners[3].z, unit.uv[3].x,
-        unit.uv[3].y,      unit.normal.x,     unit.normal.y,     unit.normal.z,
+        unit.uv[3].y,
     };
     const std::vector<std::uint32_t> indices(kQuadTriangleIndices.begin(),
                                              kQuadTriangleIndices.end());
@@ -115,8 +106,6 @@ data::Result<core::VertexArray*> PlaneRenderer::quadGeometry() {
     vao->setAttribute(0u, 3, /*normalized=*/false, kStrideBytes, 0u);
     vao->setAttribute(1u, 2, /*normalized=*/false, kStrideBytes,
                       kUvOffsetBytes);
-    vao->setAttribute(2u, 3, /*normalized=*/false, kStrideBytes,
-                      kNormalOffsetBytes);
     vao->unbind();
 
     // Keep the EBO alive for the lifetime of the renderer: the VAO captures

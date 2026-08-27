@@ -1,6 +1,6 @@
 #version 450 core
 in vec2 vNdc;
-uniform mat4 uViewProj;
+uniform mat4 uInvViewProj;
 uniform vec3 uBoxMin;
 uniform vec3 uBoxMax;
 uniform mat4 uInvModel;
@@ -44,33 +44,14 @@ bool intersectRayAabb(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax,
     return true;
 }
 
-vec4 tfSample(float value) {
-    if (value <= uTfValues[0]) {
-        return uTfColors[0];
-    }
-    if (value >= uTfValues[uTfCount - 1]) {
-        return uTfColors[uTfCount - 1];
-    }
-    int lo = 0;
-    int hi = uTfCount - 1;
-    while (hi - lo > 1) {
-        int mid = (lo + hi) / 2;
-        if (uTfValues[mid] <= value) {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    float t = (value - uTfValues[lo]) / (uTfValues[hi] - uTfValues[lo]);
-    return mix(uTfColors[lo], uTfColors[hi], t);
-}
+#include "common/tf_sample.inc.glsl"
 
 void main() {
     vec4 nearNdc = vec4(vNdc, -1.0, 1.0);
     vec4 farNdc = vec4(vNdc, 1.0, 1.0);
-    vec4 worldNear = inverse(uViewProj) * nearNdc;
+    vec4 worldNear = uInvViewProj * nearNdc;
     worldNear /= worldNear.w;
-    vec4 worldFar = inverse(uViewProj) * farNdc;
+    vec4 worldFar = uInvViewProj * farNdc;
     worldFar /= worldFar.w;
     vec3 ro = worldNear.xyz;
     vec3 rd = normalize(worldFar.xyz - worldNear.xyz);

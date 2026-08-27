@@ -24,19 +24,10 @@ ContourRenderer::ContourRenderer(std::shared_ptr<AssetRegistry> registry)
     : registry_(std::move(registry)) {}
 
 data::Result<core::ShaderProgram*> ContourRenderer::program() {
-    if (program_.has_value()) {
-        return data::makeValue<core::ShaderProgram*>(&*program_);
-    }
     const std::filesystem::path dir = RE_SHADER_DIR;
-    auto program = core::ShaderProgram::createWithGeometryFromFiles(
+    return program_.getOrLoadWithGeometryFromFiles(
         dir / "contour.vert.glsl", dir / "contour.geom.glsl",
         dir / "contour.frag.glsl");
-    if (program.failed()) {
-        return data::makeError<core::ShaderProgram*>(program.error().code,
-                                                     program.error().message);
-    }
-    program_ = std::move(*program);
-    return data::makeValue<core::ShaderProgram*>(&*program_);
 }
 
 data::Result<void> ContourRenderer::drawOne(const ContourObject& object,
@@ -143,8 +134,36 @@ data::Result<void> ContourRenderer::drawLayer(const ContourObject& object, const
 }
 
 data::Result<void> ContourRenderer::drawLayer(const ContourScene& scene, const Camera& camera) {
+    if (scene.contours.empty()) {
+        return data::Result<void>(data::value);
+    }
+    auto programResult = program();
+    if (programResult.failed()) {
+        return data::makeError<void>(programResult.error().code,
+                                     programResult.error().message);
+    }
+    core::ShaderProgram* programPtr = *programResult;
+
+    int vpX = 0;
+    int vpY = 0;
+    int vpW = 0;
+    int vpH = 0;
+    if (!core::REContext::current().viewportRect(vpX, vpY, vpW, vpH) || vpW <= 0 || vpH <= 0) {
+        return data::makeError<void>(
+            2, "ContourRenderer::drawLayer: REContext has no viewport "
+               "(View::render must setViewport before layers)");
+    }
+
+    programPtr->use();
+    programPtr->setUniformMat4("uView", camera.view);
+    programPtr->setUniformMat4("uProj", camera.proj);
+    programPtr->setUniformVec2("uViewport",
+                               glm::vec2(static_cast<float>(vpW),
+                                         static_cast<float>(vpH)));
     for (const ContourObject& object : scene.contours) {
-        auto drawn = drawLayer(object, camera);
+        programPtr->setUniformVec3("uPlaneNormal", object.plane.normal);
+        programPtr->setUniformVec3("uPlanePoint", object.plane.point);
+        auto drawn = drawOne(object, programPtr);
         if (drawn.failed()) {
             return drawn;
         }

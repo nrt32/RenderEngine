@@ -12,7 +12,7 @@
 // (data::VolumeDataset::sampleTrilinear) and keeps the analytic gates within
 // 1/255.
 in vec2 vNdc;
-uniform mat4 uViewProj;
+uniform mat4 uInvViewProj;
 uniform mat4 uInvModel;
 uniform vec3 uSize;
 uniform vec3 uPlaneNormal;
@@ -23,29 +23,7 @@ uniform vec4 uTfColors[8];
 uniform sampler3D uVolume;
 layout(location = 0) out vec4 oColor;
 
-// Clamped piecewise-linear transfer-function ramp, evaluated exactly like
-// volume::TransferFunction::sample: endpoint colors outside the control-point
-// range, linear RGBA interpolation between adjacent breakpoints inside it.
-vec4 tfSample(float value) {
-    if (value <= uTfValues[0]) {
-        return uTfColors[0];
-    }
-    if (value >= uTfValues[uTfCount - 1]) {
-        return uTfColors[uTfCount - 1];
-    }
-    int lo = 0;
-    int hi = uTfCount - 1;
-    while (hi - lo > 1) {
-        int mid = (lo + hi) / 2;
-        if (uTfValues[mid] <= value) {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    float t = (value - uTfValues[lo]) / (uTfValues[hi] - uTfValues[lo]);
-    return mix(uTfColors[lo], uTfColors[hi], t);
-}
+#include "common/tf_sample.inc.glsl"
 
 void main() {
     // Unproject the pixel's NDC near/far points to world space (identical to
@@ -54,9 +32,9 @@ void main() {
     // the ray-plane parameter t matters here, not its world-space length.
     vec4 nearNdc = vec4(vNdc, -1.0, 1.0);
     vec4 farNdc = vec4(vNdc, 1.0, 1.0);
-    vec4 worldNear = inverse(uViewProj) * nearNdc;
+    vec4 worldNear = uInvViewProj * nearNdc;
     worldNear /= worldNear.w;
-    vec4 worldFar = inverse(uViewProj) * farNdc;
+    vec4 worldFar = uInvViewProj * farNdc;
     worldFar /= worldFar.w;
     vec3 ro = worldNear.xyz;
     vec3 rd = worldFar.xyz - worldNear.xyz;

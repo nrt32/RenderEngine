@@ -32,7 +32,9 @@
 #include "core/storage_buffer.hpp"
 #include "core/texture2d.hpp"
 #include "render/itransparency_pipeline.hpp"
+#include "render/render_constants.hpp"
 #include "render/screen_quad.hpp"
+#include "render/shader_cache.hpp"
 
 namespace re::render {
 
@@ -101,10 +103,10 @@ class LinkedListOIT final : public ITransparencyPipeline {
         return width_ * height_ * maxFragmentsPerPixel_;
     }
 
-    std::uint32_t maxFragmentsPerPixel_{16u};
+    std::uint32_t maxFragmentsPerPixel_{kOitMaxFragmentsPerPixel};
 
-    std::optional<core::ShaderProgram> captureProgram_;
-    std::optional<core::ShaderProgram> compositeProgram_;
+    LazyProgramCache captureProgram_;
+    LazyProgramCache compositeProgram_;
 
     std::optional<ScreenQuad> screenQuad_;
 

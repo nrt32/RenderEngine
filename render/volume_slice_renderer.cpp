@@ -33,18 +33,9 @@ VolumeSliceRenderer::VolumeSliceRenderer(std::shared_ptr<AssetRegistry> assets)
 // table + build sequence for every whole-viewport technique.
 
 data::Result<core::ShaderProgram*> VolumeSliceRenderer::sliceProgram() {
-    if (program_.has_value()) {
-        return data::makeValue<core::ShaderProgram*>(&*program_);
-    }
     const std::filesystem::path dir = RE_SHADER_DIR;
-    auto program = core::ShaderProgram::createFromFiles(
+    return program_.getOrLoadFromFiles(
         dir / "volume_raycast.vert.glsl", dir / "volume_slice.frag.glsl");
-    if (program.failed()) {
-        return data::makeError<core::ShaderProgram*>(program.error().code,
-                                                     program.error().message);
-    }
-    program_ = std::move(*program);
-    return data::makeValue<core::ShaderProgram*>(&*program_);
 }
 
 data::Result<core::VertexArray*> VolumeSliceRenderer::screenQuad() {
@@ -70,23 +61,26 @@ data::Result<core::Texture3D*> VolumeSliceRenderer::textureFor(
 }
 
 void VolumeSliceRenderer::uploadTransferFunction(
-    const volume::TransferFunction& tf) const {
+    const volume::TransferFunction& tf, core::ShaderProgram* program) const {
     const std::size_t count = tf.size();
-    std::vector<float> values(count);
-    std::vector<glm::vec4> colors(count);
+    // Stack allocation: transfer functions are capped at eight points, so
+    // per-frame heap allocation is unnecessary.
+    float values[kMaxTfPoints];
+    glm::vec4 colors[kMaxTfPoints];
     for (std::size_t i = 0u; i < count; ++i) {
         const auto& cp = tf.controlPoints()[i];
         values[i] = cp.value;
         colors[i] = glm::vec4(cp.color.r, cp.color.g, cp.color.b, cp.color.a);
     }
-    program_->setUniformInt("uTfCount", static_cast<std::int32_t>(count));
-    program_->setUniformFloatArray("uTfValues", values.data(), count);
-    program_->setUniformVec4Array("uTfColors", colors.data(), count);
+    program->setUniformInt("uTfCount", static_cast<std::int32_t>(count));
+    program->setUniformFloatArray("uTfValues", values, count);
+    program->setUniformVec4Array("uTfColors", colors, count);
 }
 
 data::Result<void> VolumeSliceRenderer::drawOne(
     const VolumeSliceInstance& instance, const Camera& camera,
     core::ShaderProgram* program) {
+    (void)camera;
     VolumeTextureHandle handle = instance.handle;
     if (handle.isNull()) {
         if (!instance.dataset) {
@@ -122,13 +116,16 @@ data::Result<void> VolumeSliceRenderer::drawOne(
                          static_cast<float>(instance.dataset->sizeY()),
                          static_cast<float>(instance.dataset->sizeZ()));
 
-    program->setUniformMat4("uViewProj", camera.proj * camera.view);
+    // RI5: uInvViewProj is hoisted to a single CPU uniform per frame (set once
+    // before the instance loop in render()/drawLayer()) so the fragment shader
+    // never computes inverse() per pixel — keep per-instance work to model-only
+    // uniforms here.
     program->setUniformMat4("uInvModel", invModel);
     program->setUniformVec3("uSize", size);
     program->setUniformVec3("uPlaneNormal", instance.plane.normal);
     program->setUniformVec3("uPlanePoint", instance.plane.point);
     program->setUniformInt("uVolume", 0); // sampler reads texture unit 0
-    uploadTransferFunction(instance.transferFunction);
+    uploadTransferFunction(instance.transferFunction, program);
 
     auto draw = core::drawElements(screenQuad_->vao(),
                                    kQuadTriangleIndices.size());
@@ -163,10 +160,10 @@ data::Result<void> VolumeSliceRenderer::render(const VolumeSliceScene& scene,
             return data::makeError<void>(
                 1, "VolumeSliceRenderer: null dataset in slice instance");
         }
-        if (instance.transferFunction.size() > kMaxVolumeSliceTfPoints) {
+        if (instance.transferFunction.size() > kMaxTfPoints) {
             return data::makeError<void>(
                 1, "VolumeSliceRenderer: transfer function has more than " +
-                       std::to_string(kMaxVolumeSliceTfPoints) +
+                       std::to_string(kMaxTfPoints) +
                        " control points");
         }
     }
@@ -200,6 +197,12 @@ data::Result<void> VolumeSliceRenderer::render(const VolumeSliceScene& scene,
                   target.clearColor.b, target.clearColor.a);
 
     program->use();
+    // RI5: hoist inverse(viewProj) to a single CPU uniform per frame — the
+    // fragment shader receives uInvViewProj and never computes inverse per
+    // pixel. One uniform upload before the loop, then per-instance model-only
+    // uniforms inside drawOne.
+    const glm::mat4 invViewProj = glm::inverse(camera.proj * camera.view);
+    program->setUniformMat4("uInvViewProj", invViewProj);
     for (const VolumeSliceInstance& instance : scene.slices) {
         auto drawn = drawOne(instance, camera, program);
         if (drawn.failed()) {
@@ -223,10 +226,10 @@ data::Result<void> VolumeSliceRenderer::drawLayer(const VolumeSliceScene& scene,
             return data::makeError<void>(
                 1, "VolumeSliceRenderer: null dataset in slice instance");
         }
-        if (instance.transferFunction.size() > kMaxVolumeSliceTfPoints) {
+        if (instance.transferFunction.size() > kMaxTfPoints) {
             return data::makeError<void>(
                 1, "VolumeSliceRenderer: transfer function has more than " +
-                       std::to_string(kMaxVolumeSliceTfPoints) +
+                       std::to_string(kMaxTfPoints) +
                        " control points");
         }
     }
@@ -247,6 +250,8 @@ data::Result<void> VolumeSliceRenderer::drawLayer(const VolumeSliceScene& scene,
     }
 
     program->use();
+    const glm::mat4 invViewProjLayer = glm::inverse(camera.proj * camera.view);
+    program->setUniformMat4("uInvViewProj", invViewProjLayer);
     for (const VolumeSliceInstance& instance : scene.slices) {
         auto drawn = drawOne(instance, camera, program);
         if (drawn.failed()) {

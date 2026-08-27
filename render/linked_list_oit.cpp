@@ -18,26 +18,13 @@
 #include "core/re_context.hpp"
 #include "core/shader_program.hpp"
 #include "render/mesh_geometry.hpp"
+#include "render/render_constants.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
 
 namespace re::render {
 
-// Shaders live as .glsl files under render/shaders/ (SPEC §9 V2.6) and are
-// loaded via core::ShaderProgram's file helpers. See docs/render.md and the
-// .glsl files themselves for the GLSL source.
-
-// Maximum nodes the composite shader sorts per pixel (its fixed local array
-// size). The constructor enforces maxFragmentsPerPixel_ <= this.
-constexpr std::uint32_t kShaderMaxNodes = 16u;
-
-// SSBO binding points (fixed across capture + composite passes).
-constexpr std::uint32_t kNodeBinding = 0u;    // layout(std430, binding=0)
-constexpr std::uint32_t kCounterBinding = 1u; // layout(std430, binding=1)
-constexpr std::uint32_t kHeadImageUnit = 2u;  // layout(r32ui, binding=2)
-
-// A "null" head-pointer sentinel: no node. Cleared head pointers are set to
-// this value so an empty pixel's linked list terminates immediately.
-constexpr std::uint32_t kNullNode = 0xFFFFFFFFu;
+// Shaders live as .glsl files under render/shaders/ and are loaded via the
+// shared LazyProgramCache. See docs/render.md and the .glsl files for source.
 
 // The full-screen composite quad comes from the shared ScreenQuad provider
 // (render/screen_quad.*): one NDC vertex table + build sequence for every
@@ -46,7 +33,7 @@ constexpr std::uint32_t kNullNode = 0xFFFFFFFFu;
 
 LinkedListOIT::LinkedListOIT(std::uint32_t maxFragmentsPerPixel)
     : maxFragmentsPerPixel_(
-          std::clamp(maxFragmentsPerPixel, 1u, kShaderMaxNodes)) {}
+          std::clamp(maxFragmentsPerPixel, 1u, kOitShaderMaxNodes)) {}
 
 bool LinkedListOIT::isEngaged() const noexcept {
     return engaged_;
@@ -73,33 +60,15 @@ data::Result<std::uint32_t> LinkedListOIT::readCapturedFragmentCount() {
 }
 
 data::Result<core::ShaderProgram*> LinkedListOIT::captureProgram() {
-    if (captureProgram_.has_value()) {
-        return data::makeValue<core::ShaderProgram*>(&*captureProgram_);
-    }
     const std::filesystem::path dir = RE_SHADER_DIR;
-    auto program = core::ShaderProgram::createFromFiles(
+    return captureProgram_.getOrLoadFromFiles(
         dir / "oit_capture.vert.glsl", dir / "oit_capture.frag.glsl");
-    if (program.failed()) {
-        return data::makeError<core::ShaderProgram*>(program.error().code,
-                                                     program.error().message);
-    }
-    captureProgram_ = std::move(*program);
-    return data::makeValue<core::ShaderProgram*>(&*captureProgram_);
 }
 
 data::Result<core::ShaderProgram*> LinkedListOIT::compositeProgram() {
-    if (compositeProgram_.has_value()) {
-        return data::makeValue<core::ShaderProgram*>(&*compositeProgram_);
-    }
     const std::filesystem::path dir = RE_SHADER_DIR;
-    auto program = core::ShaderProgram::createFromFiles(
+    return compositeProgram_.getOrLoadFromFiles(
         dir / "oit_composite.vert.glsl", dir / "oit_composite.frag.glsl");
-    if (program.failed()) {
-        return data::makeError<core::ShaderProgram*>(program.error().code,
-                                                     program.error().message);
-    }
-    compositeProgram_ = std::move(*program);
-    return data::makeValue<core::ShaderProgram*>(&*compositeProgram_);
 }
 
 data::Result<core::VertexArray*> LinkedListOIT::screenQuad() {
@@ -125,7 +94,8 @@ data::Result<void> LinkedListOIT::ensureCapacity(std::uint32_t width,
     // Node buffer: one node per (pixel, slot). Each OITNode is 32 bytes in
     // std430 (vec4 16 + float 4 + uint 4, rounded to vec4 alignment 16).
     const std::uint64_t nodeBytes =
-        pixelCount * static_cast<std::uint64_t>(maxFragmentsPerPixel_) * 32u;
+        pixelCount * static_cast<std::uint64_t>(maxFragmentsPerPixel_) *
+        kOitNodeStrideBytes;
     auto nodeBuffer = core::ShaderStorageBuffer::create();
     if (nodeBuffer.failed()) {
         return data::makeError<void>(nodeBuffer.error().code,
@@ -149,7 +119,7 @@ data::Result<void> LinkedListOIT::ensureCapacity(std::uint32_t width,
                                      headTexture.error().message);
     }
     std::vector<std::uint32_t> heads(static_cast<std::size_t>(pixelCount),
-                                     kNullNode);
+                                     kOitNullNode);
     headTexture->bind(0u);
     headTexture->uploadR32UI(width, height, heads.data());
     headTexture->unbind(0u);
@@ -167,10 +137,10 @@ data::Result<void> LinkedListOIT::begin(const Camera& camera,
                                         core::REContext& ctx) {
     (void)camera;
     // (Re)allocate storage if the target size changed. A failure is reported
-    // as a typed error (SPEC §5): the pipeline stays un-engaged and the
+    // as a typed error: the pipeline stays un-engaged and the
     // transparent-capable mesh pass is aborted — no silent blend fallback
     // (the target is left cleared and the typed error is surfaced via the
-    // bridge, SPEC §5). Unsupported or over-budget hardware therefore yields
+    // bridge). Unsupported or over-budget hardware therefore yields
     // opaque-only rendering for that pass.
     const data::Result<void> capacity = ensureCapacity(target.width, target.height);
     if (capacity.failed()) {
@@ -181,7 +151,7 @@ data::Result<void> LinkedListOIT::begin(const Camera& camera,
     // Reset the head pointers to the null sentinel and the allocator to 0. The
     // node buffer contents are overwritten by the GPU and need no reset.
     headTexture_->bind(0u);
-    headTexture_->clearToU32(kNullNode);
+    headTexture_->clearToU32(kOitNullNode);
     headTexture_->unbind(0u);
 
     const std::uint32_t zero = 0u;
@@ -191,12 +161,11 @@ data::Result<void> LinkedListOIT::begin(const Camera& camera,
 
     // Bind the head-pointer image + SSBOs to their fixed binding points for the
     // capture + composite passes, and install the viewport for the frame.
-    // T4: single ledger via REContext& from ViewCompositor — OIT + View prologues
-    // share one viewport/depth/blend cache, so 2 layers sharing viewport issue
-    // exactly 1 glViewport (no skipped-glEnable bugs).
-    core::bindImageR32ui(*headTexture_, kHeadImageUnit);
-    nodeBuffer_->bindBase(kNodeBinding);
-    counterBuffer_->bindBase(kCounterBinding);
+    // ViewCompositor supplies the same REContext& as the View prologues
+    // so duplicate state is deduped.
+    core::bindImageR32ui(*headTexture_, kOitHeadImageUnit);
+    nodeBuffer_->bindBase(kOitNodeBinding);
+    counterBuffer_->bindBase(kOitCounterBinding);
     ctx.setViewport(0, 0, static_cast<int>(target.width),
                    static_cast<int>(target.height));
 
@@ -253,7 +222,7 @@ data::Result<void> LinkedListOIT::end(const Camera& camera,
     auto programResult = compositeProgram();
     if (programResult.failed()) {
         // Restore draw state before reporting the error (no state leak).
-        core::unbindImage(kHeadImageUnit);
+        core::unbindImage(kOitHeadImageUnit);
         engaged_ = false;
         return data::makeError<void>(programResult.error().code,
                                      programResult.error().message);
@@ -261,7 +230,7 @@ data::Result<void> LinkedListOIT::end(const Camera& camera,
     core::ShaderProgram* program = *programResult;
     auto quadResult = screenQuad();
     if (quadResult.failed()) {
-        core::unbindImage(kHeadImageUnit);
+        core::unbindImage(kOitHeadImageUnit);
         engaged_ = false;
         return data::makeError<void>(quadResult.error().code,
                                      quadResult.error().message);
@@ -296,7 +265,7 @@ data::Result<void> LinkedListOIT::end(const Camera& camera,
 
     // Restore draw state regardless of the draw result (no state leak).
     ctx.disableBlend();
-    core::unbindImage(kHeadImageUnit);
+    core::unbindImage(kOitHeadImageUnit);
     engaged_ = false;
     return draw;
 }

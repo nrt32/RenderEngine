@@ -42,6 +42,7 @@
 #include "data/result.hpp"
 #include "render/asset_registry.hpp"
 #include "render/mesh_geometry.hpp"
+#include "render/shader_cache.hpp"
 #include "render/types.hpp" // Camera / RenderTarget / ClipPlane
 
 namespace re::render {
@@ -133,7 +134,7 @@ class ContourRenderer {
 
     std::shared_ptr<AssetRegistry> registry_;
 
-    std::optional<core::ShaderProgram> program_;
+    LazyProgramCache program_;
 };
 
 } // namespace re::render

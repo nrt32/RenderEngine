@@ -1,23 +1,12 @@
 #version 450 core
 // contour.geom.glsl — ContourRenderer's GPU plane-intersection outline
-// (FR-app.3, V3.8b T11; clip pattern of slice_clip.geom.glsl).
-//
-// Each input triangle is classified against the world-space clip plane
-// (kept-side convention identical to slice_clip.geom.glsl: signed distance
-// d = dot(uPlaneNormal, P - uPlanePoint)). A triangle strictly straddling the
-// plane contributes ONE outline segment: the segment between its two edge
-// crossing points, computed exactly on the GPU (t = d[i] / (d[i] - d[j])).
-// Tangent / coplanar triangles contribute nothing, so the emitted primitive
-// set is exactly the plane-intersection OUTLINE of the mesh.
-//
-// The two crossing points are then drawn as a THICK LINE: OpenGL 4.6 core
-// caps glLineWidth at 1.0, and the FR-app.3 acceptance band is +/-2 px around
-// the analytic curve, so the geometry shader emits the classic screen-space
-// thick-line primitive instead — one quad (triangle_strip, 4 vertices) per
-// segment, expanded by uHalfWidthPx perpendicular to the projected segment
-// and extended by uHalfWidthPx beyond each endpoint (square caps), so every
-// pixel center within uHalfWidthPx of the analytic segment lies inside the
-// quad. This is the standard GPU replacement for deprecated wide lines.
+// Shared clip classifier epsilon note: the half-space threshold kClipEps
+// equal to 1e-5 is the same value used by slice_clip and slice_capture for
+// classifying triangle vertices against the plane. The dedup epsilon 1e-6
+// for coincident intersection points remains a separate intentional divergence
+// because merging points at a common vertex is a different geometric predicate
+// than the half-space test, and the two thresholds were validated independently
+// for the outline thick-line expansion.
 
 layout(triangles) in;
 layout(triangle_strip, max_vertices = 4) out;
@@ -30,18 +19,20 @@ uniform vec3 uPlaneNormal;
 uniform vec3 uPlanePoint;
 uniform vec2 uViewport;     // current viewport size in pixels (w, h)
 uniform float uHalfWidthPx; // half stroke width in pixels (FR-app.3 band = 2)
+const float kClipEps = 1e-5;
+const float kDedupEps = 1e-6;
 
 void main() {
     vec3 P[3] = vec3[](vWorldPos[0], vWorldPos[1], vWorldPos[2]);
 
-    // Signed distances + sign class (-1 / 0 / +1), as in slice_clip.geom.glsl.
+    // Signed distances + sign class (-1 / 0 / +1) using the shared epsilon.
     float d[3];
     int s[3];
     int posCount = 0;
     int negCount = 0;
     for (int i = 0; i < 3; ++i) {
         d[i] = dot(uPlaneNormal, P[i] - uPlanePoint);
-        s[i] = (d[i] > 0.0) ? 1 : ((d[i] < 0.0) ? -1 : 0);
+        s[i] = (d[i] > kClipEps) ? 1 : ((d[i] < -kClipEps) ? -1 : 0);
         if (s[i] > 0) {
             ++posCount;
         } else if (s[i] < 0) {
@@ -65,7 +56,7 @@ void main() {
             vec3 c = P[i] + t * (P[j] - P[i]);
             bool duplicate = false;
             for (int q = 0; q < k; ++q) {
-                if (distance(c, cp[q]) < 1.0e-6) {
+                if (distance(c, cp[q]) < kDedupEps) {
                     duplicate = true;
                 }
             }

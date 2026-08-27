@@ -48,7 +48,9 @@
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
 #include "render/asset_registry.hpp"
+#include "render/render_constants.hpp"
 #include "render/screen_quad.hpp"
+#include "render/shader_cache.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
 #include "volume/transfer_function.hpp"
 
@@ -200,12 +202,13 @@ class VolumeRenderer : public IRenderer {
     data::Result<core::Texture3D*> textureFor(
         const VolumeTextureHandle& handle);
 
-    /// Upload the transfer function `tf` to the currently-in-use program as
-    /// the TF control-point uniforms (uTfCount/uTfValues/uTfColors).
-    void uploadTransferFunction(const volume::TransferFunction& tf) const;
+    /// Upload the transfer function `tf` to `program` as the TF control-point
+    /// uniforms (uTfCount/uTfValues/uTfColors).
+    void uploadTransferFunction(const volume::TransferFunction& tf,
+                                core::ShaderProgram* program) const;
 
     std::shared_ptr<AssetRegistry> assets_;
-    std::optional<core::ShaderProgram> rayCastProgram_;
+    LazyProgramCache rayCastProgram_;
     std::optional<ScreenQuad> screenQuad_;
     // Fallback cache for legacy dataset-only instances (pre-T7): maps raw
     // dataset pointer to its owner-driven handle (registered once, then O(1)).

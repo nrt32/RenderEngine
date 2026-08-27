@@ -78,6 +78,8 @@ numbers are preserved** and diagnostics keep their golden `ERROR: 0:N` form.
 | `contour.geom.glsl` | (new, V3.8b T11) | geometry | `ContourRenderer` |
 | `contour.frag.glsl` | (new, V3.8b T11) | fragment | `ContourRenderer` |
 
+**Shader directory relocation note (RI7).** `RE_SHADER_DIR` is the absolute source path baked at compile time via `target_compile_definitions(re_render PRIVATE RE_SHADER_DIR="${CMAKE_SOURCE_DIR}/render/shaders")` in `render/CMakeLists.txt`. Binaries built from this source tree are therefore non-relocatable; a binary relocated to another machine without the source tree will fail to resolve the shader files at runtime. The loader emits a warning via `spdlog::warn` when the baked path does not exist, and the gate asserts that installed binaries copy the `render/shaders` directory beside the executable or provide an install rule that mirrors the source layout. Until that install rule lands, the baked absolute path is intentional and the warning preserves evidence rather than silently falling back.
+
 **Malformed-shader fixture (T3 golden substring).** The completed-loop T3 gate's
 intentionally-malformed shader (`glibberish` on line 7, golden substring
 `ERROR: 0:7`) is now reproducible via a **fixture file**
@@ -781,6 +783,8 @@ FR-render.4 gate uses the captured vertices to assert they lie on the clip
 plane. A crossing triangle whose intersection is a strict segment emits a
 degenerate (zero-area) triangle so the emitted vertex count is deterministic.
 
+**Worst-case allocation note (RI10, WONTFIX test-only).** The capture path allocates a worst-case transform-feedback buffer sized for every input triangle emitting the maximum six vertices (the geometry shader declares `max_vertices = 6`). The buffer is filled with a sentinel value and read back in full, so the allocation equals `triangleCount * 6 * 3 * sizeof(float)` bytes — for a large mesh this is intentionally pessimistic rather than precisely sized per frame. Because the path is reachable only through the test-consumed `captureCrossSection` entry point and never through the production `render`/`drawLayer` paths, the allocation is documented as a test-only cost and no production change is made.
+
 #### Acceptance constants (FR-render.4, docs/render.md)
 
 Golden cube `[-1,1]^3` (8 corners, 12 triangles, CCW-outward winding so the
@@ -1188,11 +1192,11 @@ Transverse display frame, ortho camera over `[0,2]²`:
 | MPR axes T/C/S on an asymmetric 8×6×4 volume | whole frame == `app::makeSliceImage` oracle within 1/255 per axis | Transverse holds Z, Coronal holds Y, Sagittal holds X; asymmetric dims make any permutation error fail |
 | Typed errors: null dataset / >8 TF points / 0-size target | codes `1` / `1` / `1` | SPEC §5 diagnostics, never crashes or silent empty output |
 
-### Shared renderer internals — one prologue, one quad, one hash, one geometryFor
+### Shared renderer internals — one prologue, one quad, one hash, one geometryFor, one program cache, one constant set
 
-The technique renderers used to carry four families of copy-paste. Each now
+The technique renderers used to carry several families of copy-paste. Each now
 has exactly ONE definition (Sr. review "single internal implementation per
-renderer" rule, SPEC §6):
+renderer" rule):
 
 - **Pass prologue** — binding the target framebuffer, setting the viewport,
   clearing to the clear color, and setting depth test + blending state existed
@@ -1238,6 +1242,18 @@ renderer" rule, SPEC §6):
   **`core::PrimitiveMode::Triangles`**, a core-owned enum mapped internally by
   `core::TransformFeedback::begin`. `<glad/gl.h>` appears nowhere under
   `render/`.
+- **Lazy program cache** — the eight shader loaders (Mesh opaque, Plane, Volume
+  ray-cast, Volume slice, Slice clip, Slice capture, Contour, OIT capture,
+  OIT composite) previously duplicated the `RE_SHADER_DIR` resolution and the
+  `createFromFiles` error handling. They now share **`render::LazyProgramCache`**
+  (`render/shader_cache.{hpp,cpp}`), a single lazy wrapper around
+  `std::optional<core::ShaderProgram>` that compiles on first use and returns the
+  cached handle thereafter.
+- **Shared constants** — `kMaxTfPoints = 8`, the OIT sentinel `kOitNullNode`,
+  node stride `kOitNodeStrideBytes = 32`, and the capacity cap `kOitShaderMaxNodes = 16`
+  are now single-sourced in **`render/render_constants.hpp`** and the two volume
+  fragment shaders share the `tfSample` ramp via a common include, so the C++ and
+  GLSL limits stay consistent.
 
 Each renderer's direct `render()` and View-composited `drawLayer()` share one
 private body (per-renderer `drawInstances`/`clipInstances`; mesh takes a

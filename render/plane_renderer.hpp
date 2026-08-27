@@ -61,6 +61,7 @@
 #include "data/image.hpp"
 #include "data/result.hpp"
 #include "render/asset_registry.hpp"
+#include "render/shader_cache.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
 
 namespace re::render {
@@ -215,7 +216,7 @@ class PlaneRenderer : public IRenderer {
         const ImageTextureHandle& handle);
 
     std::shared_ptr<AssetRegistry> assets_;
-    std::optional<core::ShaderProgram> planeProgram_;
+    LazyProgramCache planeProgram_;
     std::optional<core::VertexArray> quadVao_;
     std::optional<core::VertexBuffer> quadVbo_;
     std::optional<core::ElementBuffer> quadEbo_; // index buffer referenced by quadVao_

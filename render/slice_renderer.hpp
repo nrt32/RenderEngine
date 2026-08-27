@@ -39,6 +39,7 @@
 #include "render/asset_registry.hpp"
 #include "render/mesh_geometry.hpp"
 #include "render/mesh_renderer.hpp"
+#include "render/shader_cache.hpp"
 #include "render/types.hpp" // IRenderer / render::Scene
 
 namespace re::render {
@@ -150,8 +151,8 @@ class SliceRenderer : public IRenderer {
 
     std::shared_ptr<AssetRegistry> registry_;
 
-    std::optional<core::ShaderProgram> clipProgram_;
-    std::optional<core::ShaderProgram> captureProgram_;
+    LazyProgramCache clipProgram_;
+    LazyProgramCache captureProgram_;
     std::optional<core::TransformFeedback> captureFeedback_;
     std::optional<core::VertexBuffer> captureBuffer_;
 };
