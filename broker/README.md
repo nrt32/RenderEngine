@@ -14,13 +14,10 @@ peer to `scene`/`render`/`core`). Owns no GL and no app rendering logic — only
   implement `ICachedMapper`).
 - `i_cached_mapper.hpp` is an alias include of `i_mapper.hpp` for DIP stability.
 
-## Registry (OCP)
+## Registry (OCP, T3 pair-key)
 
 - `Broker{registerMapper<AppT,ReT>(unique_ptr<IMapper<AppT,ReT>>), get<AppT,ReT>()}`
-  keyed by `std::type_index(typeid(AppT))` (OCP — no `enum` switch), plus concrete
-  `registerMapper<MapperT>` / `get<MapperT>` overload keyed by `MapperT` type.
-  Adding a new `AppT` (e.g. `PointCloudObject`) needs one new `*Mapper` file + one
-  `registerMapper` call, zero edits to existing mappers or `ViewMapper`.
+  keyed by `hash_combine(type_index(AppT), type_index(ReT))` via `AppReKey{app,re}` + `AppReKeyHash` (OCP — no `enum` switch; T3 A1 type-safety fix). A wrong `ReT` hashes to a different bucket and `get<AppT,ReWrongType>()` returns `nullptr` (typed miss) instead of the former UB `static_cast` type-punning; same `AppT`/different `ReT` registrations become distinct entries (no silent overwrite) — `pairKeyHash<AppT,ReT>() == hashCombine(type_index(AppT), type_index(ReT))` is the auditable invariant. Concrete `registerMapper<MapperT>` / `get<MapperT>` overload stays exact-keyed by `MapperT` type (unchanged). Adding a new `AppT` (e.g. `PointCloudObject`) needs one new `*Mapper` file + one `registerMapper` call, zero edits to existing mappers or `ViewMapper`.
 
 ## Per-type inventory (one file per mapper — `broker_per_type`)
 

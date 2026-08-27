@@ -1,21 +1,30 @@
 #pragma once
 
-// broker/broker.hpp — Broker registry keyed by std::type_index (SPEC §11 V3.2b T3).
+// broker/broker.hpp — Broker registry keyed by pair {AppT, ReT} (SPEC §11 V3.2b T3, T3 pair-key fix).
 //
 // OCP: open for extension via registerMapper<T>(unique_ptr<IMapper<T>>),
-// closed for modification (no enum switch). Key is std::type_index(typeid(AppT))
-// or typeid(MapperT) per overload — both are type_index factories, never an
-// enum. Broker owns one IMapper per AppT (single dedup cache per type, SRP
-// ownership per §11.3.3).
+// closed for modification (no enum switch). Keys are:
+//  - AppT/ReT path: hash_combine(type_index(AppT), type_index(ReT)) — the pair
+//    key prevents UB from `static_cast<IMapper<AppT,ReT>*>` on a wrong ReT. A
+//    mismatch returns nullptr (typed error downstream) instead of a type-punned
+//    pointer, and same-AppT/different-ReT registrations become distinct entries
+//    (no silent overwrite). This is the T3 A1 fix for the former AppT-only key
+//    (broker.hpp:57-65) that was UB on wrong ReT.
+//  - MapperT path: type_index(typeid(MapperT)) exact-keyed as before (test
+//    convenience — same OCP type_index factory, no enum). That overload is
+//    unchanged by the pair-key fix.
+// Broker owns one IMapper per {AppT,ReT} pair (single dedup cache per type pair,
+// SRP ownership per §11.3.3).
 //
 // Two overload sets:
 //  - registerMapper<AppT,ReT>(unique_ptr<IMapper<AppT,ReT>>) / get<AppT,ReT>()
-//    keyed by AppT (SPEC §11.3 Broker template<AppT,ReT> get()).
+//    keyed by hash_combine(AppT,ReT) (T3 pair-key, type-safe).
 //  - registerMapper<MapperT>(unique_ptr<MapperT>) / get<MapperT>()
-//    keyed by MapperT concrete type (test convenience — same OCP type_index
-//    factory, no enum).
+//    keyed by MapperT concrete type (exact-keyed, unchanged).
 // Both use type_index, both are OCP.
 
+#include <cstddef>
+#include <functional>
 #include <memory>
 #include <typeindex>
 #include <unordered_map>
@@ -26,9 +35,42 @@
 
 namespace re::broker {
 
-/// Heavily abstracted per-type mediation registry (SPEC §11 V3.2b).
+/// Pair-key for {AppT, ReT} — AppT/ReT typed miss returns nullptr instead of UB.
 ///
-/// Owns one IMapper per AppT (type_index -> unique_ptr<IMapperBase>).
+/// The former key was `type_index(AppT)` alone; `get<AppT,WrongRe>` then did
+/// `static_cast<IMapper<AppT,WrongRe>*>` on the stored `IMapper<AppT,RightRe>`
+/// — undefined behaviour (type-punning). The pair key uses
+/// `hash_combine(type_index(AppT), type_index(ReT))` so a wrong ReT hashes to
+/// a different bucket and misses cleanly (typed nullptr). Same AppT with two
+/// different ReTs hashes to two distinct entries (no silent overwrite) — either
+/// distinct registration succeeds or an explicit assert fires on collision.
+struct AppReKey {
+    std::type_index app;
+    std::type_index re;
+    bool operator==(const AppReKey& o) const noexcept {
+        return app == o.app && re == o.re;
+    }
+};
+
+/// Hash for AppReKey — boost hash_combine of the two type_index hashes.
+///
+/// `hashCombine(h1,h2) = h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1<<6) + (h1>>2))`
+/// is the canonical hash_combine (Boost, SPEC T3 D: hash_combine(type_index(AppT),
+/// type_index(ReT))). This keeps distinct ReT for the same AppT in distinct
+/// buckets, and makes a wrong-ReT lookup miss with analytic nullptr evidence
+/// (R4) rather than UB.
+struct AppReKeyHash {
+    std::size_t operator()(const AppReKey& k) const noexcept {
+        const std::size_t h1 = std::hash<std::type_index>{}(k.app);
+        const std::size_t h2 = std::hash<std::type_index>{}(k.re);
+        // hash_combine — boost canonical constant 0x9e3779b97f4a7c15ULL
+        return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+    }
+};
+
+/// Heavily abstracted per-type mediation registry (SPEC §11 V3.2b, T3 pair-key).
+///
+/// Owns one IMapper per {AppT,ReT} pair (AppReKey -> unique_ptr<IMapperBase>).
 /// Adding a new AppT/ReT needs zero edits to existing mapper files or
 /// ViewMapper — one new *Mapper file + one registerMapper call (OCP via
 /// type_index factory, Meyer PV, NDepend point-of-variation).
@@ -41,8 +83,27 @@ class Broker {
     Broker& operator=(Broker&&) noexcept = default;
     ~Broker() = default;
 
-     /// Register a mapper for its AppT/ReT (keyed by type_index<AppT>).
-     /// Ownership transferred; Broker owns exactly one per AppT (one cache per type).
+    /// Combine two type_index hashes — exposed for gate/tooling verification.
+    static std::size_t hashCombine(std::type_index a, std::type_index b) noexcept {
+        const std::size_t h1 = std::hash<std::type_index>{}(a);
+        const std::size_t h2 = std::hash<std::type_index>{}(b);
+        return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1 << 6) + (h1 >> 2));
+    }
+
+    /// Pair key factory for {AppT, ReT} — builds AppReKey{type_index(AppT), type_index(ReT)} for Broker::get and registerMapper. The pair key is the T3 A1 type-safety fix: it hashes both indices via hash_combine so a wrong ReT cannot alias the correct entry, returning nullptr (typed miss) instead of the former UB static_cast, and guarantees same-AppT/different-ReT registrations occupy distinct buckets without silent overwrite, preserving OCP without an enum switch.
+    template <typename AppT, typename ReT>
+    static AppReKey pairKey() noexcept {
+        return AppReKey{std::type_index(typeid(AppT)), std::type_index(typeid(ReT))};
+    }
+
+    /// Pair hash for {AppT, ReT} — the hash_combine value auditable as distinct-entry proof.
+    template <typename AppT, typename ReT>
+    static std::size_t pairKeyHash() noexcept {
+        return hashCombine(std::type_index(typeid(AppT)), std::type_index(typeid(ReT)));
+    }
+
+     /// Register a mapper for its {AppT,ReT} pair (keyed by hash_combine(AppT,ReT) via AppReKey).
+     /// Ownership transferred; Broker owns exactly one per {AppT,ReT} pair (one cache per pair).
      /// When AppT carries a static SceneKind (the polymorphic hierarchy — T1),
      /// the mapper is also aliased into the SceneKind map so the open
      /// SceneKind registry stays in sync with the type_index registry (one
@@ -50,7 +111,7 @@ class Broker {
      /// store open for extension without a second register call).
      template <typename AppT, typename ReT>
      void registerMapper(std::unique_ptr<IMapper<AppT, ReT>> mapper) {
-         auto key = std::type_index(typeid(AppT));
+         AppReKey key{std::type_index(typeid(AppT)), std::type_index(typeid(ReT))};
          IMapperBase* /*borrow*/ raw = mapper.get(); // borrow of the object
          // that ownedByApp_ will own after release — alias kept in kind map
          // below so Broker::registeredTypes() sees the kind without double
@@ -65,7 +126,12 @@ class Broker {
          }
      }
 
-    /// Retrieve mapper for AppT/ReT, or nullptr if not registered.
+    /// Retrieve mapper for {AppT,ReT}, or nullptr if not registered or ReT mismatched.
+    ///
+    /// Key is hash_combine(type_index(AppT), type_index(ReT)) — a wrong ReT
+    /// hashes to a different bucket and returns nullptr (typed miss) instead of
+    /// the former UB type-punning static_cast. This is the T3 type-safety gate:
+    /// `broker.get<MeshObject, ReWrongType>() == nullptr` is the analytic evidence.
     ///
     /// @note lifetime: returns a NON-OWNING VIEW of a mapper SOLELY OWNED by
     /// this Broker (`unique_ptr` storage). The alias stays valid while the
@@ -74,7 +140,7 @@ class Broker {
     /// stored past Broker destruction, or handed across threads.
     template <typename AppT, typename ReT>
     IMapper<AppT, ReT>* get() const {
-        auto key = std::type_index(typeid(AppT));
+        AppReKey key{std::type_index(typeid(AppT)), std::type_index(typeid(ReT))};
         auto it = ownedByApp_.find(key);
         if (it != ownedByApp_.end()) return static_cast<IMapper<AppT, ReT>*>(it->second.get());
         auto aliasIt = aliasByApp_.find(key);
@@ -97,15 +163,17 @@ class Broker {
          auto key = std::type_index(typeid(MapperT));
          MapperT* /*borrow*/ raw = mapper.get(); // borrow of the unique_ptr's
          // object; ownership moves into ownedByMapper_ below, which becomes the
-         // sole owner — the alias is recorded in aliasByApp_/ownedByMapper_
-         // and, when the app type carries a SceneKind (T1 polymorphic
+         // sole owner — the alias is recorded in aliasByApp_ (pair-keyed) and,
+         // when the app type carries a SceneKind (T1 polymorphic
          // hierarchy), also in the SceneKind alias map so
          // Broker::registeredTypes() sees the kind without a second register
          // call (open for extension — one header plus one registerMapper line).
          ownedByMapper_[key] = std::unique_ptr<IMapperBase>(mapper.release());
          if constexpr (requires { typename MapperT::AppType; typename MapperT::ReType; }) {
              using AppT = typename MapperT::AppType;
-             aliasByApp_[std::type_index(typeid(AppT))] = raw;
+             using ReT = typename MapperT::ReType;
+             AppReKey pair{std::type_index(typeid(AppT)), std::type_index(typeid(ReT))};
+             aliasByApp_[pair] = raw;
              if constexpr (requires { AppT::Kind; }) {
                  sceneKindAliases_[AppT::Kind] = raw;
              }
@@ -184,18 +252,21 @@ class Broker {
         return std::type_index(typeid(MapperT));
     }
 
-    /// Test helper: type_index of an AppT/ReT pair (key used by app-typed path).
+    /// Test helper: type_index of an AppT/ReT pair (legacy name — now returns app type_index for compat).
+    /// Prefer pairKey<AppT,ReT>() / pairKeyHash<AppT,ReT>() for the T3 pair-key proof.
     template <typename AppT, typename ReT>
     static std::type_index typeIndexFor() {
         return std::type_index(typeid(AppT));
     }
 
    private:
-     std::unordered_map<std::type_index, std::unique_ptr<IMapperBase>> ownedByApp_;
-     // Non-owning aliases into ownedByMapper_ storage (keyed by AppT for the
+     std::unordered_map<AppReKey, std::unique_ptr<IMapperBase>, AppReKeyHash> ownedByApp_;
+     // Non-owning aliases into ownedByMapper_ storage (keyed by {AppT,ReT} pair for the
      // app-typed get() overload). Every alias points at a mapper owned by
-     // ownedByMapper_; re-registration overwrites both entries together.
-     std::unordered_map<std::type_index, IMapperBase*> aliasByApp_;
+     // ownedByMapper_; re-registration overwrites both entries together. Pair-keyed
+     // via hash_combine(AppT,ReT) so a wrong ReT misses cleanly (nullptr) and
+     // same AppT/different ReT are distinct entries (T3 fix).
+     std::unordered_map<AppReKey, IMapperBase*, AppReKeyHash> aliasByApp_;
      std::unordered_map<std::type_index, std::unique_ptr<IMapperBase>> ownedByMapper_;
      // SceneKind-keyed alias view into the same owned storage —Strategy per
      // Kind (one file per mapper). Adding a new kind needs only one new

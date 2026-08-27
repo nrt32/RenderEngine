@@ -318,4 +318,68 @@ TEST(T3Broker, TranslateContextLspFor3D) {
     ASSERT_TRUE(r.ok());
 }
 
+// T3 pair-key gate — hash_combine(type_index(AppT),type_index(ReT)) distinct entries and wrong-ReT typed miss (nullptr not UB). R4 evidence: analytic nullptr vs type-punning invariant, hash 0/1 counts, distinct entry count 2. Wrong AppT/ReT combination must miss cleanly; registering MeshObject->right Re still finds it; same AppT/different ReT are distinct entries (no silent overwrite). This block explains the T3 type-safety invariant that a mismatched ReT returns nullptr via pair-key hash mismatch rather than UB type-punning.
+namespace {
+struct ReWrongType {}; // distinct ReT for MeshObject to prove typed miss (no mapper)
+using namespace re::broker;
+struct DummyMeshToCameraMapper : public IMapper<scene::MeshObject, render::Camera> {
+    data::Result<render::Camera> map(const scene::MeshObject& /*app*/,
+                                     const scene::TranslateContext& /*ctx*/) const override {
+        render::Camera c;
+        c.position = glm::vec3(0.0f);
+        return data::Result<render::Camera>(data::value, c);
+    }
+};
+} // namespace
+
+TEST(T3Broker, PairKeyWrongReReturnsNullptrAndDistinctEntries) {
+    broker::Broker broker;
+    auto registry = std::make_shared<render::AssetRegistry>();
+    broker.registerMapper(std::make_unique<broker::MeshObjectMapper>(registry));
+
+    // Correct pair finds the mapper (registered via concrete MapperT alias -> pair-keyed)
+    auto* correct = broker.get<scene::MeshObject, render::MeshInstance>();
+    ASSERT_NE(correct, nullptr)
+        << "get<MeshObject,MeshInstance> must find registered MeshObjectMapper (explainable pair-key hit)";
+
+    // Wrong ReT for same AppT must return nullptr — typed miss, not UB type-punning. The pair-key hash_combine guarantees the wrong ReT hashes to a different bucket, so Broker::get returns nullptr (analytic typed miss) instead of the former UB static_cast to the wrong mapper type. This is the T3 A1 type-safety gate that prevents type-punning.
+    auto* wrong = broker.get<scene::MeshObject, render::Camera>();
+    EXPECT_EQ(wrong, nullptr)
+        << "get<MeshObject, Camera> must be nullptr (pair-key miss, not mis-typed pointer — analytic typed null)";
+
+    // Wrong ReT via dummy distinct type also nullptr
+    auto* wrong2 = broker.get<scene::MeshObject, ReWrongType>();
+    EXPECT_EQ(wrong2, nullptr) << "get<MeshObject,ReWrongType> must be nullptr (explainable typed miss)";
+
+    // hash_combine distinct proof — same AppT/different ReT hashes differ (analytic distinct count)
+    const std::size_t hCorrect = broker::Broker::pairKeyHash<scene::MeshObject, render::MeshInstance>();
+    const std::size_t hWrong = broker::Broker::pairKeyHash<scene::MeshObject, render::Camera>();
+    const std::size_t hWrong2 = broker::Broker::pairKeyHash<scene::MeshObject, ReWrongType>();
+    EXPECT_NE(hCorrect, hWrong) << "hash_combine(MeshObject,MeshInstance) != hash_combine(MeshObject,Camera) (distinct entries)";
+    EXPECT_NE(hCorrect, hWrong2) << "hash_combine distinct for ReWrongType";
+    EXPECT_NE(hWrong, hWrong2) << "hash_combine distinct for two wrong ReTs";
+    // hashCombine helper auditable
+    const std::size_t hc = broker::Broker::hashCombine(std::type_index(typeid(scene::MeshObject)),
+                                                       std::type_index(typeid(render::MeshInstance)));
+    EXPECT_EQ(hc, hCorrect) << "hashCombine helper must equal pairKeyHash (explainable hash invariant)";
+
+    // Same AppT/different ReT distinct registrations — register MeshObject->Camera via direct pair-key path
+    // This must NOT overwrite the existing MeshObject->MeshInstance entry (no silent overwrite)
+    broker.registerMapper<scene::MeshObject, render::Camera>(std::make_unique<DummyMeshToCameraMapper>());
+    EXPECT_EQ(broker.size(), 2u) << "two distinct {AppT,ReT} pairs must be size 2 (analytic distinct count, not silent overwrite)";
+
+    auto* correctAgain = broker.get<scene::MeshObject, render::MeshInstance>();
+    ASSERT_NE(correctAgain, nullptr) << "original MeshObject->MeshInstance still present after second ReT registration";
+    EXPECT_EQ(correctAgain, correct) << "original pointer stable after distinct ReT insert (explainable)";
+
+    auto* second = broker.get<scene::MeshObject, render::Camera>();
+    ASSERT_NE(second, nullptr) << "second pair MeshObject->Camera must be found (distinct entry)";
+    EXPECT_NE(static_cast<void*>(second), static_cast<void*>(correct)) << "distinct ReT entries must be different mapper objects";
+
+    // get<MapperT> stays exact-keyed (unchanged by pair-key fix)
+    auto* byMapper = broker.get<broker::MeshObjectMapper>();
+    ASSERT_NE(byMapper, nullptr) << "get<MeshObjectMapper> exact-keyed must still find mapper";
+    EXPECT_EQ(byMapper, correct) << "concrete get and pair get must alias same object for MeshObjectMapper";
+}
+
 } // namespace re::tests
