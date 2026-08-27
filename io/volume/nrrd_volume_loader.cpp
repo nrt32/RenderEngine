@@ -7,20 +7,31 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <string>
 #include <system_error>
 #include <vector>
 
+#include <spdlog/spdlog.h>
+
 namespace re::io {
 namespace {
 
-// v1 memory budget cap (SPEC §5): every axis <= kMaxAxis and the voxel count
-// <= 128^3, so the float32 storage stays <= 8 MiB. Enforced at load time so an
-// oversized file fails with a typed error instead of a large allocation.
+// v1 memory budget cap and host file-size guard. The axis and voxel-count limits
+// (every axis <= 128, total voxels <= 128^3) keep the float32 storage at
+// <= 8 MiB and the worst-case raw block (double/int64 width 8) at 16 MiB.
+// The host file-size check guards the whole-file slurp that precedes header
+// validation: a hostile multi-gigabyte file would otherwise be read into RAM
+// before any typed error can fire, so file size is probed before the slurp and
+// compared against the derived ceiling (128^3 * max element width) and an
+// absolute cap with header slack, failing fast with BudgetExceeded and a warn log.
 constexpr std::uint32_t kMaxAxis = 128;
 constexpr std::uint64_t kMaxVoxels = 128ULL * 128ULL * 128ULL;
+constexpr std::uint64_t kHeaderSlackBytes = 64ULL * 1024ULL;
+constexpr std::uint64_t kMaxFileBytes =
+    kMaxVoxels * 8ULL + kHeaderSlackBytes;
 
 // Element layout for one supported scalar type (from the NRRD "type:" field).
 struct ScalarInfo {
@@ -138,6 +149,34 @@ float decodeElement(const std::uint8_t* bytes, const ScalarInfo& info,
 } // namespace
 
 data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
+    // Host file-size pre-probe before any allocation. The check uses the
+    // derived ceiling (worst-case raw block 128^3 * 8 for double/int64) plus
+    // header slack as absolute cap, so a hostile file of arbitrary size fails
+    // fast without a multi-megabyte slurp, while valid v1 volumes (even the
+    // largest committed sample at ~4.6 MiB) pass unchanged.
+    {
+        std::error_code ec;
+        const auto fileSize = std::filesystem::file_size(path, ec);
+        if (!ec) {
+            if (static_cast<std::uint64_t>(fileSize) > kMaxFileBytes) {
+                spdlog::warn(
+                    "NRRD loader: '{}' file size {} bytes exceeds v1 absolute "
+                    "cap {} bytes (derived ceiling 128^3 * 8 + {} header slack) "
+                    "— rejecting before slurp to avoid OOM (BudgetExceeded)",
+                    path, static_cast<std::uint64_t>(fileSize), kMaxFileBytes,
+                    kHeaderSlackBytes);
+                return data::makeError<data::VolumeDataset>(
+                    data::ErrorDomain::VolumeIo,
+                    static_cast<int>(VolumeLoadError::BudgetExceeded),
+                    "NRRD loader: '" + path + "': file size " +
+                        std::to_string(static_cast<std::uint64_t>(fileSize)) +
+                        " bytes exceeds the v1 absolute cap " +
+                        std::to_string(kMaxFileBytes) +
+                        " bytes (128^3 * 8 + header slack, BudgetExceeded)");
+            }
+        }
+    }
+
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
         return data::makeError<data::VolumeDataset>(

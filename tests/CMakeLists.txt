@@ -50,6 +50,7 @@ add_executable(${RE_TEST_TARGET}
     t2_re_context_test.cpp
     t5_header_firewall_test.cpp
     t12_validation_test.cpp
+    t13_nrrd_preprobe_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

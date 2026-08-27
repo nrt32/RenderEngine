@@ -20,9 +20,15 @@
 //
 // The voxel block must hold at least sizes-product * element-width bytes
 // (extra trailing bytes are ignored, matching tools/convert_nrrd.py). The v1
-// memory budget cap (SPEC §5: every axis <= 128 and the product <= 128^3) is
+// memory budget cap (every axis <= 128 and the product <= 128^3) is
 // enforced here, so an oversized file fails with a typed error instead of a
-// multi-megabyte allocation.
+// multi-megabyte allocation. A host file-size probe via
+// std::filesystem::file_size runs before the whole-file slurp, comparing the
+// size against the derived ceiling (128^3 * max element width 8 + 64 KiB
+// header slack) and the absolute cap; on exceed the loader returns typed
+// BudgetExceeded and logs spdlog::warn with actual vs limit sizes, avoiding
+// multi-gigabyte allocation for hostile inputs while valid volumes load
+// byte-identical.
 //
 // Errors (FR-io.4) are reported as a typed data::Result carrying a
 // VolumeLoadError code and a message naming the offending file/field; no
