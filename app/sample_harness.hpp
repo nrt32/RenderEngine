@@ -45,6 +45,7 @@
 #include "core/window.hpp"
 #include "data/result.hpp"
 #include "scene/view.hpp"
+#include "utils/fps_counter.hpp"
 
 namespace re::app {
 
@@ -134,10 +135,25 @@ class SampleHarness {
         return window_;
     }
 
+    /// FPS counter queried each frame (V5 T12 standalone — the former
+    /// `app/FpsCounter` owned by `SampleHarness` is now `utils::FpsCounter`
+    /// with a `0.5s` window; the harness ticks it each frame and the overlay
+    /// can query `fps()`/`ms()` without owning windowing — the counter itself
+    /// is GL-free and uses `steady_clock`, so it works headlessly as well.
+    /// `fps()==60.24` within `1e-3` for a `16.6ms` cadence (`1/0.0166`), `ms()`
+    /// is `1000/fps`.)
+    utils::FpsCounter& fpsCounter() noexcept {
+        return fpsCounter_;
+    }
+    const utils::FpsCounter& fpsCounter() const noexcept {
+        return fpsCounter_;
+    }
+
    private:
     core::Window window_;
     std::unique_ptr<ISample> sample_;
     ImGuiOverlay overlay_{};
+    utils::FpsCounter fpsCounter_{};
 };
 
 // ---------------------------------------------------------------------------

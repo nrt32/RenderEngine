@@ -62,6 +62,7 @@ add_executable(${RE_TEST_TARGET}
     t8_layer_ordering_test.cpp
     t9_camera_controller_test.cpp
     t11_volume_caps_test.cpp
+    t12_fps_standalone_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

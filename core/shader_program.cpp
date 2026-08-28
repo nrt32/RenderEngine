@@ -109,7 +109,8 @@ data::Result<std::uint32_t> compileStage(GLenum stage, std::string_view source,
                                 " shader compile failed:\n" +
                                 normalizeInfoLog(log);
     glDeleteShader(shader);
-    return data::makeError<std::uint32_t>(errorCode, message);
+    return data::makeError<std::uint32_t>(
+        data::ErrorDomain::Shader, errorCode, message);
 }
 
 // A single shader stage to compile: its GL type + source (VG10: inside anon namespace).
@@ -207,8 +208,9 @@ data::Result<std::uint32_t> createAndLink(
             for (const std::uint32_t s : shaderObjects) {
                 glDeleteShader(s);
             }
-            return data::makeError<std::uint32_t>(compiled.error().code,
-                                                  compiled.error().message);
+            return data::makeError<std::uint32_t>(
+                compiled.error().domain, compiled.error().code,
+                compiled.error().message);
         }
         shaderObjects.push_back(*compiled);
     }
@@ -253,7 +255,8 @@ data::Result<std::uint32_t> createAndLink(
             glDeleteShader(s);
         }
         return data::makeError<std::uint32_t>(
-            static_cast<int>(ShaderError::Link), message);
+            data::ErrorDomain::Shader, static_cast<int>(ShaderError::Link),
+            message);
     }
 
     // Linked programs no longer need their attached shader objects.
@@ -273,8 +276,9 @@ data::Result<ShaderProgram> ShaderProgram::create(
     };
     auto program = createAndLink(stages, {});
     if (program.failed()) {
-        return data::makeError<ShaderProgram>(program.error().code,
-                                              program.error().message);
+        return data::makeError<ShaderProgram>(
+            program.error().domain, program.error().code,
+            program.error().message);
     }
     return data::makeValue<ShaderProgram>(ShaderProgram(*program));
 }
@@ -289,8 +293,9 @@ data::Result<ShaderProgram> ShaderProgram::createWithGeometry(
     };
     auto program = createAndLink(stages, {});
     if (program.failed()) {
-        return data::makeError<ShaderProgram>(program.error().code,
-                                              program.error().message);
+        return data::makeError<ShaderProgram>(
+            program.error().domain, program.error().code,
+            program.error().message);
     }
     return data::makeValue<ShaderProgram>(ShaderProgram(*program));
 }
@@ -305,8 +310,9 @@ data::Result<ShaderProgram> ShaderProgram::createWithTransformFeedback(
     };
     auto program = createAndLink(stages, varyings);
     if (program.failed()) {
-        return data::makeError<ShaderProgram>(program.error().code,
-                                              program.error().message);
+        return data::makeError<ShaderProgram>(
+            program.error().domain, program.error().code,
+            program.error().message);
     }
     return data::makeValue<ShaderProgram>(ShaderProgram(*program));
 }

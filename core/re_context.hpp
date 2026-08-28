@@ -2,8 +2,8 @@
 
 // core/re_context.hpp — REContext: global state mirror per GL context (SPEC §3, T2).
 //
-// Formerly DrawContext (core/draw.hpp, T2 rename — not draw-only; also used by
-// tests and readback, per user direction). REContext is the SOLE owner of raw GL
+// Formerly DrawContext (T2 rename — not draw-only; also used by tests and
+// readback, per user direction). REContext is the SOLE owner of raw GL
 // state calls in RenderEngine. render/, app/, tests/, broker/, scene/ use core/
 // wrappers; never raw gl* (guardrail gpu_api_ownership). utils/ offscreen context
 // delegates raw loading to core::loadCoreGl.

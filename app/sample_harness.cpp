@@ -48,6 +48,12 @@ int SampleHarness::run(int maxFrames) {
     int frames = 0;
     bool frameOk = true;
     while (!window_.shouldClose() && frames < maxFrames && frameOk) {
+        // T12: tick the standalone FPS counter each frame (GL-free,
+        // `steady_clock`, `0.5s` window — the former `app/FpsCounter` owned by
+        // the harness is now `utils::FpsCounter` queried here; `fps()==1/delta`
+        // within `1e-3`, `delta==16.6ms -> 60.24`, window `N==30` average
+        // `60.24+-1e-3`).
+        fpsCounter_.tick();
         window_.pollEvents();
 
         // Deliver a pending framebuffer resize BEFORE anything else consumes
@@ -115,6 +121,7 @@ int SampleHarness::runInteractive() {
     int frames = 0;
     bool frameOk = true;
     while (!window_.shouldClose() && frameOk) {
+        fpsCounter_.tick();
         window_.pollEvents();
 
         if (window_.consumeFramebufferResized()) {

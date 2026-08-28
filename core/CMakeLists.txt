@@ -42,10 +42,7 @@ target_link_libraries(re_core PUBLIC
 # tests that probe GLFW) links them explicitly in their own CMakeLists.
 # For install/export, PRIVATE deps are BUILD_INTERFACE only so the export does
 # not require them to be in the same export set (T2: header firewall).
-target_link_libraries(re_core PRIVATE
-    $<BUILD_INTERFACE:glfw>
-    $<BUILD_INTERFACE:glad_gl_core_46>
-)
+target_link_libraries(re_core PRIVATE $<BUILD_INTERFACE:glfw> $<BUILD_INTERFACE:glad_gl_core_46>)
 
 # EGL is used by the surfaceless fallback in utils/offscreen_context.cpp (the
 # offscreen context moved out of core/ in V2.1); core/ itself only needs GLFW.
