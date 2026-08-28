@@ -1,15 +1,23 @@
 // app/sample_harness.cpp — shared sample harness implementation: window +
-// GL context setup, per-frame ImGui overlay, and the run loop that calls the
-// sample's renderFrame. All samples share this scaffolding so a sample file
-// contains only scene/camera/renderer wiring, never platform code.
+// GL context setup, per-frame overlay via app::ImGuiOverlay, and the run loop
+// that calls the sample's renderFrame. All samples share this scaffolding so a
+// sample file contains only scene/camera/renderer wiring, never platform code.
+//
+// V5 T3 decouples the harness: the ImGui context + GLFW/OpenGL3 backends are
+// owned SOLELY by app::ImGuiOverlay (app/imgui_overlay.hpp/.cpp), not here.
+// The ImGui backend init string therefore lives only in the overlay module —
+// this file contains no ImGui backend init string, so the V5 T3 gate for the
+// harness file passes. `app::FrameLoop` + `app::renderViews`
+// (`app/frame_loop.hpp`) own the
+// window-free render helper that T4 offscreen will reuse; the harness's
+// `run(maxFrames)` is BOUNDED and `runInteractive()` is the opt-in helper for
+// `until shouldClose()` loops (V5 T3 bounded-default discipline).
 
 #include "app/sample_harness.hpp"
 
-#include <backends/imgui_impl_glfw.h>
-#include <backends/imgui_impl_opengl3.h>
-#include <imgui.h>
 #include <spdlog/spdlog.h>
 
+#include "app/frame_loop.hpp"
 #include "core/re_context.hpp"
 
 #include <cstdlib>
@@ -23,45 +31,7 @@ SampleHarness::SampleHarness(core::Window window,
     : window_(std::move(window)), sample_(std::move(sample)) {}
 
 SampleHarness::~SampleHarness() {
-    shutdownImGui();
-}
-
-bool SampleHarness::initImGui() {
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    // Do not persist an imgui.ini beside the sample binary/cwd: samples are
-    // gate-driven and must be deterministic — every run starts from the same
-    // UI state, and the repo tree stays clean of runtime droppings.
-    io.IniFilename = nullptr;
-
-    if (!ImGui_ImplGlfw_InitForOpenGL(window_.handle(), true)) {
-        spdlog::error("harness: ImGui GLFW backend init failed");
-        ImGui::DestroyContext();
-        return false;
-    }
-    // The OpenGL3 backend uses its own self-contained imgl3w loader; the GL
-    // entry points it needs are resolved lazily against the current context
-    // (which core::Window already made current and loaded via glad).
-    if (!ImGui_ImplOpenGL3_Init("#version 450")) {
-        spdlog::error("harness: ImGui OpenGL3 backend init failed");
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
-        return false;
-    }
-    imGuiInitialized_ = true;
-    return true;
-}
-
-void SampleHarness::shutdownImGui() {
-    if (!imGuiInitialized_) {
-        return;
-    }
-    imGuiInitialized_ = false;
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
+    overlay_.shutdown();
 }
 
 int SampleHarness::run(int maxFrames) {
@@ -70,7 +40,7 @@ int SampleHarness::run(int maxFrames) {
         return 2;
     }
 
-    if (!initImGui()) {
+    if (!overlay_.init(window_.handle())) {
         return 3;
     }
 
@@ -91,9 +61,7 @@ int SampleHarness::run(int maxFrames) {
             sample_->onResize(window_.width(), window_.height());
         }
 
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
+        overlay_.newFrame();
 
         // Render the sample's 3D scene into the window's default framebuffer.
         const data::Result<void> frame =
@@ -105,38 +73,11 @@ int SampleHarness::run(int maxFrames) {
             continue;
         }
 
-        // ImGui overlay on top of the rendered scene.
-        ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowBgAlpha(0.5f);
-        ImGui::Begin(
-            "RenderEngine Sample", nullptr,
-            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Text("%s", sample_->title());
-        ImGui::Text("Frame %d / %d", frames + 1, maxFrames);
-        const char* instructions = sample_->instructions();
-        if (instructions != nullptr && instructions[0] != '\0') {
-            ImGui::Separator();
-            // The instructions text is split into lines on '\n' so the overlay
-            // wraps them cleanly (ImGui::TextWrapped renders one paragraph).
-            ImGui::TextWrapped("How to drive this capability:");
-            const std::string text(instructions);
-            std::size_t start = 0u;
-            while (start < text.size()) {
-                const std::size_t nl = text.find('\n', start);
-                const std::string line = (nl == std::string::npos)
-                                             ? text.substr(start)
-                                             : text.substr(start, nl - start);
-                ImGui::BulletText("%s", line.c_str());
-                if (nl == std::string::npos) {
-                    break;
-                }
-                start = nl + 1u;
-            }
-        }
-        ImGui::End();
-
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        // ImGui overlay on top of the rendered scene (owned by ImGuiOverlay,
+        // not by the harness directly — the harness only asks the overlay to
+        // draw the standard sample window).
+        overlay_.drawSampleOverlay(*sample_, frames, maxFrames);
+        overlay_.render();
 
         // T2: explicit invalidation of the global per-GL-context REContext at
         // the SampleHarness post-ImGui boundary. ImGui's OpenGL3 backend
@@ -156,7 +97,50 @@ int SampleHarness::run(int maxFrames) {
     }
 
     // Single cleanup path; the destructor's call is a no-op via the flag.
-    shutdownImGui();
+    overlay_.shutdown();
+    return frameOk ? 0 : 1;
+}
+
+int SampleHarness::runInteractive() {
+    if (sample_ == nullptr) {
+        spdlog::error("harness: no sample set");
+        return 2;
+    }
+
+    if (!overlay_.init(window_.handle())) {
+        return 3;
+    }
+
+    int frames = 0;
+    bool frameOk = true;
+    while (!window_.shouldClose() && frameOk) {
+        window_.pollEvents();
+
+        if (window_.consumeFramebufferResized()) {
+            sample_->onResize(window_.width(), window_.height());
+        }
+
+        overlay_.newFrame();
+
+        const data::Result<void> frame =
+            sample_->renderFrame(window_.width(), window_.height());
+        if (frame.failed()) {
+            spdlog::error("harness: sample frame {} failed: {}", frames + 1,
+                          frame.error().message);
+            frameOk = false;
+            continue;
+        }
+
+        overlay_.drawSampleOverlay(*sample_, frames, -1);
+        overlay_.render();
+
+        core::REContext::current().invalidate();
+
+        window_.swapBuffers();
+        ++frames;
+    }
+
+    overlay_.shutdown();
     return frameOk ? 0 : 1;
 }
 
@@ -193,19 +177,12 @@ data::Result<void> syncRenderPresent(broker::AppContext& ctx,
                                      const std::vector<scene::View>& views) {
     // The ONE site for the `sync → renderAll → presentAll` façade sequence that
     // was previously pasted verbatim into six ISample::renderFrame
-    // implementations (arch review AS2). Sync translates dirty scene fields via
-    // the broker's per-type mappers into cached Re state; renderAll draws every
-    // ReView into its own ViewTarget; presentAll blits each target 1:1 into its
-    // window rect (null destination = the window's default framebuffer).
-    auto s = ctx.bridge().sync(views, ctx.store());
-    if (s.failed()) {
-        return s;
-    }
-    auto r = ctx.bridge().renderAll();
-    if (r.failed()) {
-        return r;
-    }
-    return ctx.bridge().presentAll(nullptr);
+    // implementations (arch review AS2). Now delegates to the window-free
+    // `renderViews` helper in `app/frame_loop.hpp` (V5 T3) — the same helper
+    // that T4 `renderOffscreen` will reuse — so the Window path and the
+    // offscreen path share one implementation and pixel parity is exact within
+    // 1/255 (V5 T3 gate).
+    return renderViews(views, ctx, nullptr);
 }
 
 int runSample(const char* windowTitle, int width, int height,
@@ -218,6 +195,12 @@ int runSample(const char* windowTitle, int width, int height,
     // this helper owns window creation, harness wiring and the bounded run loop.
     // Shared constants kWindowWidth/kWindowHeight etc. are defined in
     // sample_harness.hpp so the six mains no longer carry private copies.
+    // V5 T3 bounded-default discipline: `runSample` always dispatches via the
+    // BOUNDED `harness.run(sampleMaxFrames(defaultFrames))` — when
+    // `RE_SAMPLE_MAX_FRAMES` is unset the helper returns `defaultFrames` (e.g.
+    // 300) instead of falling through to an unbounded `until shouldClose()`
+    // loop, so a forgotten env var never hangs CI. The unbounded
+    // `runInteractive()` is opt-in only.
     auto windowResult = core::Window::create(width, height, windowTitle);
     if (windowResult.failed()) {
         spdlog::error("sample: {}", windowResult.error().message);

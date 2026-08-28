@@ -1,22 +1,34 @@
 #pragma once
 
-// app/sample_harness.hpp — shared sample harness (SPEC §3, T12, FR-app.1).
+// app/sample_harness.hpp — shared sample harness (SPEC §3, T12, FR-app.1; V5 T3 decoupled).
 //
-// A shared app/ component that owns a visible GL 4.6 core window, wires the
-// Dear ImGui (GLFW + OpenGL3) overlay, and runs the per-frame loop for the
-// capability samples (mesh, plane, volume in T12; slice/OIT in T13; MPR in
-// T14/T15). A sample implements the ISample interface (render one frame into
-// the window's default framebuffer); the harness presents the frame and draws
-// the ImGui overlay on top.
+// A shared app/ component that owns a visible GL 4.6 core window and runs the
+// per-frame loop for the capability samples (mesh, plane, volume in T12;
+// slice/OIT in T13; MPR in T14/T15). A sample implements the ISample interface
+// (render one frame into the window's default framebuffer); the harness
+// presents the frame and draws the optional ImGui overlay on top.
+//
+// V5 T3 decouples the harness into three ownership domains (prerequisite for
+// T4 offscreen): `core::Window` stays the visible-window owner, `app::FrameLoop`
+// (`app/frame_loop.hpp`) owns the window-free `renderViews` helper callable
+// without a `Window`, and `app::ImGuiOverlay` (`app/imgui_overlay.hpp`) is the
+// SOLE owner of the Dear ImGui context + GLFW/OpenGL3 backends. The harness
+// itself owns a `Window` + `ImGuiOverlay` + `FrameLoop`-style poll/render/
+// present sequence, but `FrameLoop::renderViews` is also usable headlessly
+// (the T4 `renderOffscreen` path).
 //
 // The harness consumes GL only through core/ wrappers (core::Window, the
 // core::Draw API via the render/ renderers). ImGui's own GLFW/OpenGL3 backends
 // are third-party code; the samples and harness do not call raw glXxx.
 //
-// The run loop is bounded: run(maxFrames) stops cleanly after maxFrames frames
-// (or when the window is closed). The samples read the RE_SAMPLE_MAX_FRAMES
-// environment variable so the automated gate (T12) can run them headlessly
-// under Xvfb, open a window, and exit cleanly within a timeout (FR-app.1).
+// The run loop is BOUNDED by default: `run(maxFrames)` stops cleanly after
+// `maxFrames` frames (or when the window is closed). `runInteractive()` is the
+// opt-in helper for `until shouldClose()` loops. The samples read the
+// `RE_SAMPLE_MAX_FRAMES` environment variable via `sampleMaxFrames(default)` so
+// the automated gate (T12) can run them headlessly under Xvfb; when the
+// variable is UNSET the helper defaults to bounded `kDefaultFrames` (never
+// interactive), so a forgotten env var never hangs CI (V5 T3 bounded-default
+// discipline).
 //
 // Resize path (T23): core::Window registers the GLFW framebuffer-size
 // callback; each frame the harness consumes the dirty latch and — when an
@@ -28,6 +40,7 @@
 #include <memory>
 #include <vector>
 
+#include "app/imgui_overlay.hpp"
 #include "broker/app_context.hpp"
 #include "core/window.hpp"
 #include "data/result.hpp"
@@ -106,8 +119,12 @@ void fitPerspectiveViewToPixels(scene::View& view,
                                 const PerspectiveFraming& framing, int width,
                                 int height) noexcept;
 
-/// Shared sample harness: owns a visible window + GL context, wires the ImGui
-/// overlay, and runs the frame loop.
+/// Shared sample harness: owns a visible window + GL context, drives the
+/// frame loop via `FrameLoop` polling + `ImGuiOverlay` for the optional overlay.
+/// The harness is decoupled per V5 T3: `core::Window` stays, `ImGuiOverlay`
+/// owns the Dear ImGui wiring (the backend init string lives only in the
+/// overlay source), and `app/frame_loop.hpp` owns the window-free `renderViews`
+/// helper (prerequisite for T4 offscreen).
 class SampleHarness {
    public:
     /// Construct with the owned window and the sample to drive.
@@ -122,9 +139,17 @@ class SampleHarness {
     ~SampleHarness();
 
     /// Run the frame loop for up to `maxFrames` frames (or until the window is
-    /// closed). Returns the process exit code: 0 on a clean stop, non-zero on a
-    /// sample-frame or ImGui-init failure.
+    /// closed). BOUNDED — the sole public contract (V5 T3). Returns the process
+    /// exit code: 0 on a clean stop, non-zero on a sample-frame or ImGui-init
+    /// failure.
     int run(int maxFrames);
+
+    /// Opt-in interactive loop: run until the window's close flag is set
+    /// (`while (!shouldClose())`). Not used by samples' `main()` — samples
+    /// keep bounded dispatch via `run(sampleMaxFrames(kDefaultFrames))` so CI
+    /// never hangs when `RE_SAMPLE_MAX_FRAMES` is forgotten. Call this
+    /// explicitly for interactive sessions only.
+    int runInteractive();
 
     /// The owned window (for samples that need the framebuffer size).
     core::Window& window() noexcept {
@@ -132,16 +157,9 @@ class SampleHarness {
     }
 
    private:
-    /// Initialise the ImGui context + GLFW/OpenGL3 backends. Returns false on
-    /// failure.
-    bool initImGui();
-    /// Shut down the ImGui backends + context. Idempotent (safe to call from
-    /// both `run()` and the destructor).
-    void shutdownImGui();
-
     core::Window window_;
     std::unique_ptr<ISample> sample_;
-    bool imGuiInitialized_{false};
+    ImGuiOverlay overlay_{};
 };
 
 // ---------------------------------------------------------------------------

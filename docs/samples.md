@@ -40,11 +40,16 @@ unchanged.
 - Version probe via `glGetIntegerv` (GL_MAJOR_VERSION / GL_MINOR_VERSION),
   matching the offscreen fixture (SPEC §2/§8).
 
-### `app::ISample` + `app::SampleHarness` (`app/sample_harness.hpp`, `.cpp`)
+### `app::ISample` + `app::SampleHarness` (`app/sample_harness.hpp`, `.cpp`) + `app::FrameLoop` + `app::ImGuiOverlay` (V5 T3 decoupled)
 
-The **shared sample harness** (T12 deliverable): a reusable app/ component that
-owns a visible window, wires the Dear ImGui (GLFW + OpenGL3) overlay, and runs
-the frame loop. A sample implements `ISample` and the harness drives it:
+The **shared sample harness** (T12 deliverable, V5 T3 decoupled): a reusable
+app/ component that owns a visible window and runs the frame loop. A sample
+implements `ISample` and the harness drives it. V5 T3 splits the former
+monolithic harness into three ownership domains — `core::Window` stays the
+visible-window owner, `app::FrameLoop` (`app/frame_loop.hpp`) owns the
+window-free `renderViews` helper, and `app::ImGuiOverlay`
+(`app/imgui_overlay.hpp`) is the SOLE owner of the Dear ImGui wiring — so
+`renderViews` is callable without a `Window` (prerequisite for T4 offscreen).
 
 | Member | Purpose |
 |---|---|
@@ -52,20 +57,28 @@ the frame loop. A sample implements `ISample` and the harness drives it:
 | `ISample::onResize(width, height)` | optional resize hook (T23): called once per pending framebuffer-size event batch with the current pixel size, BEFORE the affected frame; default no-op. Samples that re-derive everything per frame need not override. |
 | `ISample::title()` | one-line description shown in the ImGui overlay. |
 | `ISample::instructions()` | optional multi-line help text shown in the overlay (T13) describing how to drive the sample's capability; empty by default. |
-| `SampleHarness::run(maxFrames)` | the run loop: poll events → (resize delivery) → ImGui new-frame → sample `renderFrame` → ImGui overlay → present. Stops cleanly after `maxFrames` frames or on window close; returns the process exit code (0 clean). |
-| `app::sampleMaxFrames(default)` | reads the `RE_SAMPLE_MAX_FRAMES` env var (bounded run, so the gate can terminate samples headlessly). |
+| `SampleHarness::run(maxFrames)` | BOUNDED run loop (V5 T3 sole public contract): poll events → (resize delivery) → `ImGuiOverlay::newFrame` → sample `renderFrame` → `ImGuiOverlay::drawSampleOverlay` → `ImGuiOverlay::render` → present. Stops cleanly after `maxFrames` frames or on window close; returns the process exit code (0 clean). |
+| `SampleHarness::runInteractive()` | opt-in `until shouldClose()` loop (V5 T3): same steps but without a `maxFrames` bound — interactive sessions only, never CI. Samples keep bounded dispatch (`run(sampleMaxFrames(kDefaultFrames))`). |
+| `app::sampleMaxFrames(default)` | reads the `RE_SAMPLE_MAX_FRAMES` env var (bounded run). When the var is UNSET/empty the helper returns `default` (e.g. 300 or 20), never an unbounded loop — a forgotten env var never hangs CI (V5 T3 bounded-default). |
+| `app::renderViews(views, ctx, fb)` | window-free helper (`app/frame_loop.hpp`, V5 T3): `sync → renderAll → presentAll` into any `core::Framebuffer*` (nullptr = window default). No `Window` or GLFW, so T4 `renderOffscreen` reuses it. |
+| `app::FrameLoop` | optional coordinator (`app/frame_loop.hpp`): `poll()`, `render(views)`, `renderTo(views, fb)`, `present()`, `shouldClose()` — separates the loop so the caller can interleave overlay work. |
+| `app::ImGuiOverlay` | optional overlay (`app/imgui_overlay.hpp`, V5 T3): the sole owner of `ImGui_ImplGlfw_InitForOpenGL` etc. — `grep -c ImGui_ImplGlfw_InitForOpenGL app/sample_harness.cpp ==0`. |
 
-Per frame the harness:
+Per frame the harness (`run(maxFrames)`, bounded):
 1. `pollEvents()`, then — when a framebuffer-size event arrived since the
    previous frame (T23) — delivers `ISample::onResize(currentW, currentH)`
    before anything else consumes the frame;
-2. starts the ImGui frame (`ImGui_ImplOpenGL3_NewFrame`,
+2. `overlay_.newFrame()` (`ImGui_ImplOpenGL3_NewFrame`,
    `ImGui_ImplGlfw_NewFrame`, `ImGui::NewFrame`);
 3. calls `sample_->renderFrame(w, h)` into the window's default framebuffer —
    if it returns a typed error, the run aborts with exit code 1 (never silent);
-4. draws the overlay (`title`, frame counter, and — when the sample provides
-   them — the per-capability driving instructions from `ISample::instructions()`),
-   renders ImGui (`ImGui_ImplOpenGL3_RenderDrawData`), and swaps buffers.
+4. `overlay_.drawSampleOverlay(*sample_, frame, maxFrames)` then
+   `overlay_.render()` (`ImGui::Render`, `ImGui_ImplOpenGL3_RenderDrawData`),
+   invalidates `REContext::current()`, and swaps buffers.
+
+The window-free path (`renderViews`) does the same `sync → renderAll → presentAll`
+without a `Window` or overlay — center pixel within 1/255 of the harness path
+(V5 T3 parity gate, `N>=3`).
 
 The ImGui OpenGL3 backend uses its own self-contained imgl3w loader (no glad
 wiring); it resolves GL entry points lazily against the current context, which

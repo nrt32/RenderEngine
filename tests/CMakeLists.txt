@@ -55,6 +55,7 @@ add_executable(${RE_TEST_TARGET}
     t15_glfw_runtime_test.cpp
     t19_view_lights_test.cpp
     t1_engine_facade_test.cpp
+    t3_harness_decouple_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

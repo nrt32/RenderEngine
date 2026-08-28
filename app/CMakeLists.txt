@@ -34,6 +34,8 @@ target_link_libraries(re_imgui PUBLIC
 # ---------------------------------------------------------------------------
 add_library(re_app STATIC
     sample_harness.cpp
+    frame_loop.cpp
+    imgui_overlay.cpp
     mpr_slice.cpp
 )
 
