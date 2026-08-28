@@ -11,6 +11,7 @@
 #include <glm/vec4.hpp>
 
 #include "data/mesh.hpp"
+#include "scene/layer.hpp"
 #include "scene/plane_desc.hpp"
 #include "scene/iscene_object.hpp"
 
@@ -33,6 +34,7 @@ class ContourObject : public ObjectBase<ContourObject> {
     glm::mat4 transform{1.0f};
     PlaneDesc plane{};
     glm::vec4 color{1.0f, 0.0f, 0.0f, 1.0f};
+    Layer layer{Layer::Contour};
     uint64_t generation{0};
 
     void setPlane(PlaneDesc p) noexcept {

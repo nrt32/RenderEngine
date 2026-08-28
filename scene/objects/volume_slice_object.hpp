@@ -11,6 +11,7 @@
 #include <glm/vec4.hpp>
 
 #include "data/volume_dataset.hpp"
+#include "scene/layer.hpp"
 #include "scene/material_desc.hpp"
 #include "volume/transfer_function.hpp"
 #include "scene/iscene_object.hpp"
@@ -35,6 +36,7 @@ class VolumeSliceObject : public ObjectBase<VolumeSliceObject> {
     VolumeMaterialDesc material{};
     volume::TransferFunction transferFunction{{{0.0f, {0, 0, 0, 0}}, {1.0f, {1, 1, 1, 1}}}};
     float stepLength{0.01f};
+    Layer layer{Layer::VolumeSlice};
     uint64_t generation{0};
 
     void setTransferFunction(volume::TransferFunction tf) noexcept {

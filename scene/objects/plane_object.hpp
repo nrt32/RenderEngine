@@ -11,6 +11,7 @@
 #include <glm/vec4.hpp>
 
 #include "data/image.hpp"
+#include "scene/layer.hpp"
 #include "scene/material_desc.hpp"
 #include "scene/iscene_object.hpp"
 
@@ -32,6 +33,7 @@ class PlaneObject : public ObjectBase<PlaneObject> {
     AssetRef<data::Image> image{};
     glm::mat4 transform{1.0f};
     MeshMaterialDesc presentation{};
+    Layer layer{Layer::Plane};
     uint64_t generation{0};
 };
 

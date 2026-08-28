@@ -35,6 +35,7 @@
 #include <glm/mat4x4.hpp>
 
 #include "data/result.hpp"
+#include "scene/layer.hpp"
 
 namespace re::scene {
 
@@ -133,6 +134,11 @@ class ISceneObject {
     /// SceneStore::add* methods.
     virtual void setId(ObjectId v) noexcept = 0;
     virtual void setGeneration(uint64_t g) noexcept = 0;
+
+    /// Visual stacking layer for this object — lower values are drawn first. Every concrete object exposes this as a public Layer field; the polymorphic accessor lets the broker resolve the effective layer without branching on kind.
+    virtual Layer layer() const noexcept = 0;
+    /// Change the stacking layer and bump generation so dirty tracking re-translates the affected view.
+    virtual void setLayer(Layer l) noexcept = 0;
 };
 
 /// CRTP mixin that implements ISceneObject forwarding for a concrete Derived.
@@ -178,6 +184,17 @@ class ObjectBase : public ISceneObject {
     void setId(ObjectId v) noexcept override { static_cast<Derived*>(this)->id = v; }
     void setGeneration(uint64_t g) noexcept override {
         static_cast<Derived*>(this)->generation = g;
+    }
+
+    Layer layer() const noexcept override {
+        return static_cast<const Derived*>(this)->layer;
+    }
+    void setLayer(Layer l) noexcept override {
+        auto* d = static_cast<Derived*>(this);
+        if (d->layer != l) {
+            d->layer = l;
+            ++d->generation;
+        }
     }
 
     std::unique_ptr<ISceneObject> clone() const override {

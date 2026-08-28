@@ -59,6 +59,7 @@ add_executable(${RE_TEST_TARGET}
     t4_offscreen_test.cpp
     t5_geometry_collapse_test.cpp
     t7_loader_facade_test.cpp
+    t8_layer_ordering_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

@@ -29,9 +29,26 @@
 #include "broker/volume_slice_object_mapper.hpp"
 #include "broker/view_compositor.hpp"
 #include "render/view.hpp"
+#include "scene/layer.hpp"
 #include "scene/translate_context.hpp"
 
 namespace re::broker {
+
+namespace {
+
+int techniquePriorityFor(scene::SceneKind k) noexcept {
+    switch (k) {
+        case scene::SceneKind::Volume: return 0;
+        case scene::SceneKind::VolumeSlice: return 1;
+        case scene::SceneKind::Plane: return 2;
+        case scene::SceneKind::Mesh: return 3;
+        case scene::SceneKind::MeshSlice: return 4;
+        case scene::SceneKind::Contour: return 5;
+        default: return 10;
+    }
+}
+
+} // namespace
 
 void ViewSynchronizer::markDirty(uint64_t viewId, scene::FieldId field) noexcept {
     pushDirties_[viewId].push_back(field);
@@ -67,9 +84,9 @@ std::vector<scene::FieldId> ViewSynchronizer::dirtyFieldsSince(uint64_t lastGen)
 }
 
 data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
-                                          const scene::SceneStore& scene,
-                                          uint64_t layoutId,
-                                          ViewCompositor* /*borrow*/ compositor) {
+                                           const scene::SceneStore& scene,
+                                           uint64_t layoutId,
+                                           ViewCompositor* /*borrow*/ compositor) {
     uint64_t curGen = scene.storeGeneration();
     curGen ^= std::hash<uint64_t>{}(layoutId) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
     for (const auto& v : views) {
@@ -81,6 +98,12 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         curGen ^= std::hash<uint64_t>{}(v.clearColorGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.depthTestGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.lightsGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
+        curGen ^= std::hash<uint64_t>{}(v.layerGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
+        curGen ^= std::hash<uint64_t>{}(static_cast<uint64_t>(v.layerMask)) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
+        for (const auto& ov : v.layerOverrides) {
+            curGen ^= std::hash<uint64_t>{}(ov.first) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
+            curGen ^= std::hash<int>{}(static_cast<int>(ov.second)) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
+        }
     }
     for (auto& kv : pushDirties_) {
         curGen ^= std::hash<uint64_t>{}(kv.first) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
@@ -111,6 +134,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
                 case scene::FieldId::Material:
                 case scene::FieldId::TransferFunction:
                 case scene::FieldId::Plane:
+                case scene::FieldId::Layer:
                     return true;
                 default:
                     return false;
@@ -133,6 +157,10 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         bool depthDirty = isNew || cache.depthTestGen != av.depthTestGen || hasPushDirty(av.id, scene::FieldId::DepthTest);
         bool clearColorDirty = isNew || cache.clearColorGen != av.clearColorGen || hasPushDirty(av.id, scene::FieldId::ClearColor);
         bool lightsDirty = isNew || cache.lightsGen != av.lightsGen || hasPushDirty(av.id, scene::FieldId::Lights);
+        bool layerDirty = isNew || cache.layerGen != av.layerGen || hasPushDirty(av.id, scene::FieldId::Layer);
+        if (layerDirty) {
+            cache.layerGen = av.layerGen;
+        }
         if (depthDirty) {
             rv->setDepthTest(av.depthTest);
             cache.depthTestGen = av.depthTestGen;
@@ -248,22 +276,58 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
             cache.projGen = av.camera.projGen();
         }
 
+        // Deterministic (layer, techniquePriority) ordering — replaces insertion-order painting. Effective layer is per-view override if present, else the object's global layer; mask culling drops hidden layers without store mutation. Technique priority is orthogonal (Volume→Contour) so same-layer VolumeSlice still sorts before Contour.
+        struct OrderEntry { uint64_t oid; scene::Layer effLayer; int prio; };
+        std::vector<OrderEntry> order;
+        order.reserve(av.itemIds.size());
+        for (uint64_t oid : av.itemIds) {
+            // @note lifetime: SceneStore owns the object; borrow valid until next store mutation.
+            const scene::ISceneObject* /*borrow*/ obj = scene.getObject(oid);
+            if (!obj) {
+                order.push_back({oid, scene::Layer::Background, 99});
+                continue;
+            }
+            scene::Layer eff = obj->layer();
+            auto itOv = av.layerOverrides.find(oid);
+            if (itOv != av.layerOverrides.end()) eff = itOv->second;
+            if ((av.layerMask & (1u << static_cast<uint32_t>(eff))) == 0u) continue;
+            int prio = techniquePriorityFor(obj->kind());
+            order.push_back({oid, eff, prio});
+        }
+        std::sort(order.begin(), order.end(), [](const OrderEntry& a, const OrderEntry& b) {
+            if (static_cast<uint8_t>(a.effLayer) != static_cast<uint8_t>(b.effLayer)) return static_cast<uint8_t>(a.effLayer) < static_cast<uint8_t>(b.effLayer);
+            return a.prio < b.prio;
+        });
+        uint64_t orderHash = 1469598103934665603ULL;
+        for (auto& e : order) {
+            orderHash ^= std::hash<uint64_t>{}(e.oid) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
+            orderHash ^= std::hash<int>{}(static_cast<int>(e.effLayer)) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
+            orderHash ^= std::hash<int>{}(e.prio) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
+        }
+        // Include mask/override identity so mask flip changes hash even when filtered set size same (e.g., same count but different visibility)
+        orderHash ^= std::hash<uint64_t>{}(av.layerMask) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
+        orderHash ^= std::hash<size_t>{}(av.layerOverrides.size()) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
+        bool orderDirty = isNew || cache.layerOrderHash != orderHash || layerDirty || hasPushDirty(av.id, scene::FieldId::Layer);
         bool itemsDirty = isNew || storeItemsDirty ||
-                          cache.itemsGen != av.itemsGen ||
-                          planeDirty ||
-                          hasPushDirty(av.id, scene::FieldId::Items);
+                           cache.itemsGen != av.itemsGen ||
+                           planeDirty ||
+                           orderDirty ||
+                           hasPushDirty(av.id, scene::FieldId::Items);
         if (itemsDirty) {
             rv->clearItems();
             std::vector<render::MeshInstance> transparentPending;
-            for (uint64_t oid : av.itemIds) {
-                auto r = mapItemToLayer(av, scene, oid, rv, transparentPending);
+            for (auto& entry : order) {
+                auto r = mapItemToLayer(av, scene, entry.oid, rv, transparentPending);
                 if (r.failed()) return r;
             }
+            // Unknown ids that were masked out as missing were already flattened to Background entries above; any truly missing oid will still error via mapItemToLayer (never silently dropped).
+            // For views where all entries were masked out, the view simply renders no layers (clear color only).
             effective->setTransparentItems(layoutId, av.id,
                                             stack_ && stack_->pipeline
                                                 ? std::move(transparentPending)
                                                 : std::vector<render::MeshInstance>{});
             cache.itemsGen = av.itemsGen;
+            cache.layerOrderHash = orderHash;
         }
     }
 

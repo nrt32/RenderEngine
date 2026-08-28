@@ -18,6 +18,7 @@
 
 #include "data/mesh.hpp"
 #include "scene/geometry_kind.hpp"
+#include "scene/layer.hpp"
 #include "scene/material_desc.hpp"
 #include "scene/iscene_object.hpp"
 
@@ -53,6 +54,7 @@ class MeshObject : public ObjectBase<MeshObject> {
     glm::mat4 transform{1.0f};
     MeshMaterialDesc presentation{};
     GeometryKind geometryKind{GeometryKind::Mesh};
+    Layer layer{Layer::Mesh};
     uint64_t generation{0};
 
     void setPresentation(MeshMaterialDesc p) noexcept {

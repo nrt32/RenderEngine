@@ -48,3 +48,4 @@
 // .geometryKind = GeometryKind::Sphere }` suffices — while a new technique
 // (e.g., StreamlineObject) still needs one new header plus one registration
 // line. Zero edits to the store or ViewSynchronizer dispatch for variations.
+// Every technique object now also carries a visual Layer tag (eight values from Background to OverlayTop) whose default matches its technique (Volume→Volume, Plane→Plane, Mesh→Mesh, etc.) and whose setLayer bumps generation so the broker re-groups by (layer, techniquePriority) — the deterministic ordering replacement for insertion order.

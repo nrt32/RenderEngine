@@ -11,6 +11,7 @@
 #include <glm/vec4.hpp>
 
 #include "data/mesh.hpp"
+#include "scene/layer.hpp"
 #include "scene/material_desc.hpp"
 #include "scene/iscene_object.hpp"
 
@@ -32,6 +33,7 @@ class MeshSliceObject : public ObjectBase<MeshSliceObject> {
     AssetRef<data::Mesh> mesh{};
     glm::mat4 transform{1.0f};
     MeshMaterialDesc presentation{};
+    Layer layer{Layer::MeshSlice};
     uint64_t generation{0};
 
     void setPresentation(MeshMaterialDesc p) noexcept {

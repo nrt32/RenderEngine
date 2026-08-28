@@ -13,5 +13,6 @@ enum class FieldId : uint8_t {
     ClearColor = 8,
     DepthTest = 9,
     Lights = 10,
+    Layer = 11,
 };
 }

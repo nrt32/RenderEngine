@@ -115,18 +115,20 @@ class ViewSynchronizer : public IDirtyTracker {
      uint64_t storeGeneration() const noexcept override;
      std::vector<scene::FieldId> dirtyFieldsSince(uint64_t lastGen) const noexcept override;
 
-    private:
-     struct ViewCache {
-         uint64_t rectGen{static_cast<uint64_t>(-1)};
-         uint64_t planeGen{static_cast<uint64_t>(-1)};
-         uint64_t cameraGen{static_cast<uint64_t>(-1)};
-         uint64_t itemsGen{static_cast<uint64_t>(-1)};
-         uint64_t viewGen{static_cast<uint64_t>(-1)};
-         uint64_t projGen{static_cast<uint64_t>(-1)};
-         uint64_t clearColorGen{static_cast<uint64_t>(-1)};
-         uint64_t depthTestGen{static_cast<uint64_t>(-1)};
-         uint64_t lightsGen{static_cast<uint64_t>(-1)};
-     };
+     private:
+      struct ViewCache {
+          uint64_t rectGen{static_cast<uint64_t>(-1)};
+          uint64_t planeGen{static_cast<uint64_t>(-1)};
+          uint64_t cameraGen{static_cast<uint64_t>(-1)};
+          uint64_t itemsGen{static_cast<uint64_t>(-1)};
+          uint64_t viewGen{static_cast<uint64_t>(-1)};
+          uint64_t projGen{static_cast<uint64_t>(-1)};
+          uint64_t clearColorGen{static_cast<uint64_t>(-1)};
+          uint64_t depthTestGen{static_cast<uint64_t>(-1)};
+          uint64_t lightsGen{static_cast<uint64_t>(-1)};
+          uint64_t layerGen{static_cast<uint64_t>(-1)};
+          uint64_t layerOrderHash{static_cast<uint64_t>(-1)};
+      };
      // ReView cache identity is the SHARED broker::StableKey (the same
      // definition the compositor's map keys on) — no local twin key exists
      // anymore, so a synchronizer cache entry and its ReView can never
