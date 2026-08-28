@@ -29,8 +29,8 @@ source tools/env.sh
 ```
 
 `tools/env.sh` exports:
-- `AUDIT_SOURCE_DIRS="io data volume core render app tests"` — tells the
-  mechanical audit (`tools/audit.sh`) where the project's source lives.
+- `AUDIT_SOURCE_DIRS="io data volume scene core broker render app utils test_utils tests"` — tells the
+  mechanical audit (`tools/audit.sh`) where the project's source lives (see `tools/env.sh:6` and `docs/spec/env.md` §8; `examples/` is intentionally NOT in `AUDIT_SOURCE_DIRS` — `examples/minimal.cpp` is consumer sample, excluded from `comment_tag_context` via waiver; `utils`/`test_utils` host offscreen/PixelReader facades).
 - `LOOP_BUILD_TEST_CMD` — the exact CMake build+test command the gate runs.
 
 If you skip `source tools/env.sh`, the R15 gate test fails loudly (it asserts
@@ -75,14 +75,19 @@ needed:
 ## Module layout
 
 ```
-io/       loaders only, no GL
-data/     CPU containers + GL-free typed Result<T,E> (data/result.hpp), no GL
-volume/   pure math (sampling, transfer function, ray-cast compositing), no GL
-core/     GL foundation: offscreen context fixture, RAII GL objects — the SOLE
-          owner of raw GL calls
-render/   one class per rendering technique (uses core/ wrappers)
-app/      compositions + samples
-tests/    headless unit tests (consume core/ wrappers + the core/ fixture)
+io/         loaders only, no GL
+data/       CPU containers + GL-free typed Result<T,E> (data/result.hpp), no GL
+volume/     pure math (sampling, transfer function, ray-cast compositing), no GL
+scene/      app-side scene description — GL-free, RE-free (View, Camera, SceneObject, SceneStore)
+core/       GL foundation: offscreen context fixture, RAII GL objects — the SOLE
+            owner of raw GL calls (core/rhi/gl/ after T10)
+broker/     scene → render mediation — one IMapper<AppT,ReT> per file, ViewBridge façade
+render/     one class per rendering technique (uses core/ wrappers), RE-minimal handles
+app/        compositions + samples (via scene + broker IViewBridge, never render directly)
+utils/      offscreen context + PixelReader facades delegating to core/
+test_utils/ peer test-support lib (PixelReader via REContext, empty until T18)
+tests/      headless unit tests (consume core/ wrappers + the utils/test_utils fixture)
+examples/   consumer samples (minimal.cpp via Engine facade) — NOT in AUDIT_SOURCE_DIRS
 ```
 
 ## Testing notes

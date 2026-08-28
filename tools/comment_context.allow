@@ -6,3 +6,7 @@ render/shaders/re_glsl_version\.hpp
 test_utils/pixel_reader\..*
 test_utils/offscreen_context\..*
 test_utils/capture_helpers\..*
+# Spec-review #13: examples/ is NOT in AUDIT_SOURCE_DIRS (consumer sample, not audited for comment prose)
+examples/.*
+core/caps\.hpp
+core/caps\.cpp

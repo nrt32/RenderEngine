@@ -23,7 +23,7 @@
   tooling for NRRD downsample at setup — `tools/convert_nrrd.py`, **stdlib
   only, no pip deps**; `python3 --version` ≥3.10 required, verified stdlib-only
   via `python3 -c "import sys; print(sys.version)"`), `unzip`.
-- `pkg-config` (for `glfw` fallback probe, not used — `FetchContent` `GIT_TAG 3.4` is source), `libglfw3-dev` system alternative not used
+- `pkg-config` (for `glfw` fallback probe, not used — `FetchContent` `GIT_TAG 3.4` is source), `libglfw3-dev` system alternative not used; **system `libglm-dev` / `nlohmann-json3-dev` not used — `glm`/`json` are `FetchContent` `GIT_TAG` pinned per SPEC §2 (`pkg-config` json/glm fallback not used, see `docs/spec/techstack.md` §2)**
 - `ccache` (recommended, not required) — compiler cache so rebuilds after
   `tools/clean.sh` (or spurious recompiles) hit cached objects. If the system
   package is unavailable (no sudo), a user-local static binary under

@@ -59,13 +59,13 @@ App never calls `CameraMapper` etc. directly.
 broker/
   i_mapper.hpp                      IMapper<AppT,ReT>  { Result<ReT> map(const AppT&, const TranslateContext&) const; }
   i_cached_mapper.hpp               ICachedMapper<AppT,ReT> : IMapper<AppT,ReT> { Result<ReT> mapCached(const AppT&, const TranslateContext&); void invalidate(Id); generation/contentHash probe }
-  broker.hpp                        Broker { template<AppT,ReT> void registerMapper(unique_ptr<IMapper<AppT,ReT>>); template<AppT,ReT> IMapper<AppT,ReT>* get() const; }  — keyed by std::type_index(typeid(AppT)) (OCP-open, no enum switch)
+  broker.hpp                        Broker { template<AppT,ReT> void registerMapper(unique_ptr<IMapper<AppT,ReT>>); template<AppT,ReT> IMapper<AppT,ReT>* get() const; }  — keyed by H=hash_combine(type_index(AppT),type_index(ReT)) (pair-key, OCP-open, no enum switch; supersedes V3 single-key `type_index(AppT)` per V4 T3 pair-key fix `COMPLETED_TASKS.md:718` `broker.hpp:57` — single-key alias `get<MapperT>` exact-keyed remains)
   camera_mapper.*                   ICachedMapper<app::Camera, render::Camera>               // app::Camera is manipulable pan/rotate/zoom (SPEC §3.1) — per-field gen split (see §10.4)
   plane_mapper.*                    IMapper<app::PlaneDesc, ClipPlane>  — stateless pure map, needs TranslateContext{volumeModel, dims, meshBounds} (see §11.4)
   material_mapper.*                 IMapper<app::MaterialDesc, unique_ptr<render::IMaterial>>  — dispatches via variant visitor (see §12), NOT switch on enum
-                                    + per-subtype: phong_mapper.*, pbr_mapper.*, volume_material_mapper.*, slice_material_mapper.*, contour_material_mapper.* (one file per subtype)
+                                    + per-subtype: phong_mapper.* (V5 T15 active) + pbr_mapper.*, volume_material_mapper.*, slice_material_mapper.*, contour_material_mapper.* (stretch — deferred PBR/Slice/Contour hierarchy spec-only per goals.md:45 + materials_lights.md:12.2; V5 only `Phong`+`Directional` minimal)
   transfer_function_mapper.*        IMapper<volume::TransferFunction, ReTfUniforms>
-  light_mapper.hpp + directional_mapper.*, point_mapper.*, spot_mapper.*  IMapper<app::LightDesc variant, ReLight> — visitor overload set (see §12.3)
+  light_mapper.hpp + directional_mapper.* (V5 T15 minimal Directional only) + point_mapper.*, spot_mapper.* (stretch — deferred, PBR/ILight Point/Spot hierarchy spec-only per goals.md:45 + materials_lights.md:109; V5 only `ReLight{Directional}` POD via `broker/light_mapper.hpp → render/light.hpp`)  IMapper<app::LightDesc variant, ReLight> — visitor overload set (see §12.3)
   mesh_object_mapper.*              ICachedMapper<app::MeshObject, render::ReMeshObject>              // injects AssetHandle residence via broker AssetStore, + MaterialMapper*
   mesh_slice_object_mapper.*        ICachedMapper<app::MeshSliceObject, render::ReMeshSliceObject>   // contextual: needs TranslateContext{viewPlane} — see §11.4
   volume_object_mapper.*            ICachedMapper<app::VolumeObject, render::ReVolumeObject>

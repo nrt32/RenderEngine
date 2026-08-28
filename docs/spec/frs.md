@@ -15,8 +15,7 @@ within **1e-6**, plane-geometry within **ε (1e-4 relative)**.
 - **FR-io.1** OBJ-style loader loads a known bundled mesh. *Acceptance: vertex
   count, index count, and computed AABB match hand-counted values of the golden
   file.*
-- **FR-io.2** NRRD volume loader loads a known volume. *Acceptance: dimensions
-  and per-voxel values at indexed corners match the golden file.*
+- **FR-io.2** NRRD volume loader loads a known volume. *Acceptance: **sample `128×128×70` `≤128³` exact** per `data/volumes/sample_ct.nrrd` golden (dims + per-voxel corner values exact); **product has No cap streaming via `core::Caps`** — any dims tiled/downsampled via `core::Caps maxTexture3DSize` within 1/255 of reference tiled (per `T11` + `NFR §5` `maxTexture3DSize`), `BudgetExceeded` only when `core::Caps` probe fails (not on `>128³` alone; `T11` No-cap supersedes archived `COMPLETED_TASKS.md:121` `T5` `≤128³` memory cap — see `T11` `core::Caps` tiled).*
 - **FR-io.3** Image loader (stb) loads known images. *Acceptance: dimensions +
   pixel values at corners/center match known fixtures.*
 - **FR-io.4** Loaders reject malformed input with a typed error, leaving no

@@ -44,7 +44,7 @@ deps_pinned_no_branch	forbid_flag	GIT_TAG\s+["']?(master|main|HEAD|develop|featu
 # --- GL ownership & RHI: raw GL calls ONLY under core/rhi/gl/ via IRHIContext (SPEC §3/§6 EOL) -------
 # render/, app/, tests/, broker/, scene/, and utils/ must go through core/rhi/ wrappers (IRHIContext); io/, data/, volume/ are GL-free.
 # V3 tightens the anchor: raw gl* must be confined to core/rhi/gl/ (one RHI impl); core/ outside that (e.g., core/window.cpp, core/load_core_gl.cpp keep their probes) is allow-listed as anchor until V3.2a RHI lands.
-# Transitional (until T10 (V3.9) RHI lands audit tightens to core/rhi/gl/): gpu_api_ownership keeps `core|` anchor; rhi_ownership is the V3 hard anchor (activate at T10 RHI landing when `core/rhi/gl/` appears — keep commented until then, see TASKS.md T10 G + docs/spec/guardrails.md §6) — see docs/spec/guardrails.md §6 transitional note.
+# Transitional (until (stretch) RHI lands (`core/rhi/gl/` appears) audit tightens to core/rhi/gl/): gpu_api_ownership keeps `core|` anchor; rhi_ownership is the V3 hard anchor (activate when `core/rhi/gl/` appears — keep commented until then, see stretch RHI + docs/spec/guardrails.md §6) — see docs/spec/guardrails.md §6 transitional note.
 # test_utils/ PixelReader façade must call REContext::readRgba8, not raw gl* — raw stays core-only, façade is via REContext.
 gpu_api_ownership	forbid_outside	core|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/ (transitional; tightens to core/rhi/gl/ after V3.2a RHI lands; test_utils façade via REContext, not raw)
 # rhi_ownership	forbid_outside	core/rhi/gl|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/rhi/gl/ via IRHIContext (activate when core/rhi/gl/ exists; SOLID DIP + OCP for Vulkan)
@@ -67,9 +67,9 @@ no_production_readback	forbid_outside	core|\b(glMapBufferRange|glGetBufferSubDat
 no_raw_diagnostics	forbid_grep	std::cout|std::cerr|\bprintf\(	logging discipline: use spdlog, not printf/cout
 
 # --- Asset licensing: every dataset dir must carry a LICENSE file --------------
-# Per-dataset-dir LICENSE is enforced mechanically by the T2 gate (`test -f data/meshes/LICENSE && test -f data/volumes/LICENSE`); grep is floor only.
-# Audit floor (one LICENSE anywhere) catches zero-license repo; per-dir completeness is gate test (audit floor + T2 per-dir gate), not audit alone.
-assets_licensed	require_grep	LICENSE	at least one LICENSE present (floor only); per-dataset-dir LICENSE enforced by T2 gate `test -f data/meshes/LICENSE && test -f data/volumes/LICENSE` (SPEC §7)
+# Per-dataset-dir LICENSE is enforced mechanically by BOTH the T2 gate (`test -f data/meshes/LICENSE && test -f data/volumes/LICENSE`) AND the built-in audit.sh per-dir checks (`audit.sh: assets licensed per-dir (meshes/volumes)`); grep is floor only for content.
+# Audit floor (one LICENSE anywhere) catches zero-license repo; per-dir completeness is `audit.sh` built-in + T2 per-dir gate (mechanical, not review-only).
+assets_licensed	require_grep	LICENSE	at least one LICENSE present (floor only); per-dataset-dir LICENSE enforced by audit.sh built-in `assets licensed per-dir` + T2 gate `test -f data/meshes/LICENSE && test -f data/volumes/LICENSE` (SPEC §7)
 
 # --- Disposition / layer isolation (SPEC §3/§6) ----------------------------------
 # scene/ is RE-free + GL-free; render/ never includes scene/; broker/ is the
@@ -83,6 +83,10 @@ disposition_render	forbid_inside	render|#include.*scene/	re::render must never i
 
 # --- Bridge completeness + rendering hygiene (SPEC §6) --------------------------------
 render_no_glad	forbid_inside	render|#include.*glad	<glad/gl.h> must not appear outside core/ (GL constants via core wrappers; audit render_no_glad_include)
+# engine_depth_default	require_grep	setDepthConfig\(	true	Engine facade must default DepthConfig true for mesh views (T8b/T17 divergence, View owns DepthConfig value object)  # activate at T8b (future)
+render_no_window	forbid_inside	render|#include.*window\.hpp  # T4 window-free — active now (render/offscreen must not include window.hpp)	render/offscreen must not include window.hpp (T4 window-free, render is GL-constant-only)
+# layer_count	require_grep	Count\s*=\s*8  # activate at T8 (8 layers) when scene/layer.hpp exists	Layer Count must stay 8 (T8, 8 layers Background…OverlayTop)
+# layer_mask	require_grep	using LayerMask = uint32_t  # activate at T8 when scene/layer.hpp exists	LayerMask must stay uint32_t 1u<< (T8, future-proof)
 no_noop_broker	forbid_inside	broker|Noop	broker/ must not contain Noop/placeholder renderables (bridge completeness; every scene kind routes to real layer or typed error)
 
 # --- Broker mediation: one file per mapper + ISP segregation (SPEC §11 SOLID) ----------
@@ -153,8 +157,10 @@ ownership_raw_ptr_app	forbid_inside	app|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*
 # --- Evidence rule + regression lock (review-gated, generic) --------------------
 # R4 evidence_rule — every gate test asserts an explainable constant (analytic value, golden corpus hit, spec-derived invariant — never non-empty/non-black/>0); reviewer verifies 1/255, 1e-6, 152MB cost etc. Mechanical floor is the per-task grep counts (DoD analytic values: T10 uInvViewProj, T8 152MB, T13 BudgetExceeded code, T1 Teapot pixel etc.); the rule itself is review-gated — audit.sh exit 0 + reviewer checklist verifies evidence/regression per gate.
 # R3 regression_lock — prior task tests never weakened to make room for new code (review verifies; audit placeholder never matches, reviewer is gate).
-# Mechanical weak-assert floor (complements review gate): per-task DoD grep counts are the mechanical floor (T10 uInvViewProj, T8 152 MB, T13 BudgetExceeded code, T1 Teapot pixel 1/255 etc.) — review gate verifies 1/255, 1e-6; bare non-empty/non-black without constant is forbidden by reviewer checklist (no generic regex — comments/docs legitimately mention the phrase).
-weak_assert_phrase	forbid_grep	__never_matches_weak_assert__	weak assert phrase placeholder — mechanical floor is per-task DoD grep counts (analytic values: T10 uInvViewProj, T8 152MB etc.); review gate verifies 1/255, 1e-6; bare non-empty/non-black without constant is forbidden by reviewer checklist
+# Mechanical weak-assert floor (complements review gate): per-task DoD grep counts are the mechanical floor (T10 uInvViewProj, T8 152 MB, T13 BudgetExceeded code, T1 Teapot pixel 1/255 etc.) — review gate verifies 1/255, 1e-6; bare non-empty/non-black without constant is forbidden by reviewer checklist. No generic regex is used here because `non-empty`/`non-black`/`>0` appear legitimately in docs/TASKS as negative examples (SPEC §4/§6, TASKS R4) and `EXPECT_GT(...,0)` appears in legitimate code (e.g. count checks with analytic 0); the per-task DoD `grep -c "1/255"` / `grep -c "1e-6"` / `grep -c "152 MB"` / `grep -c "640"` / `grep -c "BudgetExceeded"` counts ARE the mechanical floor, reviewer checklist is the second gate. Renamed from `weak_assert_phrase` to `weak_assert_review_gated` to make review-gated nature explicit per spec-review #5.
+# Mechanical analytic evidence anchor: at least one GL test asserts an explainable 1/255 or 1e-6 invariant — ensures suite not detached from FR tolerances (per-task DoD grep counts are the floor, this is the audit anchor).
+evidence_analytic	require_grep	1/255|1e-6	at least one analytic tolerance constant (1/255 for color, 1e-6 for math) present in sources — evidence rule anchor (per-task DoD grep counts are the floor, this is the audit anchor)
+weak_assert_review_gated	forbid_grep	__never_matches_weak_assert_review_gated__	weak assert phrase — mechanical floor is per-task DoD grep counts (analytic 1/255, 1e-6, 152MB); review gate verifies bare non-empty/non-black without constant is forbidden (no generic regex — docs legitimately mention the phrase)
 evidence_rule	forbid_grep	__never_matches_evidence_rule__	evidence rule is review-gated: every test asserts an explainable constant (analytic 1/255, 1e-6, 152MB) — reviewer checklist
 regression_lock	forbid_grep	__never_matches_regression_lock__	regression lock is review-gated: prior tests never weakened — reviewer checklist
 

@@ -902,7 +902,7 @@ opaque-only rendering for that pass (typed error surfaced via bridge).
 **D** — Check file size before the whole-file slurp that today precedes budget
 validation. Probe `std::filesystem::file_size` (or `stat`) before reading;
 compare against derived ceiling (axis limits 128³ × dtype size) and absolute
-cap; on exceed return typed `BudgetExceeded` + `spdlog::warn` with actual vs
+cap; on exceed return typed `BudgetExceeded` (> Historic — superseded by V5 T11 No-cap streaming via `core::Caps` tiled `1/255`, see `docs/spec/frs.md:18` `T11 supersedes T13 cap`; active contract is tiled via Caps` + `spdlog::warn` with actual vs
 limit sizes. Keeps the glitch as "silent failure with appropriate logs" per
 user call (typed error to caller, warn log for diagnostics). No behavior
 change for valid files.

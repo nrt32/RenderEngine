@@ -24,6 +24,8 @@ small raw NRRD for commit.
 | Golden fixtures | Hand-authored small meshes/volumes/images | Project-owned | `data/fixtures/` | committed, tiny, used by io/data tests (hand-counted acceptance constants) |
 | Font atlas golden (T3) | Generated via `SampleHarness` headless FBO capture (`expectPixel` probe) | Project-owned | `data/fixtures/font_atlas_golden.rgba` | committed, tiny, SHA256 pinned via `sha256sum data/fixtures/font_atlas_golden.rgba` (or allow `tools/comment_context.allow` waiver until T3) |
 | Procedural geometry | Generated in code at runtime | n/a | n/a | deterministic tests; no file dependency |
+| LICENSE (meshes) | In-repo (per-dataset-dir) | CC0 / Public domain (bunny+teapot) | `data/meshes/LICENSE` | per-dataset-dir LICENSE beside every dataset (audit `audit.sh` built-in `assets licensed per-dir` + T2 gate `test -f data/meshes/LICENSE`) |
+| LICENSE (volumes) | In-repo (per-dataset-dir) | CC-BY-SA 4.0 (CT chest) | `data/volumes/LICENSE` | per-dataset-dir LICENSE beside every dataset (audit built-in + T2 gate `test -f data/volumes/LICENSE`) |
 
 **Fetch method (two-phase: SETUP stages, T2 commits):** because assets are
 committed, setup does NOT download into the repo at build time. The setup phase
@@ -56,9 +58,15 @@ These are asserted by the T2 gate (SHA256 of each committed file, plus the NRRD
 dims ≤128³ and the bunny.obj hand-counted vertex count).
 
 **Dependency pins (FetchContent `GIT_TAG`, verified SHAs — SPEC §2/§6 `deps_pinned`):**
-- `stb_image` — `https://github.com/nothings/stb` — commit `2c980bb59875b0d32144a71867fbdebb2f77cd20` — Public Domain — `GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20` (verified in `CMakeLists.txt:106`)
-- `nlohmann/json 3.11.3` — `https://github.com/nlohmann/json` — tag `v3.11.3` (commit `9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03`) — MIT — `GIT_TAG v3.11.3` (verified in `CMakeLists.txt:114`)
-- All other FetchContent deps pinned via release tag: `glfw 3.4`, `glad v2.0.8 (73db193)`, `glm 1.0.1`, `imgui v1.92.9`, `googletest v1.15.2`, `spdlog v1.14.1` — see `docs/spec/techstack.md` §2 and `CMakeLists.txt:48-100`.
+- `glfw 3.4` — `https://github.com/glfw/glfw` — tag `3.4` — `zlib` — `GIT_TAG 3.4` (verified `CMakeLists.txt:55`)
+- `glad2 v2.0.8` — `https://github.com/Dav1dde/glad` — tag `v2.0.8` (commit `73db193`) — MIT — `GIT_TAG v2.0.8` (verified `CMakeLists.txt:64`)
+- `glm 1.0.1` — `https://github.com/g-truc/glm` — tag `1.0.1` — MIT — `GIT_TAG 1.0.1` (verified `CMakeLists.txt:74`)
+- `imgui v1.92.9` — `https://github.com/ocornut/imgui` — tag `v1.92.9` — MIT — `GIT_TAG v1.92.9` (verified `CMakeLists.txt:82`)
+- `googletest v1.15.2` — `https://github.com/google/googletest` — tag `v1.15.2` (commit `b514bdc898e2951020cbdca1304b75f5950d1f59`) — BSD-3 — `GIT_TAG v1.15.2` (verified `CMakeLists.txt:91`)
+- `spdlog v1.14.1` — `https://github.com/gabime/spdlog` — tag `v1.14.1` — MIT — `GIT_TAG v1.14.1` (verified `CMakeLists.txt:102`)
+- `stb_image` — `https://github.com/nothings/stb` — commit `2c980bb59875b0d32144a71867fbdebb2f77cd20` — Public Domain — `GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20` (verified `CMakeLists.txt:106`)
+- `nlohmann/json 3.11.3` — `https://github.com/nlohmann/json` — tag `v3.11.3` (commit `9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03`) — MIT — `GIT_TAG v3.11.3` (verified `CMakeLists.txt:114`)
+- Fetch method: `FetchContent` `GIT_TAG` + `GIT_SHALLOW TRUE` (deps_pinned, deps_pinned_no_branch); system `libglm-dev`/`nlohmann-json3-dev` not used — see `docs/spec/techstack.md` §2 and `CMakeLists.txt:48-120`.
 
 ### Asset persistence (V3 research — robust/cleaner/extensible)
 
@@ -124,10 +132,8 @@ per `data::Mesh` / `data::VolumeDataset` / `data::Image` via typed
 — `AssetRegistry<Mesh>`, `AssetRegistry<VolumeDataset>`, `AssetRegistry<Image>`
 share one template (SRP per `T`, OCP via template). `data::Mesh` stays pure
 (no `AssetId` field — preserves `data` RE-agnostic for physics/UI). `SceneStore`
-dedups by **content hash of stable bytes** (`scene::computeContentHash` FNV-1a
-64-bit over `positions+indices` / `voxel bytes` / `pixel bytes`, SHA-256
-truncate per SPEC §10.1) — two `Mesh` allocations with identical bytes share
-the same `AssetId` (same `contentHash` → same `index+generation`).
+dedups by **content hash of stable bytes — the single canonical `data/content_hash.hpp` `re::data::computeContentHash` / `hashStableBytes` (FNV-1a 64-bit for skeleton/tests, SHA-256 truncated 64 bits for prod per SPEC §10.1; verbatim reference, not a second definition)** — two `Mesh` allocations with identical bytes share
+the same `AssetId` (same `contentHash` → same `index+generation`). Hashed **at load/register time, never per frame** (header `data/content_hash.hpp:31` is source of truth; `persistence.md:26` references it verbatim).
 
 `render::AssetRegistry` keeps `Slot{MeshGeometry}` generational `AssetHandle`
 but keys by stable `contentHash` (`byHash_`) from `SceneStore` — not by
@@ -174,7 +180,7 @@ RE-minimal unchanged: `render/re_scene/` never copies `data::Mesh::positions`
 
 ### Volumes
 - `data/volumes/sample_ct.nrrd` — a small freely-licensed CT sample,
-  downsampled to ≤128³ at setup (memory budget cap per §5), committed as NRRD.
+  downsampled to ≤128³ at setup for the *committed sample* (example `128×128×70`), but product loader has **no `≤128³` cap** — any dims via `core::Caps` tiled streaming (per Q4, `T11` `core::Caps`); `BudgetExceeded` only on probe fail, not on `>128³` alone.
 - Tests use procedural synthetic volumes (analytic voxel fields) so expected
   values are closed-form.
 

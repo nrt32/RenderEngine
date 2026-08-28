@@ -15,7 +15,7 @@
 | Windowing | **GLFW 3.4** | Standard; WSLg displays GLFW windows natively |
 | Math | **GLM 1.0.1** | De-facto GLSL-compatible math lib; header-only |
 | GUI | **Dear ImGui v1.92.9** | Immediate-mode, tiny footprint, OpenGL3 backend, ideal for MPR viewport + panels |
-| Unit tests | **GoogleTest v1.15.2** (`9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03` — `GIT_TAG v1.15.2`) | Strong enforcement-style assertions (user requirement) |
+| Unit tests | **GoogleTest v1.15.2** (`b514bdc898e2951020cbdca1304b75f5950d1f59` — `GIT_TAG v1.15.2`) | Strong enforcement-style assertions (user requirement) |
 | Logging | **spdlog v1.14.1** | Lightweight OSS logging: trace/debug/info/warn/error/fatal; console/file sinks |
 | Textures | **stb_image** — `https://github.com/nothings/stb` — commit `2c980bb59875b0d32144a71867fbdebb2f77cd20` — Public Domain — `FetchContent GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20` | Single-header; loads textures and can write outputs; pinned commit via FetchContent, verified SHA `2c980bb59875b0d32144a71867fbdebb2f77cd20` |
 | Serialization | **nlohmann/json 3.11.3** — `https://github.com/nlohmann/json` — tag `v3.11.3` (commit `9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03`) — MIT — `FetchContent GIT_TAG v3.11.3` | JSON text wire for `SceneStore::serialize()` + `LayoutSpec` + `MaterialDesc`/`LightDesc` variant JSON; binary NRRD raw blob + SHA-256 `contentHash` beside it — see `assets.md:64` §7 addendum decision Q47:A (2026-08-23) |

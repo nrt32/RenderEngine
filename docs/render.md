@@ -588,16 +588,16 @@ camera mapping NDC `[-1,1]^2` onto the full 64×64 viewport:
 | One transparent quad added | `beginCount == 1`, `drawTransparentCount == 1`, `endCount == 1` | pipeline flips on exactly for the frame (injectable spy, FR-render.3) |
 | Stub pipeline drives renderer | same call counts with a no-op stub | interface is swappable; renderer depends only on the abstraction (FR-render.3) |
 
-#### Capacity and failure mode — per-view SSBO budget, no silent fallback (T8, corrected)
+#### Capacity and failure mode — per-view SSBO budget and weighted-blended fallback (T8/T11, corrected — aligns with NFR §5 + `open_questions.md` Q32)
 
-Per-view capture storage is `w*h*16*32` bytes (width × height pixels × maxFragmentsPerPixel 16 × node stride 32 B: `vec4` 16 + `float` 4 + `uint` 4 padded to `vec4` alignment). Head-pointer texture adds one `R32UI` per pixel (4 B), negligible beside the node buffer. Deployment targets are known, so over-budget or unsupported hardware (no `imageAtomicExchange`/`ssboAtomics`) legitimately fails.
+Per-view capture storage is `w*h*16*32` bytes (width × height pixels × maxFragmentsPerPixel 16 × node stride 32 B: `vec4` 16 + `float` 4 + `uint` 4 padded to `vec4` alignment). Head-pointer texture adds one `R32UI` per pixel (4 B), negligible beside the node buffer. Deployment targets are known, so over-budget or unsupported hardware (no `imageAtomicExchange`/`ssboAtomics`) triggers the binding degrade.
 
 | View size | SSBO budget (nodes) | Bytes (analytic) | Note |
 |---|---|---|---|
 | 640×480 | 152 MB (307200×16×32 = 157286400 B ≈150 MiB, ~152 MB with head texture) | 640×480=307200, ×16=4915200 nodes, ×32 | per-view cost `w*h*16*32` example used by the gate |
 | 1920×1080 | ≈1.03 GB (2073600×16×32 = 1061683200 B) | 1920×1080=2073600, ×16=33177600 nodes, ×32 | 1080p requires ~1 GB per view |
 
-Failure contract: `ITransparencyPipeline::begin()` returning a typed error aborts the transparent-capable mesh pass — no silent blend fallback. The target is left cleared (opaque contents preserved only on success) and the error is surfaced via the bridge (`MeshRenderer::render` propagates the `Result`, `ViewCompositor` surfaces it). Unsupported or over-budget hardware therefore yields opaque-only rendering for that pass; callers handle the typed error instead of receiving a partial blended frame (SPEC §5).
+Failure contract (weighted-blended fallback, binding per NFR §5 + `open_questions.md` §13.8 Q32 + TASKS T11 Phase B): `ITransparencyPipeline::begin()` first attempts linked-list OIT; if it cannot satisfy the budget (`!ssboAtomics` or `w*h*16*32` over budget) it **falls back to weighted-blended OIT** (weight `w(z,a)` composite, analytic reference within 1/255) instead of aborting opaque-only. Only when *both* linked-list and weighted-blended paths fail (e.g., `maxColorAttachments==0`) does `begin()` return a typed `Error::Unsupported` that aborts the transparent pass and the bridge surfaces it so the pass renders opaque-only with a typed error (SPEC §5). No silent opaque-only without typed error; the former `no-fallback → opaque-only abort` contract is superseded — see `docs/spec/nfr.md` §5 and `docs/spec/open_questions.md` Q32.
 
 #### The OIT sample composition — real meshes over a depth-tested opaque pass (`app/oit_sample.cpp` + `app/oit_scene.hpp`, T19)
 

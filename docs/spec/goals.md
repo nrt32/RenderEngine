@@ -41,12 +41,11 @@ Each capability ships as:
 2. All unit tests pass with strong, explainable assertions (no tolerance-abuse).
 3. No memory leaks — test binaries build with **ASan+UBSan** and run clean.
 
-### Non-goals (v1)
-- **PBR / advanced materials** — Phong only; the interface must allow later models.
+### Non-goals (v1) — updated V5 (T3/T11/T15 landed)
+- **PBR / advanced materials** — Phong only; the interface must allow later models. **Exception (V5 T15): minimal per-View `Light{Directional}` value-type surface is IN-SCOPE** for visualization reuse — empty `lights` = fixed headlight (FR-render.1 preserved), one `Directional` → `broker/light_mapper` upload (see `docs/spec/materials_lights.md` §12.3 + `TASKS.md T15`); full `PBR` / `SliceMaterial` / `ContourMaterial` + `ILight` hierarchy (3 `Light` types + `Point`/`Spot`) remains deferred per SPEC §12.2-12.3 / §1 non-goal.
 - **HDR / post-processing pipeline** — no bloom, tonemapping, SSAO, shadows.
 - **Asset import formats** — a single bundled/OBJ-style loader only; no glTF/fbx.
 - **Scene graph / transform hierarchy** — per-object transforms only (model
   matrix); no parent/child trees. **Skeletal animation is out of scope.**
-- **Out-of-core / streaming** — all data loaded fully into memory.
-- **Multi-window / headless rendering** — single window, single GL context,
-  always GUI-attached.
+- **Out-of-core / streaming** — **No cap streaming (per Q4):** committed `sample_ct.nrrd` is just example `128×128×70` `≤128³`; **product loader has no `≤128³` cap** — any dims via `core::Caps` tiled/downsampled streaming (`maxTexture3DSize` probe, `TODO(RHI)` → `IRHIContext::capabilities()` after T10, see `TASKS.md T11` + `NFR §5` `maxTexture3DSize`), not `BudgetExceeded` for `>128³` alone (only probe-fail path). Out-of-core *streaming* is thus IN-SCOPE via `core::Caps`, not non-goal.
+- **Multi-window interactive** — single interactive `Window` remains; **headless/offscreen rendering via `utils::OffscreenContext` + `renderOffscreen` / `core::loadCoreGl` is IN-SCOPE** for server-side visualization and headless tests (see SPEC §3 T3, `scene/` disposition, `TASKS.md T3/T4` harness decoupling + `docs/render.md` offscreen). Multi-window *interactive* (N windows with shared context) stays deferred.

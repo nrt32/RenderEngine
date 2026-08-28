@@ -79,14 +79,14 @@ render::IMaterial
   `ContourMaterial*`. A `ReView` that holds `VolumeSlice+MeshSlice` thus holds
   `VolumeMaterial`+`SliceMaterial` without sharing a base unsafely — and without LSP substitution hazard because no caller holds a `VolumeMaterial` as an `IColorMaterial`.
 - `isTransparent()` remains on `IMaterial` (root, LSP-safe: every material has a transparency predicate, postcondition consistent), `doubleSided`/`needsOIT` live on `IColorMaterial`/`MeshMaterial` only (ISP: `IVolumeMaterial` never exposes `doubleSided`; `ILineMaterial` never exposes `needsOIT`). The source-authoritative `bool transparent`
-  is `app::MeshMaterialDesc::baseColor.a<1` or `app::VolumeMaterialDesc::tf` alpha ramp — `*Mapper` derives the RE flag per-material-kind (no fat base).
+  is `app::MeshMaterialDesc::baseColor.a<1` or `app::VolumePresentation::tf` alpha ramp — `*Mapper` derives the RE flag per-material-kind (no fat base; TF beside mat per §12.5).
 
 ### App (`scene/material/` — mirrors RE roles, GL-free, variant OCP binding):
 
 ```
 app::MaterialDesc  variant< MeshMaterialDesc, VolumeMaterialDesc, SliceMaterialDesc, ContourMaterialDesc >  // variant keeps scene/ header-only, no vtable (Here Be Braces variant vs virtuals)
   MeshMaterialDesc   variant< PhongDesc, PBRDesc, … >  { vec4 baseColor, vec3 specular, float shininess, float ambient, diffuse; bool doubleSided; }  // IColorMaterial source
-  VolumeMaterialDesc { TransferFunctionDesc tf; float stepLength; bool shading; }  // NOTE: tf is TransferFunctionDesc (value desc), NOT baked uniforms — ISP separation (see §12.5 decision; VolumePresentation composes mat+tf separately)
+  VolumeMaterialDesc { float densityScale; bool shading; }  // TF NOT inside — TransferFunctionDesc lives **beside** VolumeMaterialDesc in `VolumePresentation{VolumeMaterialDesc mat; TransferFunctionDesc tf; float stepLength; bool shading;}` per §12.5 binding (ISP: TF has its own cache key/lifecycle `TransferFunctionMapper`; bundling would dirty MaterialMapper on TF edit — see §12.5)
   SliceMaterialDesc  { vec4 capColor; bool capping; }   // IColorMaterial source — distinct per §12.2 choice (capping not on MeshMaterial — ISP)
   ContourMaterialDesc{ RgbaColor color; float lineWidth; uint16_t stipple; } // ILineMaterial source — distinct (ISP: linetype not on mesh)
 
@@ -106,12 +106,7 @@ app::MaterialDesc  variant< MeshMaterialDesc, VolumeMaterialDesc, SliceMaterialD
 
 ## 12.3 Light — per-`View`, many per `View`, multiple types, same `broker/` abstraction (SOLID LSP/ISP — binding)
 
-> **Deferred (T8 V3.7):** `ILight` hierarchy (`Directional/Point/Spot` per
-> `View`, many per `View`) stays **spec-only** this iteration — no
-> `render/light/` headers landed; fixed headlight
-> `max(dot(n,(0,0,1)),0)` in `MeshRenderer` stays. `LightDesc` remains
-> `app`-local free struct for `MPR` sample (no `scene/light/` headers this
-> iteration).
+> **Deferred (T8 V3.7) — amended V5 T15:** `ILight` full hierarchy (`Point`/`Spot` + `render/light/` 3-type headers) stays **spec-only** — no `render/light/` hierarchy landed this iteration beyond the **minimal V5 `scene/light.hpp` single-struct + `broker/light_mapper` exception** (see `docs/spec/goals.md` §1 updated + `TASKS.md T15`). V5 minimal `Light{Directional, dir}` (`scene/light.hpp`) + `Engine::setLights` + `broker/light_mapper.hpp → render/light.hpp` upload is **IN-SCOPE** (empty `lights` = fixed headlight `max(dot(n,(0,0,1)),0)` preserved, one `Directional` shifts `diffuse` ≥5/255). Full `ILight` (`Directional/Point/Spot` + `render/light/` headers) remains deferred; `LightDesc` remains `app`-local for `MPR` sample beyond the minimal `scene/light.hpp` (V5 exception).
 
 > **V3.3.1 SOLID verdict — ILight was LSP/ISP violation (web-verified).** Prior `ILight{ dir/pos/radius … }` forced `DirectionalLight` to implement `pos` or `PointLight` to throw on `dir` — classic `Bird::fly`/Ostrich (LSP: subclass cannot fulfil `fly()` — code-note-vr LSP 2026-06-22 Bird/Ostrich) / `Worker::eat` (Baeldung ISP fat `Worker` → `Workable`/`Payable`; NDepend `ICollection` vs `IReadOnlyCollection`) LSP/ISP violation (LSP "throw UnsupportedOperationException" anti-pattern — Baeldung LSP, Wikipedia LSP history). `ILight` fat also violates ISP: `DirectionalLight` forced to depend on `pos`/`attenuation` it never uses (Baeldung ISP). Web verdict: `ILight` must be **role-segregated** marker (`isEnabled()+kind()` only), per-type data only in concrete, dispatch via `std::variant` + `std::visit` (same as §12.2; ISP segregates `IColorMaterial`/`IVolumeMaterial`). Variant OCP trade-off same as §12.2 (closed type set 3 lights, bounded per SPEC §1).
 
