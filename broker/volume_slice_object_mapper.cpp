@@ -64,34 +64,21 @@ data::Result<render::VolumeSliceInstance> VolumeSliceObjectMapper::map(
     return data::makeValue<render::VolumeSliceInstance>(out);
 }
 
-data::Result<render::VolumeSliceInstance> VolumeSliceObjectMapper::mapCached(
-    const scene::VolumeSliceObject& app, const scene::TranslateContext& ctx) {
-    auto it = cache_.find(app.id);
-    if (it != cache_.end()) {
-        const Entry& e = it->second;
-        const bool samePlane =
-            e.hasPlane == ctx.view.hasPlane() &&
-            (!e.hasPlane || e.plane == *ctx.view.viewPlane);
-        if (samePlane && e.generation == app.generation) {
-            return data::makeValue<render::VolumeSliceInstance>(e.instance);
-        }
-    }
-    auto r = map(app, ctx);
-    if (r.ok()) {
-        Entry entry;
-        entry.generation = app.generation;
-        entry.hasPlane = ctx.view.hasPlane();
-        entry.plane = entry.hasPlane ? *ctx.view.viewPlane : scene::PlaneDesc{};
-        entry.instance = *r;
-        cache_[app.id] = std::move(entry);
-    } else {
-        cache_.erase(app.id);
-    }
-    return r;
+bool VolumeSliceObjectMapper::isCacheHit(const AppType& app,
+                                          const scene::TranslateContext& ctx,
+                                          const Entry& e) const {
+    const bool samePlane = e.hasPlane == ctx.view.hasPlane() &&
+                           (!e.hasPlane || e.plane == *ctx.view.viewPlane);
+    return samePlane && e.generation == app.generation;
 }
 
-void VolumeSliceObjectMapper::invalidate(uint64_t id) {
-    cache_.erase(id);
+void VolumeSliceObjectMapper::fillEntry(Entry& e, const AppType& app,
+                                        const scene::TranslateContext& ctx,
+                                        const ReType& instance) const {
+    e.generation = app.generation;
+    e.instance = instance;
+    e.hasPlane = ctx.view.hasPlane();
+    e.plane = e.hasPlane ? *ctx.view.viewPlane : scene::PlaneDesc{};
 }
 
 } // namespace re::broker

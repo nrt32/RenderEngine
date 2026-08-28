@@ -65,6 +65,7 @@ add_executable(${RE_TEST_TARGET}
     t12_fps_standalone_test.cpp
     t13_minimal_example_test.cpp
     t15_engine_lights_test.cpp
+    t16_cached_mapper_base_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

@@ -59,6 +59,7 @@ App never calls `CameraMapper` etc. directly.
 broker/
   i_mapper.hpp                      IMapper<AppT,ReT>  { Result<ReT> map(const AppT&, const TranslateContext&) const; }
   i_cached_mapper.hpp               ICachedMapper<AppT,ReT> : IMapper<AppT,ReT> { Result<ReT> mapCached(const AppT&, const TranslateContext&); void invalidate(Id); generation/contentHash probe }
+  cached_mapper_base.hpp            CachedMapperBase<AppT,ReT> : ICachedMapper<AppT,ReT> { owns unordered_map<uint64_t,Entry> cache_ + mapCached/invalidate/clear (T16 dedup); derived implements only map(); slice overrides isCacheHit/fillEntry for plane identity — one definition, no per-file hand copy; PlaneMapper/PlaneObjectMapper stay IMapper (ISP) }
   broker.hpp                        Broker { template<AppT,ReT> void registerMapper(unique_ptr<IMapper<AppT,ReT>>); template<AppT,ReT> IMapper<AppT,ReT>* get() const; }  — keyed by H=hash_combine(type_index(AppT),type_index(ReT)) (pair-key, OCP-open, no enum switch; supersedes V3 single-key `type_index(AppT)` per V4 T3 pair-key fix `COMPLETED_TASKS.md:718` `broker.hpp:57` — single-key alias `get<MapperT>` exact-keyed remains)
   camera_mapper.*                   ICachedMapper<app::Camera, render::Camera>               // app::Camera is manipulable pan/rotate/zoom (SPEC §3.1) — per-field gen split (see §10.4)
   plane_mapper.*                    IMapper<app::PlaneDesc, ClipPlane>  — stateless pure map, needs TranslateContext{volumeModel, dims, meshBounds} (see §11.4)
@@ -134,6 +135,8 @@ broker/
 > mechanical audit rule `acl_app_render`. Gate test `t20_broker_path_test.cpp`
 > (voxel z=35 → world z=35.5 exact; bridged Mesh/Volume/Plane layers match
 > direct-renderer oracles within 1/255, N≥3).
+
+> **T16 landed (mapper cache dedup — gap G2, V5 T16):** every `*ObjectMapper` (`Mesh/Volume/MeshSlice/VolumeSlice`) repeated `struct Entry{generation, instance}+unordered_map<uint64_t,Entry> cache_+mapCached/invalidate` hand copy. Extracted `broker/cached_mapper_base.hpp: CachedMapperBase<AppT,ReT> : ICachedMapper<AppT,ReT>` owning the single cache definition plus `mapCached`/`invalidate`/`clear()` and requiring derived only to implement `map()`; slice mappers override `isCacheHit`/`fillEntry` for plane identity. Keeps `PlaneMapper`/`PlaneObjectMapper` stateless `IMapper` (ISP) untouched. Gate: `grep -c unordered_map.*Entry.*cache_ broker/*_object_mapper.hpp ==0` (cache lives only in base) and `grep -c class CachedMapperBase broker/cached_mapper_base.hpp ==1`; generation hit short-circuits spy 2→1 and per-id `invalidate` probed `N>=3`.
 
 ### 11.5 Build / ownership / guardrail
 

@@ -26,9 +26,8 @@
 // (guardrail gpu_api_ownership).
 
 #include <memory>
-#include <unordered_map>
 
-#include "broker/i_mapper.hpp"
+#include "broker/cached_mapper_base.hpp"
 #include "broker/material_mapper.hpp"
 #include "render/asset_registry.hpp"
 #include "render/slice_renderer.hpp" // render::SliceScene / MeshInstance
@@ -40,7 +39,7 @@ namespace re::broker {
 /// Mesh slice object mapper — cached translation scene::MeshSliceObject
 /// (+ view plane) -> render::SliceScene.
 class MeshSliceObjectMapper
-    : public ICachedMapper<scene::MeshSliceObject, render::SliceScene> {
+    : public CachedMapperBase<scene::MeshSliceObject, render::SliceScene> {
    public:
     using AppType = scene::MeshSliceObject;
     using ReType = render::SliceScene;
@@ -56,25 +55,20 @@ class MeshSliceObjectMapper
         const scene::MeshSliceObject& app,
         const scene::TranslateContext& ctx) const override;
 
-    /// Cached translation: cache hit requires BOTH unchanged object
-    /// generation AND unchanged view plane.
-    data::Result<render::SliceScene> mapCached(
-        const scene::MeshSliceObject& app,
-        const scene::TranslateContext& ctx) override;
-
-    /// Invalidate cached entry for the given object id.
-    void invalidate(uint64_t id) override;
-
    private:
     std::shared_ptr<render::AssetRegistry> registry_;
     std::shared_ptr<MaterialMapper> materials_;
-    struct Entry {
-        uint64_t generation{0};
-        scene::PlaneDesc plane{};
-        bool hasPlane{false};
-        render::SliceScene scene{};
-    };
-    std::unordered_map<uint64_t, Entry> cache_;
+
+   protected:
+    using Base = CachedMapperBase<AppType, ReType>;
+    using Entry = typename Base::Entry;
+    // Contextual cache: plane rides in through the view, so a planeGen-only
+    // change must re-translate even though object generation did not move.
+    bool isCacheHit(const AppType& app, const scene::TranslateContext& ctx,
+                    const Entry& e) const override;
+    void fillEntry(Entry& e, const AppType& app,
+                   const scene::TranslateContext& ctx,
+                   const ReType& instance) const override;
 };
 
 } // namespace re::broker

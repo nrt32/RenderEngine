@@ -35,9 +35,8 @@
 
 #include <memory>
 #include <optional>
-#include <unordered_map>
 
-#include "broker/i_mapper.hpp"
+#include "broker/cached_mapper_base.hpp"
 #include "render/asset_registry.hpp"
 #include "render/types.hpp"
 #include "render/volume_slice_renderer.hpp" // render::VolumeSliceInstance
@@ -49,7 +48,7 @@ namespace re::broker {
 /// Volume slice object mapper — cached translation scene::VolumeSliceObject
 /// (+ view plane) -> render::VolumeSliceInstance (T7 owner-driven).
 class VolumeSliceObjectMapper
-    : public ICachedMapper<scene::VolumeSliceObject, render::VolumeSliceInstance> {
+    : public CachedMapperBase<scene::VolumeSliceObject, render::VolumeSliceInstance> {
    public:
     using AppType = scene::VolumeSliceObject;
     using ReType = render::VolumeSliceInstance;
@@ -65,28 +64,21 @@ class VolumeSliceObjectMapper
         const scene::VolumeSliceObject& app,
         const scene::TranslateContext& ctx) const override;
 
-    /// Cached translation: cache hit requires BOTH unchanged object
-    /// generation AND unchanged view plane.
-    data::Result<render::VolumeSliceInstance> mapCached(
-        const scene::VolumeSliceObject& app,
-        const scene::TranslateContext& ctx) override;
-
-    /// Invalidate cached entry for the given object id.
-    void invalidate(uint64_t id) override;
-
     const std::shared_ptr<render::AssetRegistry>& registry() const noexcept {
         return registry_;
     }
 
    private:
     std::shared_ptr<render::AssetRegistry> registry_;
-    struct Entry {
-        uint64_t generation{0};
-        scene::PlaneDesc plane{}; ///< The view plane the instance was built from.
-        bool hasPlane{false};
-        render::VolumeSliceInstance instance{};
-    };
-    std::unordered_map<uint64_t, Entry> cache_;
+
+   protected:
+    using Base = CachedMapperBase<AppType, ReType>;
+    using Entry = typename Base::Entry;
+    bool isCacheHit(const AppType& app, const scene::TranslateContext& ctx,
+                    const Entry& e) const override;
+    void fillEntry(Entry& e, const AppType& app,
+                   const scene::TranslateContext& ctx,
+                   const ReType& instance) const override;
 };
 
 } // namespace re::broker

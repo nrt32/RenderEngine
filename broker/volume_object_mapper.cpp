@@ -29,21 +29,6 @@ data::Result<render::VolumeInstance> VolumeObjectMapper::map(
     return data::makeValue<render::VolumeInstance>(out);
 }
 
-data::Result<render::VolumeInstance> VolumeObjectMapper::mapCached(
-    const scene::VolumeObject& app, const scene::TranslateContext& ctx) {
-    auto it = cache_.find(app.id);
-    if (it != cache_.end() && it->second.generation == app.generation) {
-        return data::makeValue<render::VolumeInstance>(it->second.instance);
-    }
-    auto r = map(app, ctx);
-    if (r.ok()) {
-        cache_[app.id] = Entry{app.generation, *r};
-    }
-    return r;
-}
-
-void VolumeObjectMapper::invalidate(uint64_t id) {
-    cache_.erase(id);
-}
+// mapCached, invalidate and clear are provided by CachedMapperBase (T16 dedup — the single cache definition owns unordered_map<uint64_t,Entry> cache_ plus the generation short-circuit and per-id eviction; this VolumeObjectMapper implements only map() and inherits the shared cache, while PlaneMapper and PlaneObjectMapper stay stateless IMapper per ISP segregation, so no per-file hand copy remains).
 
 } // namespace re::broker

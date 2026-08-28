@@ -28,9 +28,8 @@
 // (guardrail gpu_api_ownership).
 
 #include <memory>
-#include <unordered_map>
 
-#include "broker/i_mapper.hpp"
+#include "broker/cached_mapper_base.hpp"
 #include "render/asset_registry.hpp"
 #include "render/types.hpp"
 #include "render/volume_renderer.hpp" // render::VolumeInstance
@@ -48,7 +47,7 @@ namespace re::broker {
 /// the renderer resolves via O(1) handle (no per-frame FNV-1a). Volumes first,
 /// then images (T7 staged).
 class VolumeObjectMapper
-    : public ICachedMapper<scene::VolumeObject, render::VolumeInstance> {
+    : public CachedMapperBase<scene::VolumeObject, render::VolumeInstance> {
    public:
     using AppType = scene::VolumeObject;
     using ReType = render::VolumeInstance;
@@ -64,25 +63,12 @@ class VolumeObjectMapper
         const scene::VolumeObject& app,
         const scene::TranslateContext& ctx) const override;
 
-    /// Cached translation: short-circuits when generation unchanged for id.
-    data::Result<render::VolumeInstance> mapCached(
-        const scene::VolumeObject& app,
-        const scene::TranslateContext& ctx) override;
-
-    /// Invalidate cached entry for the given object id.
-    void invalidate(uint64_t id) override;
-
     const std::shared_ptr<render::AssetRegistry>& registry() const noexcept {
         return registry_;
     }
 
    private:
     std::shared_ptr<render::AssetRegistry> registry_;
-    struct Entry {
-        uint64_t generation{0};
-        render::VolumeInstance instance{};
-    };
-    std::unordered_map<uint64_t, Entry> cache_;
 };
 
 } // namespace re::broker
