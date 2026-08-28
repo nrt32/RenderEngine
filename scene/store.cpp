@@ -7,55 +7,15 @@
 namespace re::scene {
 
 // ---------------------------------------------------------------------------
-// SceneStore — helpers
+// SceneStore — add (single-map T6)
 // ---------------------------------------------------------------------------
 
-template <typename Derived>
-uint64_t SceneStore::addTypedObject_(Derived obj, std::unordered_map<uint64_t, std::unique_ptr<ISceneObject>>& partition) {
-    uint64_t id = allocId();
-    obj.setId(id);
-    obj.setGeneration(tracker_.storeGeneration() + 1);
-    SceneKind kind = Derived::Kind;
-    auto ptr = std::make_unique<Derived>(std::move(obj));
-    partition.emplace(id, std::move(ptr));
-    kindIndex_[kind].insert(id);
-    tracker_.incStoreGen();
-    tracker_.recordDirty(FieldId::Transform);
-    tracker_.recordDirty(FieldId::Items);
-    return id;
-}
-
-bool SceneStore::removeFromPartition_(uint64_t id, std::unordered_map<uint64_t, std::unique_ptr<ISceneObject>>& partition) noexcept {
-    auto it = partition.find(id);
-    if (it == partition.end()) return false;
-    uint64_t gen = it->second->generation();
-    SceneKind kind = it->second->kind();
-    tracker_.noteTombstone(id, gen + 1);
-    auto kit = kindIndex_.find(kind);
-    if (kit != kindIndex_.end()) {
-        kit->second.erase(id);
-        if (kit->second.empty()) kindIndex_.erase(kit);
-    }
-    partition.erase(it);
-    tracker_.incStoreGen();
-    tracker_.recordDirty(FieldId::Items);
-    return true;
-}
-
-bool SceneStore::containsInPartition_(uint64_t id, const std::unordered_map<uint64_t, std::unique_ptr<ISceneObject>>& partition) const noexcept {
-    return partition.count(id) != 0u;
-}
-
-// ---------------------------------------------------------------------------
-// SceneStore — add
-// ---------------------------------------------------------------------------
-
-uint64_t SceneStore::addMeshObject(MeshObject obj) { return addTypedObject_(std::move(obj), meshObjects_); }
-uint64_t SceneStore::addMeshSliceObject(MeshSliceObject obj) { return addTypedObject_(std::move(obj), meshSliceObjects_); }
-uint64_t SceneStore::addVolumeObject(VolumeObject obj) { return addTypedObject_(std::move(obj), volumeObjects_); }
-uint64_t SceneStore::addVolumeSliceObject(VolumeSliceObject obj) { return addTypedObject_(std::move(obj), volumeSliceObjects_); }
-uint64_t SceneStore::addPlaneObject(PlaneObject obj) { return addTypedObject_(std::move(obj), planeObjects_); }
-uint64_t SceneStore::addContourObject(ContourObject obj) { return addTypedObject_(std::move(obj), contourObjects_); }
+uint64_t SceneStore::addMeshObject(MeshObject obj) { return addObject<MeshObject>(std::move(obj)); }
+uint64_t SceneStore::addMeshSliceObject(MeshSliceObject obj) { return addObject<MeshSliceObject>(std::move(obj)); }
+uint64_t SceneStore::addVolumeObject(VolumeObject obj) { return addObject<VolumeObject>(std::move(obj)); }
+uint64_t SceneStore::addVolumeSliceObject(VolumeSliceObject obj) { return addObject<VolumeSliceObject>(std::move(obj)); }
+uint64_t SceneStore::addPlaneObject(PlaneObject obj) { return addObject<PlaneObject>(std::move(obj)); }
+uint64_t SceneStore::addContourObject(ContourObject obj) { return addObject<ContourObject>(std::move(obj)); }
 
 uint64_t SceneStore::addObject(std::unique_ptr<ISceneObject> obj) {
     if (!obj) return 0u;
@@ -63,18 +23,7 @@ uint64_t SceneStore::addObject(std::unique_ptr<ISceneObject> obj) {
     uint64_t id = allocId();
     obj->setId(id);
     obj->setGeneration(tracker_.storeGeneration() + 1);
-    auto emplaceIn = [&](auto& partition) {
-        partition.emplace(id, std::move(obj));
-    };
-    switch (kind) {
-        case SceneKind::Mesh: emplaceIn(meshObjects_); break;
-        case SceneKind::MeshSlice: emplaceIn(meshSliceObjects_); break;
-        case SceneKind::Volume: emplaceIn(volumeObjects_); break;
-        case SceneKind::VolumeSlice: emplaceIn(volumeSliceObjects_); break;
-        case SceneKind::Plane: emplaceIn(planeObjects_); break;
-        case SceneKind::Contour: emplaceIn(contourObjects_); break;
-        default: meshObjects_.emplace(id, std::move(obj)); break;
-    }
+    objects_.emplace(id, std::move(obj));
     kindIndex_[kind].insert(id);
     tracker_.incStoreGen();
     tracker_.recordDirty(FieldId::Transform);
@@ -83,50 +32,23 @@ uint64_t SceneStore::addObject(std::unique_ptr<ISceneObject> obj) {
 }
 
 // ---------------------------------------------------------------------------
-// SceneStore — getters (borrow)
+// SceneStore — getters (borrow) single-map
 // ---------------------------------------------------------------------------
 
-template <typename Derived>
-static const Derived* /*borrow*/ getTyped_(uint64_t id, const std::unordered_map<uint64_t, std::unique_ptr<ISceneObject>>& partition) noexcept {
-    auto it = partition.find(id);
-    if (it == partition.end()) return nullptr;
-    return static_cast<const Derived*>(it->second.get());
-}
-template <typename Derived>
-static Derived* /*borrow*/ getTypedMut_(uint64_t id, std::unordered_map<uint64_t, std::unique_ptr<ISceneObject>>& partition) noexcept {
-    auto it = partition.find(id);
-    if (it == partition.end()) return nullptr;
-    return static_cast<Derived*>(it->second.get());
-}
-
-const MeshObject* /*borrow*/ SceneStore::getMeshObject(uint64_t id) const noexcept { return getTyped_<MeshObject>(id, meshObjects_); }
-const MeshSliceObject* /*borrow*/ SceneStore::getMeshSliceObject(uint64_t id) const noexcept { return getTyped_<MeshSliceObject>(id, meshSliceObjects_); }
-const VolumeObject* /*borrow*/ SceneStore::getVolumeObject(uint64_t id) const noexcept { return getTyped_<VolumeObject>(id, volumeObjects_); }
-const VolumeSliceObject* /*borrow*/ SceneStore::getVolumeSliceObject(uint64_t id) const noexcept { return getTyped_<VolumeSliceObject>(id, volumeSliceObjects_); }
-const PlaneObject* /*borrow*/ SceneStore::getPlaneObject(uint64_t id) const noexcept { return getTyped_<PlaneObject>(id, planeObjects_); }
-const ContourObject* /*borrow*/ SceneStore::getContourObject(uint64_t id) const noexcept { return getTyped_<ContourObject>(id, contourObjects_); }
+const MeshObject* /*borrow*/ SceneStore::getMeshObject(uint64_t id) const noexcept { return get<MeshObject>(id); }
+const MeshSliceObject* /*borrow*/ SceneStore::getMeshSliceObject(uint64_t id) const noexcept { return get<MeshSliceObject>(id); }
+const VolumeObject* /*borrow*/ SceneStore::getVolumeObject(uint64_t id) const noexcept { return get<VolumeObject>(id); }
+const VolumeSliceObject* /*borrow*/ SceneStore::getVolumeSliceObject(uint64_t id) const noexcept { return get<VolumeSliceObject>(id); }
+const PlaneObject* /*borrow*/ SceneStore::getPlaneObject(uint64_t id) const noexcept { return get<PlaneObject>(id); }
+const ContourObject* /*borrow*/ SceneStore::getContourObject(uint64_t id) const noexcept { return get<ContourObject>(id); }
 
 const ISceneObject* /*borrow*/ SceneStore::getObject(uint64_t id) const noexcept {
-    if (auto* p = getMeshObject(id)) return p;
-    if (auto* p = getMeshSliceObject(id)) return p;
-    if (auto* p = getVolumeObject(id)) return p;
-    if (auto* p = getVolumeSliceObject(id)) return p;
-    if (auto* p = getPlaneObject(id)) return p;
-    if (auto* p = getContourObject(id)) return p;
-    return nullptr;
+    auto it = objects_.find(id);
+    return it == objects_.end() ? nullptr : it->second.get();
 }
 ISceneObject* /*borrow*/ SceneStore::getObjectMut(uint64_t id) noexcept {
-    if (auto* p = getMeshObjectMut(id)) return p;
-    if (auto* p = getVolumeObjectMut(id)) return p;
-    if (auto* p = getContourObjectMut(id)) return p;
-    auto findIn = [&](auto& partition) -> ISceneObject* {
-        auto it = partition.find(id);
-        return it == partition.end() ? nullptr : it->second.get();
-    };
-    if (auto* p = findIn(meshSliceObjects_)) return p;
-    if (auto* p = findIn(volumeSliceObjects_)) return p;
-    if (auto* p = findIn(planeObjects_)) return p;
-    return nullptr;
+    auto it = objects_.find(id);
+    return it == objects_.end() ? nullptr : it->second.get();
 }
 
 std::vector<const ISceneObject*> /*borrow*/ SceneStore::objectsOfKind(SceneKind k) const noexcept {
@@ -150,31 +72,54 @@ std::vector<ISceneObject*> /*borrow*/ SceneStore::objectsOfKindMut(SceneKind k) 
     return out;
 }
 
-MeshObject* /*borrow*/ SceneStore::getMeshObjectMut(uint64_t id) noexcept { return getTypedMut_<MeshObject>(id, meshObjects_); }
-VolumeObject* /*borrow*/ SceneStore::getVolumeObjectMut(uint64_t id) noexcept { return getTypedMut_<VolumeObject>(id, volumeObjects_); }
-ContourObject* /*borrow*/ SceneStore::getContourObjectMut(uint64_t id) noexcept { return getTypedMut_<ContourObject>(id, contourObjects_); }
+MeshObject* /*borrow*/ SceneStore::getMeshObjectMut(uint64_t id) noexcept { return getMut<MeshObject>(id); }
+VolumeObject* /*borrow*/ SceneStore::getVolumeObjectMut(uint64_t id) noexcept { return getMut<VolumeObject>(id); }
+ContourObject* /*borrow*/ SceneStore::getContourObjectMut(uint64_t id) noexcept { return getMut<ContourObject>(id); }
 
-bool SceneStore::removeMeshObject(uint64_t id) noexcept { return removeFromPartition_(id, meshObjects_); }
-bool SceneStore::removeMeshSliceObject(uint64_t id) noexcept { return removeFromPartition_(id, meshSliceObjects_); }
-bool SceneStore::removeVolumeObject(uint64_t id) noexcept { return removeFromPartition_(id, volumeObjects_); }
-bool SceneStore::removeVolumeSliceObject(uint64_t id) noexcept { return removeFromPartition_(id, volumeSliceObjects_); }
-bool SceneStore::removePlaneObject(uint64_t id) noexcept { return removeFromPartition_(id, planeObjects_); }
-bool SceneStore::removeContourObject(uint64_t id) noexcept { return removeFromPartition_(id, contourObjects_); }
+bool SceneStore::removeMeshObject(uint64_t id) noexcept {
+    if (!get<MeshObject>(id)) return false;
+    return removeObject(id);
+}
+bool SceneStore::removeMeshSliceObject(uint64_t id) noexcept {
+    if (!get<MeshSliceObject>(id)) return false;
+    return removeObject(id);
+}
+bool SceneStore::removeVolumeObject(uint64_t id) noexcept {
+    if (!get<VolumeObject>(id)) return false;
+    return removeObject(id);
+}
+bool SceneStore::removeVolumeSliceObject(uint64_t id) noexcept {
+    if (!get<VolumeSliceObject>(id)) return false;
+    return removeObject(id);
+}
+bool SceneStore::removePlaneObject(uint64_t id) noexcept {
+    if (!get<PlaneObject>(id)) return false;
+    return removeObject(id);
+}
+bool SceneStore::removeContourObject(uint64_t id) noexcept {
+    if (!get<ContourObject>(id)) return false;
+    return removeObject(id);
+}
 
 bool SceneStore::removeObject(uint64_t id) noexcept {
-    if (removeFromPartition_(id, meshObjects_)) return true;
-    if (removeFromPartition_(id, meshSliceObjects_)) return true;
-    if (removeFromPartition_(id, volumeObjects_)) return true;
-    if (removeFromPartition_(id, volumeSliceObjects_)) return true;
-    if (removeFromPartition_(id, planeObjects_)) return true;
-    if (removeFromPartition_(id, contourObjects_)) return true;
-    return false;
+    auto it = objects_.find(id);
+    if (it == objects_.end()) return false;
+    uint64_t gen = it->second->generation();
+    SceneKind kind = it->second->kind();
+    tracker_.noteTombstone(id, gen + 1);
+    auto kit = kindIndex_.find(kind);
+    if (kit != kindIndex_.end()) {
+        kit->second.erase(id);
+        if (kit->second.empty()) kindIndex_.erase(kit);
+    }
+    objects_.erase(it);
+    tracker_.incStoreGen();
+    tracker_.recordDirty(FieldId::Items);
+    return true;
 }
 
 size_t SceneStore::totalObjectCount() const noexcept {
-    size_t n = 0;
-    for (const auto& kv : kindIndex_) n += kv.second.size();
-    return n;
+    return objects_.size();
 }
 size_t SceneStore::countOfKind(SceneKind k) const noexcept {
     auto it = kindIndex_.find(k);

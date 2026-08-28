@@ -156,19 +156,19 @@ TEST(T1SceneStore, AddRemovePreservesGenerationBump) {
     const auto* got = store.getMeshObject(id1);
     ASSERT_NE(got, nullptr);
     EXPECT_EQ(got->generation, 1u) << "object generation after first add must be 1 (storeGen+1 at alloc)";
-    EXPECT_EQ(store.meshObjectCount(), 1u);
+    EXPECT_EQ(store.count(scene::SceneKind::Mesh), 1u) << "T6 single-map: count(Mesh) must be 1";
 
     uint64_t id2 = store.addMeshObject(obj);
     EXPECT_EQ(store.storeGeneration(), 2u) << "after 2 adds, storeGen must be 2 (monotonic +1 per add)";
     EXPECT_NE(id1, id2) << "stable handles must be distinct (explainable invariant: nextId monotonic)";
-    EXPECT_EQ(store.meshObjectCount(), 2u);
+    EXPECT_EQ(store.count(scene::SceneKind::Mesh), 2u);
 
     // Remove first
     bool removed = store.removeMeshObject(id1);
     EXPECT_TRUE(removed);
     EXPECT_EQ(store.storeGeneration(), 3u) << "remove must bump storeGen to 3";
     EXPECT_EQ(store.getMeshObject(id1), nullptr) << "removed id must return nullptr (stale handle)";
-    EXPECT_EQ(store.meshObjectCount(), 1u);
+    EXPECT_EQ(store.count(scene::SceneKind::Mesh), 1u);
 
     // Adding again gets new id, not reused old with same generation
     uint64_t id3 = store.addMeshObject(obj);
@@ -191,7 +191,7 @@ TEST(T1SceneStore, VolumeAndPlaneAddRemove) {
     uint64_t vid = store.addVolumeObject(vobj);
     EXPECT_EQ(store.storeGeneration(), 1u);
     EXPECT_NE(store.getVolumeObject(vid), nullptr);
-    EXPECT_EQ(store.volumeObjectCount(), 1u);
+    EXPECT_EQ(store.count(scene::SceneKind::Volume), 1u) << "T6 single-map: count(Volume) must be 1";
     EXPECT_TRUE(store.removeVolumeObject(vid));
     EXPECT_EQ(store.storeGeneration(), 2u);
     EXPECT_EQ(store.getVolumeObject(vid), nullptr);

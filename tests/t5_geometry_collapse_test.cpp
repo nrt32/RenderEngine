@@ -224,14 +224,17 @@ TEST(T5Collapse, SphereGeometryKindPixelParityWithin1_255) {
     EXPECT_NEAR(rCube2->material->baseColor().r, 0.2f, 1e-6);
 }
 
-// Verify SceneStore 6 partitions (not 17) via file content check
+// Verify SceneStore single-map (T6) — after T5's 6 partitions, T6 tightens to 1 map + kindIndex_
+// (meshObjects_ etc. removed, sphereObjects_ stays 0). T6 gate: grep -c "meshObjects_|sphereObjects_" ==0.
 TEST(T5Collapse, SceneStoreSixPartitions) {
     const std::string content = readFile(std::filesystem::path(TEST_SOURCE_DIR) / "scene" / "store.hpp");
-    EXPECT_GT(countOccurrences(content, "meshObjects_"), 0) << "meshObjects_ must exist";
-    EXPECT_EQ(countOccurrences(content, "sphereObjects_"), 0) << "sphereObjects_ must be 0 after T5 (6 partitions)";
-    EXPECT_EQ(countOccurrences(content, "teapotObjects_"), 0) << "teapotObjects_ must be 0 after T5";
-    EXPECT_EQ(countOccurrences(content, "cubeObjects_"), 0) << "cubeObjects_ must be 0 after T5";
-    EXPECT_EQ(countOccurrences(content, "cylinderObjects_"), 0) << "cylinderObjects_ must be 0 after T5";
+    EXPECT_EQ(countOccurrences(content, "meshObjects_"), 0) << "meshObjects_ must be 0 after T6 (single-map)";
+    EXPECT_EQ(countOccurrences(content, "sphereObjects_"), 0) << "sphereObjects_ must be 0 after T6";
+    EXPECT_EQ(countOccurrences(content, "teapotObjects_"), 0) << "teapotObjects_ must be 0 after T6";
+    EXPECT_EQ(countOccurrences(content, "cubeObjects_"), 0) << "cubeObjects_ must be 0 after T6";
+    EXPECT_EQ(countOccurrences(content, "cylinderObjects_"), 0) << "cylinderObjects_ must be 0 after T6";
+    EXPECT_GT(countOccurrences(content, "objects_"), 0) << "single-map objects_ must exist after T6";
+    EXPECT_GT(countOccurrences(content, "kindIndex_"), 0) << "kindIndex_ must exist after T6";
 }
 
 // FR-data analytic preservation: face normal cross-product within 1e-6 and AABB exact
