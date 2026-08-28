@@ -32,13 +32,17 @@ API (guardrail `gpu_api_ownership`); it depends on `IMaterial` /
 > geometry-shader plane∩mesh outline for the MPR contour overlay,
 > FR-app.3 — replaces the deleted CPU `app/mpr_contour.*`
 > `meshPlaneContour`/`overlayContour` path),
-> and the **plane-capability review deliverable** (`VolumeSliceRenderer`, GPU
+> the **plane-capability review deliverable** (`VolumeSliceRenderer`, GPU
 > volume-plane extraction: a plane through a volume is sampled entirely on
 > the GPU from the cached 3D texture at the view's clip plane — extends
 > FR-render.5/FR-app.2, makes MPR slice scrolling a pure uniform change, and
-> retires the frozen CPU slice images from every live sample).
+> retires the frozen CPU slice images from every live sample),
+> and the **V5 T4 deliverable** (window-free `core/offscreen.hpp` +
+> `render/offscreen.hpp` `Result<Image> renderOffscreen()` — hidden
+> `utils::OffscreenContext` + `REContext::readRgba8` without a `Window`,
+> offscreen vs window parity within 1/255 and MPR `FR-app.2` parity).
 > It is part of the `docs/render.md` documentation map
-> (T7/T8/T9/T10/T11 + V2 T1/T2/T3/T7/T8 + T4 + T5 + T11(V3.8b) + T16; later tasks extend it).
+> (T7/T8/T9/T10/T11 + V2 T1/T2/T3/T7/T8 + T4 + T5 + T11(V3.8b) + T16 + V5 T4; later tasks extend it).
 
 ## Components
 
@@ -355,6 +359,33 @@ orthographic `[-1,1]²` onto a 64×64 view:
 Gate: `tests/t18_depth_test.cpp` (N>=3 consecutive green runs).
 
 > **T9 A4 note (deferred leak, acknowledged):** `IViewBridge::presentAll(core::Framebuffer*)` still leaks the concrete `core::Framebuffer` vocabulary through the app façade (app → core). No code fix this batch — the leak is intentional and deferred to the RHI `IRHIFramebuffer` landing (EOL-1 / DIP-3), where the façade will depend on `IRHIFramebuffer` (the `core/rhi/` abstraction) instead of the concrete GL framebuffer. See `docs/spec/broker.md` §11.6 DIP-3 and the T9 landed note there. `broker/README.md` tracks the same defer.
+
+### Offscreen/headless rendering — `core/offscreen.hpp` + `render/offscreen.hpp` `renderOffscreen` (SPEC §3/§8, V5 T4)
+
+The **V5 T4 deliverable** promotes `utils::OffscreenContext` (`utils/offscreen_context.hpp`) + `core::loadCoreGl` + `REContext::current().readRgba8` to a public window-free API:
+
+| Header | Symbol | Purpose |
+|---|---|---|
+| `core/offscreen.hpp` | `core::OffscreenContext` alias for `utils::OffscreenContext` | low-level public façade — the hidden GL 4.6 core context that owns the `GlfwRuntime` ref (`core::GlfwRuntime::acquire` — first holder inits GLFW, last holder shuts down, order-independent). The raw GL anchors remain under `core/` (entry-point loading + version/profile probe via `core::loadCoreGl`, readback via `REContext::readRgba8` in `core/re_context.cpp` — the sole raw `glReadPixels` site per `no_production_readback`). No file move from `utils/offscreen_context.*`; the alias makes `core/offscreen.hpp` the public entry point while the file stays in `utils/`. No `window.hpp` include in this path (window-free). |
+| `render/offscreen.hpp` | `render::renderOffscreen(uint32_t w, uint32_t h, span<const scene::View> views, const scene::SceneStore& store) → Result<data::Image>` | high-level scene facade — visualization consumers call this from a headless server process. Creates the hidden offscreen context (via `utils::OffscreenContext` owning the `GlfwRuntime` ref), builds a `w*h` destination `Framebuffer` (color-only `GL_COLOR_ATTACHMENT0` via `core::Texture2D` + `core::Framebuffer`), drives the broker composition (`ViewBridge::sync(views,store)` → `renderAll()` → `presentAll(destination)`) through a fresh `broker::AppContext` wired with the full default mapper inventory (`CameraMapper`, `MeshObjectMapper` + `MaterialMapper`, `MeshSliceObjectMapper`, `VolumeObjectMapper`, `VolumeSliceObjectMapper`, `PlaneMapper`, `PlaneObjectMapper`, `ContourMapper`) and the shared `AssetRegistry`, then reads back via `REContext::current().readRgba8` and returns a top-left-origin `data::Image` (4 channels RGBA8, rows flipped from GL bottom-up). The `T3:renderViews` helper is not called directly — the explicit `sync → renderAll → presentAll` triple is the same code `renderViews` executes, so the two paths share one implementation and pixels are byte-identical within 1/255 (one LSB, the evidence anchor). |
+
+**Window-free contract.** `render/offscreen.hpp` never includes `core/window.hpp` (audit `render_no_window` `forbid_inside render|#include.*window.hpp` — the file must contain zero `window.hpp` references — and `gpu_api_ownership` `core|` + `no_production_readback` `core|` — raw `glReadPixels` lives only in `core/re_context.cpp`). `Window` remains for interactive samples; the offscreen path reuses `ViewSynchronizer` + `ViewCompositor` without a `Window` (fresh session for `T4` has proven `T3:renderViews` to reuse).
+
+**Parity semantics.** Each view's `rect` is in GL pixel coordinates (origin bottom-left, matching `core::setViewport` and `render::ViewRect`); views whose rects lie outside `w*h` are clipped by the compositor's blit exactly as on the window path, so MPR's `1280x960` → four `640x480` viewports at `(0,480)/(640,480)/(0,0)/(640,0)` map 1:1 between the two paths. The returned `Image` is top-left origin (`Image::pixel(x,y)` is row-major top-left, 4 channels); the helper flips the GL bottom-up bytes before construction so `Image` convention is honored and center-pixel probes are stable across reads.
+
+#### Acceptance constants (V5 T4 offscreen gate, `docs/render.md`)
+
+| Quantity | Value | Where it comes from |
+|---|---|---|
+| Single-view `renderOffscreen(640,480,{view},store)` center pixel | `{51,102,204,255}` ±1 (1/255) | view `clearColor (0.2,0.4,0.8,1)` → bytes `round(0.2*255)=51`, `round(0.4*255)=102`, `round(0.8*255)=204`; offscreen vs window parity — same broker composition without a `Window` |
+| Offscreen vs window parity | center pixel within 1/255 | `REContext::readRgba8` via hidden `OffscreenContext` vs manual bridge path (`ViewBridge::sync → renderAll → presentAll → REContext::readRgba8`); one LSB tolerance |
+| `render/offscreen.hpp` | `grep -R "window.hpp" render/offscreen.* ==0` (analytic 0) | window-free — no `window.hpp` include in this path (audit `render_no_window`) |
+| `core/re_context.cpp` | `grep -R glReadPixels -- core/ ==1` && `-- render/ ==0` && `-- utils/ ==0` (analytic 1/0/0) | raw readback only under `core/re_context.cpp` (sole anchor, guardrail `no_production_readback`) |
+| MPR `FR-app.2` offscreen parity: window dims | `1280x960` window, four `640x480` viewports at `(0,480)/(640,480)/(0,0)/(640,0)` exact within 1 px | SPEC `FR-app.2` pinned grid — offscreen `w=1280,h=960` compositor preserves rects 1:1 (same as `T3` `mprViewports` gate) |
+| MPR offscreen quadrant centers | `{255,0,0,255}`, `{0,255,0,255}`, `{0,0,255,255}`, `{255,255,0,255}` ±1 each | per-view clear colors through offscreen `presentAll` blit; within 1/255 |
+| `data::Image` returned | `w=1280,h=960,channels=4` exact, top-left origin | `renderOffscreen` flips GL bottom-up rows to `Image` top-left convention |
+
+Gate: `tests/t4_offscreen_test.cpp` (N>=3 consecutive green runs, `GALLIUM_DRIVER=llvmpipe` `MESA_GL_VERSION_OVERRIDE=4.6`).
 
 ### The unified asset store: `AssetRegistry` (SPEC §9 V2.5 mesh kind, SPEC §7 T14 volume/image/material kinds)
 

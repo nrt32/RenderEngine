@@ -18,6 +18,7 @@ add_library(re_render STATIC
     contour_renderer.cpp
     view_target.cpp
     view.cpp
+    offscreen.cpp
 )
 
 target_include_directories(re_render PUBLIC

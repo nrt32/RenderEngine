@@ -18,6 +18,7 @@ add_library(re_core STATIC
     shader_program.cpp
     transform_feedback.cpp
     read_pixels.cpp
+    offscreen.cpp
 )
 
 target_include_directories(re_core PUBLIC
