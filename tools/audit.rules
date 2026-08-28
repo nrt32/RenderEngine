@@ -83,7 +83,7 @@ disposition_render	forbid_inside	render|#include.*scene/	re::render must never i
 
 # --- Bridge completeness + rendering hygiene (SPEC §6) --------------------------------
 render_no_glad	forbid_inside	render|#include.*glad	<glad/gl.h> must not appear outside core/ (GL constants via core wrappers; audit render_no_glad_include)
-# engine_depth_default	require_grep	setDepthConfig\(	true	Engine facade must default DepthConfig true for mesh views (T8b/T17 divergence, View owns DepthConfig value object)  # activate at T8b (future)
+engine_depth_default	require_grep	DepthConfig\{true	Engine facade must default DepthConfig true for mesh views (T8b/T17 divergence, View owns DepthConfig value object)
 render_no_window	forbid_inside	render|#include.*window\.hpp  # T4 window-free — active now (render/offscreen must not include window.hpp)	render/offscreen must not include window.hpp (T4 window-free, render is GL-constant-only)
 # layer_count	require_grep	Count\s*=\s*8  # activate at T8 (8 layers) when scene/layer.hpp exists	Layer Count must stay 8 (T8, 8 layers Background…OverlayTop)
 # layer_mask	require_grep	using LayerMask = uint32_t  # activate at T8 when scene/layer.hpp exists	LayerMask must stay uint32_t 1u<< (T8, future-proof)

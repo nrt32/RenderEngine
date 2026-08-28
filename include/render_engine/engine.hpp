@@ -32,6 +32,7 @@
 #include "io/mesh/obj_mesh_loader.hpp"
 #include "io/volume/nrrd_volume_loader.hpp"
 #include "scene/camera.hpp"
+#include "scene/depth_config.hpp"
 #include "scene/light.hpp"
 #include "scene/material_desc.hpp"
 #include "scene/object.hpp"
@@ -184,6 +185,7 @@ class Engine {
         v.camera = desc.camera;
         v.setItemIds(desc.objectIds);
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
+        applyMeshDepthDefault(v);
         views_.clear();
         views_.push_back(std::move(v));
     }
@@ -235,6 +237,7 @@ class Engine {
         v.camera = camera;
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         v.setItemIds(ids);
+        applyMeshDepthDefault(v);
         return v;
     }
 
@@ -264,6 +267,7 @@ class Engine {
         v.camera = std::move(camera);
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         v.setItemIds(ids);
+        applyMeshDepthDefault(v);
         return v;
     }
 
@@ -285,6 +289,7 @@ class Engine {
         v.camera = std::move(camera);
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         v.setItemIds(ids);
+        applyMeshDepthDefault(v);
         return v;
     }
 
@@ -346,6 +351,9 @@ class Engine {
     }
 
    private:
+    static void applyMeshDepthDefault(::re::scene::View& v) {
+        v.setDepthConfig(::re::scene::DepthConfig{true});
+    }
     ::re::broker::AppContext ctx_;
     std::vector<::re::scene::View> views_{};
     uint64_t nextViewId_{1};

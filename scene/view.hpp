@@ -12,6 +12,7 @@
 #include <glm/glm.hpp>
 
 #include "scene/camera.hpp"
+#include "scene/depth_config.hpp"
 #include "scene/layer.hpp"
 #include "scene/light.hpp"
 #include "scene/plane_desc.hpp"
@@ -56,6 +57,8 @@ struct View {
     glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 0.0f};
     /// Depth-tested rendering opt-in (see setDepthTest). Default false.
     bool depthTest{false};
+    /// Value-object depth config — View owns DepthConfig (T8b composition, not raw bool on Renderer — Renderer is stateless drawLayer and has no ViewTarget size, would break IRenderable type-erasure + ViewTarget SRP; depth over mixed VolumeSlice+MeshSlice vs Volume+Mesh + OIT opaque depth + transparent depth-off over same target only View knows; OIT capture/composite disableDepthTest explicit on same REContext; default enabled=false color-only for deterministic llvmpipe gates, Engine facade defaults DepthConfig{true} for mesh views viz correctness — T17 G4 divergence documented in docs/engine.md).
+    DepthConfig depthConfig{DepthConfig{false, 1.0f}};
     /// Per-View lights: empty vector = unlit (2D) or fixed headlight fallback
     /// (Phong-only non-goal: existing mesh shader headlight preserved when
     /// empty, so empty lights keeps FR-render.* 1/255 gates byte-identical).
@@ -126,6 +129,16 @@ struct View {
     void setDepthTest(bool enabled) noexcept {
         if (depthTest != enabled) {
             depthTest = enabled;
+            depthConfig.enabled = enabled;
+            ++depthTestGen;
+            ++generation;
+        }
+    }
+    /// Set DepthConfig value object and bump depthTestGen + generation when changed; keeps bool depthTest in sync (enabled field mirrors depthTest so both spellings stay coherent and the per-view DepthMode branch in render::ViewTarget and REContext::beginPass can read either spelling without diverging).
+    void setDepthConfig(DepthConfig cfg) noexcept {
+        if (depthConfig != cfg) {
+            depthConfig = cfg;
+            depthTest = cfg.enabled;
             ++depthTestGen;
             ++generation;
         }

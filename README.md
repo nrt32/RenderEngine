@@ -155,6 +155,8 @@ tests/      headless unit tests (consume core/ wrappers + the utils/test_utils f
 examples/   consumer samples (minimal.cpp via Engine facade) — NOT in AUDIT_SOURCE_DIRS
 ```
 
+`AUDIT_SOURCE_DIRS` (via `tools/env.sh` §8, `tools/audit.sh` canonical) is `io data volume scene core broker render app utils test_utils tests` — the module list above enumerates exactly those eleven dirs plus `include/` (public facade) and `examples/` (consumer probe, intentionally excluded from the audit via `tools/comment_context.allow`). `scene/ broker/ utils/ test_utils/` are therefore not optional extras but first-class audited sources (T17 G6 polish).
+
 ## Testing notes
 
 - Unit tests build with **ASan + UBSan** and run **headless** using an offscreen

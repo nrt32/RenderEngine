@@ -56,10 +56,10 @@ broker/      `app → RE` mediation — heavily abstracted per-type Mappers, NOT
                |- ViewSynchronizer (single responsibility: poll+push dirty, drive ICachedMapper::mapCached, owns CompositeKey cache)
                 |- ViewCompositor (single responsibility: renderAll()/presentAll(dst) via IRHIContext, owns ReView map LayoutId→ReView) — **(stretch — T10 deferred — `IRHIContext` not landed; currently via `core::REContext` (formerly `DrawContext`, T2) + `core::blit`; `IRHIContext` dispatch deferred)**
                |- IViewBridge abstraction; ViewBridge : IViewBridge façade composing Synchronizer+Compositor (SRP via composition; app depends on IViewBridge — DIP)
-               |  App never holds a mapper handle; app only touches app::View / SceneStore / IViewBridge
+               |  App never holds a mapper handle; app only touches scene::View / SceneStore / IViewBridge
 app/         compositions + samples + ImGui overlay — now THIN, consumes scene/ + broker/ via IViewBridge (DIP: app never includes render/ or core/ directly)
-               |- SceneView  (composes AppVolume+AppMesh per-View lists)
-               |- MPRView    (4× AppView: 3× 2D VolumeSlice+MeshSlice + 1× 3D Volume+Mesh)
+               |- SceneView  (composes scene::Volume+scene::Mesh per-View lists)
+               |- MPRView    (4× scene::View: 3× 2D VolumeSlice+MeshSlice + 1× 3D Volume+Mesh)
                |- AppContext { SceneStore, Broker, IViewBridge } — composition root (DIP)
 tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; broker/ and scene/ headless-translation tests too; RHI tests via utils::OffscreenContext→IRHIContext) — **(stretch — T10 deferred — `IRHIContext` RHI tests deferred; currently headless via `utils::OffscreenContext` + `core::loadCoreGl` + `utils::PixelReader`→`core::readRgba8`)**
 ```
@@ -83,7 +83,7 @@ tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; b
   `SceneStore`/`ViewStore` carry stable `uint64_t` handles + `generation`/`storeGeneration` + `bump(FieldId)`
   single entry point (SPEC §10.4). No `GL`, no `AssetHandle`, no `core::` types; only `glm` + `data/` + `volume/`. No `render/` type leaks into `scene/` (disposition_scene, T4).
 - **Naming:** types are **unprefixed** inside `re::scene` (accepted name `re::scene::MeshObject`,
-  not `re::app::AppMeshObject` — namespace is prefix per NAMING_CONVENTIONS §6) — e.g.
+  not `re::scene::MeshObject` — namespace is prefix per NAMING_CONVENTIONS §6) — e.g.
   `scene::MeshObject`, `scene::Camera`, `scene::View`. `render::View` is the RE mirror
   (`render::ReView` alias kept for grep distinctness where both are included — `broker/` ACL).
 - **SceneStore + ViewStore:** stable `uint64_t` handles + `generation` per
@@ -98,7 +98,7 @@ tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; b
 - **RE keeps only what it can directly use.** Any field that needs conversion
   (voxel-index → world, `MaterialDesc → IMaterial`, TF → uniforms) is
   translated. `Re*Object`s carry `AssetHandle`/`Texture3D*`/`ReMaterial*`/`model`/
-  `ClipPlane`/`ReLight[]`/`worldBounds`, not `app::MaterialDesc`.
+  `ClipPlane`/`ReLight[]`/`worldBounds`, not `scene::MaterialDesc`.
 - **Hierarchies mirror `scene/` disposition but are RE-shaped:**
   `render::IMaterial → MeshMaterial → {PhongMaterial,PBRMaterial}` plus
   `VolumeMaterial/SliceMaterial/ContourMaterial` siblings (SPEC §12), and
