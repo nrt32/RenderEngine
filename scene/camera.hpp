@@ -20,6 +20,17 @@
 
 namespace re::scene {
 
+/// Perspective framing — the FIXED field-of-view / near / far that a full-window view keeps while live framebuffer size changes (T7 V5).
+///
+/// Before T7 this struct lived in app/sample_harness.hpp (app::PerspectiveFraming) and was consumed by the free helper app::fitPerspectiveViewToPixels which re-derived rect + aspect each frame. V5 T7 moves the type to scene/camera.hpp (the value lib owns the framing, not the app harness) and replaces the free helper with Camera::perspectiveFromFraming / Camera::setPerspectiveFromFraming plus SceneViewBuilder::applyLiveDims (single helper, not six private duplicates). Eye position and framing distance are derived once from scene bounds; a resize changes ONLY the projection aspect (width/height) via framing, never the eye — that split makes resizes cheap and free of re-framing surprises.
+///
+/// The builder path (scene/builders.hpp:SceneViewBuilder) stores one PerspectiveFraming and its applyLiveDims(w,h) does rect := {0,0,w,h} + camera.setPerspectiveFromFraming(framing, w/h) atomically — one call replaces the former two-liner in every sample. Direct callers may also call camera.setPerspectiveFromFraming(framing, aspectFromDims(w,h)) when they own the View directly (the same one-liner the builder uses, not a second helper).
+struct PerspectiveFraming {
+    float fovDeg{60.0f};     ///< Vertical field of view in degrees.
+    float nearPlane{0.1f};   ///< Near clip distance.
+    float farPlane{10.0f};   ///< Far clip distance.
+};
+
 /// Projection mode for scene::Camera (SPEC §3.1 V3.3 T4).
 /// 2D slice views (View.plane present) use Orthographic, 3D crosshair views use
 /// Perspective. Plane present → ortho is validated by broker::CameraMapper.
@@ -134,7 +145,18 @@ class Camera {
     /// keep slice geometry deterministic across viewports.
     static Camera makeOrthoForSlice(glm::vec3 center, glm::vec3 planeNormal, float distance) noexcept;
 
-   private:
+    // --- V5 T7 framing helpers (moved from app to scene, single helper — replaces 6 private duplicates) — the framing value type and its setPerspectiveFromFraming/perspectiveFromFraming helpers are now owned by the scene value library so samples share one live-aspect rule without hand-copying it (T7 V5) --------------------------------
+
+    /// Apply a stored PerspectiveFraming at live aspect = w/h. This is the one-liner that replaces the former per-sample helper's second half (the first half is View::setRect). The builder path SceneViewBuilder::applyLiveDims does setRect + this call atomically; direct callers use the same one-liner without a builder. Bumps projGen only when perspective params or mode actually change (T4 per-field split) so repeated same-size calls stay free and generation churn is avoided (T7 V5).
+    void setPerspectiveFromFraming(const PerspectiveFraming& framing, float aspect) noexcept;
+
+    /// Factory for a perspective camera from framing + aspect at explicit eye/center/up. Sugar for callers that build a fresh camera without mutating an existing one (T7 V5 — mirrors setPerspectiveFromFraming but constructs instead of mutating).
+    static Camera perspectiveFromFraming(const PerspectiveFraming& framing, float aspect, glm::vec3 eye, glm::vec3 center, glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f)) noexcept;
+
+    /// Legacy static alias for the above with the default forward eye (eye = center + (0,0,1)) when the caller only cares about projection — the view matrix stays lookAt(eye, center, up) with the supplied eye; this overload keeps call sites that only have framing+aspect compiling without fabricating a center.
+    static Camera perspectiveFromFraming(const PerspectiveFraming& framing, float aspect) noexcept;
+
+    private:
     glm::vec3 eye_{0.0f, 0.0f, 5.0f};
     glm::vec3 center_{0.0f, 0.0f, 0.0f};
     glm::vec3 up_{0.0f, 1.0f, 0.0f};

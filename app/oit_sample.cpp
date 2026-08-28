@@ -106,24 +106,19 @@ class OitSample final : public app::ISample {
             oit::kFarGlassMin, oit::kFarGlassMax, oit::kFarGlassColor));
 
         view_.id = 1;
-        applyLiveDims(app::kWindowWidth, app::kWindowHeight);
+        syncViewSize(app::kWindowWidth, app::kWindowHeight);
         view_.setClearColor(oit::kClearColor);
         view_.setDepthTest(true);
         view_.setItemIds({idGold, idBunny, idNear, idFar});
     }
 
-    /// The resize hook: apply the new pixel dims immediately so the very next
-    /// frame (and its sync) already carries the corrected rect + aspect.
+    /// The resize hook: one call.
     void onResize(int width, int height) noexcept override {
-        applyLiveDims(width, height);
+        syncViewSize(width, height);
     }
 
     data::Result<void> renderFrame(int width, int height) override {
-        // Live aspect from THIS frame's harness pixel size first (the
-        // arrangement camera is aspect-corrected so no window shape stretches
-        // the scene; change-guarded setters make a no-resize frame free),
-        // then the single-site bridge façade (AS2 syncRenderPresent).
-        applyLiveDims(width, height);
+        syncViewSize(width, height);
         views_ = {view_};
         return app::syncRenderPresent(ctx_, views_);
     }
@@ -150,12 +145,7 @@ class OitSample final : public app::ISample {
     }
 
    private:
-    /// Re-derive the full-window view rect + the arrangement camera's aspect
-    /// from live pixel dims — the one body shared by the resize hook and every
-    /// rendered frame. The ortho window keeps NDC [-1,1] vertically and grows
-    /// to ±aspect horizontally (the oit_scene::cameraFor contract), so no
-    /// window shape stretches the composition.
-    void applyLiveDims(int width, int height) {
+    void syncViewSize(int width, int height) {
         view_.setRect(scene::Rect{0, 0, width, height});
         view_.mutateCamera([&](scene::Camera& c) {
             c = oit::cameraFor(app::aspectFromDims(width, height));

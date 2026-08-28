@@ -87,37 +87,15 @@ class ISample {
     }
 };
 
-/// The perspective-framing parameters a full-window view keeps FIXED while the
-/// live framebuffer pixel size changes: vertical field of view (degrees) and
-/// the near/far clip distances. Eye position and framing distance are derived
-/// once by the sample from its scene bounds; a resize changes ONLY the
-/// projection aspect (width/height), never the framing — that split is what
-/// makes resizes cheap and free of re-framing surprises.
-struct PerspectiveFraming {
-    float fovDeg{60.0f};     ///< Vertical field of view in degrees.
-    float nearPlane{0.1f};   ///< Near clip distance.
-    float farPlane{10.0f};   ///< Far clip distance.
-};
-
 /// Width/height as the float aspect ratio cameras expect, with degenerate
 /// sizes clamped: GLFW can report 0 for a dimension while a window is
 /// minimized, and an unguarded division would poison every projection with
 /// inf/NaN. Clamping each non-positive dim to 1 keeps the ratio finite and
 /// deterministic (the next real-size event corrects it again).
+///
+/// Note V5 T7: the framing value type now lives in scene/camera.hpp and the live-aspect helper is in scene/builders.hpp (builder) and scene/camera.hpp (camera).
+/// The former app framing helpers are removed (T7 V5). The single helper is now the builder in scene/builders.hpp and the camera helper, preserving the invariant that a resize changes ONLY the projection aspect (width/height) while fov/near/far stay fixed and change-guarded setters keep no-resize frames free. One helper, not six private copies.
 float aspectFromDims(int width, int height) noexcept;
-
-/// Apply live framebuffer pixel dims to ONE full-window perspective view:
-/// rect := {0, 0, width, height} and the camera's perspective aspect :=
-/// width/height with fov/near/far preserved from `framing`. This is the ONE
-/// shared definition of the live-aspect rule for the full-window samples —
-/// called both from ISample::onResize and at the top of every renderFrame, so
-/// the projection is always derived from the CURRENT pixel size and compile-
-/// time window constants never feed projections (a resize reframes instead of
-/// stretching). All scene::View setters are change-guarded, so frames where
-/// nothing moved cost no generation churn or sync work.
-void fitPerspectiveViewToPixels(scene::View& view,
-                                const PerspectiveFraming& framing, int width,
-                                int height) noexcept;
 
 /// Shared sample harness: owns a visible window + GL context, drives the
 /// frame loop via `FrameLoop` polling + `ImGuiOverlay` for the optional overlay.
@@ -168,8 +146,9 @@ class SampleHarness {
 
 /// Shared OIT/mesh/plane/volume window size — the OPENING size only; every
 /// per-frame view rect and camera aspect derives from the LIVE framebuffer dims
-/// via fitPerspectiveViewToPixels / aspectFromDims (T23), so compile-time
-/// constants never feed projections.
+/// via SceneViewBuilder::applyLiveDims / Camera::setPerspectiveFromFraming
+/// (scene/builders.hpp + scene/camera.hpp, T7) / aspectFromDims (T23), so
+/// compile-time constants never feed projections.
 inline constexpr int kWindowWidth = 800;
 inline constexpr int kWindowHeight = 600;
 /// MPR window size (SPEC FR-app.2 pins 1280×960 as the default MPR window).

@@ -8,6 +8,7 @@ add_library(re_scene STATIC
     layout.cpp
 )
 target_link_libraries(re_scene PUBLIC re_data re_volume)
+target_link_libraries(re_scene PRIVATE re_io)
 target_link_libraries(re_scene PUBLIC $<BUILD_INTERFACE:glm::glm>)
 target_include_directories(re_scene PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>

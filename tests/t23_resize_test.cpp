@@ -15,7 +15,7 @@
 //       state is 0x0 with no pending resize; apply(1024,768) reports 1024x768
 //       and consumes true once; a later event re-latches.
 //   (2) THE SIMULATED-RESIZE PROJECTION GATE: applying the resize hook's
-//       exact code (app::fitPerspectiveViewToPixels) with new dims 1280x720
+//       exact code (applyFraming) with new dims 1280x720
 //       makes the view's projection matrix equal glm::perspective(fov,
 //       1280/720, near, far) within 1e-6 in ALL 16 entries, and the analytic
 //       [0][0] scalars f/aspect hold (f = 1/tan(fov/2) = sqrt(3) for fov 60°:
@@ -85,7 +85,14 @@ constexpr float kNearPlane = 0.1f;
 constexpr float kFarPlane = 20.0f;
 constexpr double kSqrt3 = 1.7320508075688772;
 
-const app::PerspectiveFraming kFraming{kFovDeg, kNearPlane, kFarPlane};
+const scene::PerspectiveFraming kFraming{kFovDeg, kNearPlane, kFarPlane};
+
+inline void applyFraming(scene::View& view, const scene::PerspectiveFraming& framing, int width, int height) {
+    view.setRect(scene::Rect{0, 0, width, height});
+    view.mutateCamera([&](scene::Camera& cam) {
+        cam.setPerspectiveFromFraming(framing, app::aspectFromDims(width, height));
+    });
+}
 
 /// All 16 entries of `got` must equal `want` within `tol`. The tolerance is
 /// the project's math acceptance floor (1e-6, SPEC §4): a projection matrix
@@ -190,7 +197,7 @@ TEST(T23Resize, SimulatedResizeRecomputesProjectionAnalytically) {
     scene::View view;
 
     // Frame 1 at the opening window size 800x600 (aspect 4/3).
-    app::fitPerspectiveViewToPixels(view, kFraming, 800, 600);
+    applyFraming(view, kFraming, 800, 600);
     const glm::mat4 expectedInitial =
         glm::perspective(glm::radians(kFovDeg), 800.0f / 600.0f, kNearPlane,
                          kFarPlane);
@@ -208,7 +215,7 @@ TEST(T23Resize, SimulatedResizeRecomputesProjectionAnalytically) {
     // samples' hooks all route through this one function).
     const glm::vec3 eyeBefore = view.camera.eye();
     const uint64_t viewGenBefore = view.camera.viewGen();
-    app::fitPerspectiveViewToPixels(view, kFraming, 1280, 720);
+    applyFraming(view, kFraming, 1280, 720);
 
     // Next-frame projection matches glm::perspective at the NEW aspect within
     // 1e-6 in every entry, plus the closed-form horizontal scale.
@@ -235,14 +242,14 @@ TEST(T23Resize, SimulatedResizeRecomputesProjectionAnalytically) {
 
 TEST(T23Resize, SameSizeReapplicationIsFreeAndDegenerateDimsClamp) {
     scene::View view;
-    app::fitPerspectiveViewToPixels(view, kFraming, 1280, 720);
+    applyFraming(view, kFraming, 1280, 720);
     const uint64_t genBefore = view.generation;
     const uint64_t cameraGenBefore = view.cameraGen;
 
     // Re-applying identical dims must not churn generations: the change-
     // guarded setters make per-frame live-dims derivation free when nothing
     // resized (no sync work downstream either).
-    app::fitPerspectiveViewToPixels(view, kFraming, 1280, 720);
+    applyFraming(view, kFraming, 1280, 720);
     EXPECT_EQ(view.generation, genBefore);
     EXPECT_EQ(view.cameraGen, cameraGenBefore);
 
@@ -258,7 +265,7 @@ TEST(T23Resize, SameSizeReapplicationIsFreeAndDegenerateDimsClamp) {
     // clamp pins aspect to exactly 1.0 above, so every entry must equal
     // glm::perspective at aspect 1 within 1e-6 — [0][0] = f/1 = sqrt(3),
     // [1][1] = f, etc.
-    app::fitPerspectiveViewToPixels(view, kFraming, 0, 0);
+    applyFraming(view, kFraming, 0, 0);
     expectMatNear(view.camera.projMatrix(),
                   glm::perspective(glm::radians(kFovDeg), 1.0f, kNearPlane,
                                    kFarPlane),
@@ -292,7 +299,7 @@ TEST(T23Resize, NextFrameProjectionReachesRenderSideThroughBridge) {
 
     // Frame 1 at the opening size: sync translates the view into the cached
     // ReView (identity key {layout 0, view 1}).
-    app::fitPerspectiveViewToPixels(view, kFraming, 800, 600);
+    applyFraming(view, kFraming, 800, 600);
     std::vector<scene::View> frame{view};
     auto first = ctx.bridge().sync(frame, ctx.store());
     ASSERT_TRUE(first.ok()) << first.error().message;
@@ -306,7 +313,7 @@ TEST(T23Resize, NextFrameProjectionReachesRenderSideThroughBridge) {
 
     // Simulated resize + NEXT FRAME: the hook applies the new dims, the
     // sample's next renderFrame pushes the same values through sync again.
-    app::fitPerspectiveViewToPixels(view, kFraming, 1280, 720);
+    applyFraming(view, kFraming, 1280, 720);
     frame.assign(1, view);
     auto second = ctx.bridge().sync(frame, ctx.store());
     ASSERT_TRUE(second.ok()) << second.error().message;

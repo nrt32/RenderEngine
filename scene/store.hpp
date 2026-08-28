@@ -25,6 +25,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <string>
+
 #include "data/result.hpp"
 #include "scene/asset_id.hpp"
 #include "scene/asset_registry.hpp"
@@ -208,9 +210,15 @@ class SceneStore {
     /// the id was erased (its tombstone generation is retained exactly so a
     /// held handle can be distinguished from a never-existing one); error
     /// code 1 when the id never existed.
-    data::Result<void> resolve(uint64_t id) const noexcept;
+     data::Result<void> resolve(uint64_t id) const noexcept;
 
-    // --- Asset identity V3.6 (T7) — SceneStore-owned AssetId per content hash (hashed at load/register time via data/content_hash.hpp:31, never per frame; identical bytes alias to same AssetId, the handle's contentHash is identity with no byObject pointer shim and no pinned refs==0 slots, keeping the renderer's resolve O(1) and slot growth bounded, and the store co-owns every asset via shared_ptr so nothing can dangle behind the caller's back) — T7, SPEC §7, V3.6.
+     // --- Loader facades V5 T7 — atomic io::load* + register*Asset + add*Object (4 steps → 1 call, 5/6 samples deduped).
+     //
+     // Pure scene-store sugar that keeps the single-map invariant: the mesh/volume is loaded from the filesystem via io::loadObjMesh / io::loadNrrdVolume (GL-free, typed Result), wrapped in a shared_ptr, registered through the content-hashed AssetRegistry (alias on identical bytes, T7 asset identity), and inserted as a MeshObject/VolumeObject via the templated addObject<T> path (single primary map + kindIndex_, T6). Failure at any stage short-circuits and propagates the typed ErrorDomain (MeshIo/VolumeIo) unchanged, so callers branch on domain+code without string parsing (SPEC §5). The transform stays identity and presentation defaults to opaque Phong (mesh) / default TF (volume); samples that need a custom transform or TF mutate the returned object via getMut or use the Objects:: helpers in scene/builders.hpp. Implemented in store.cpp (io/ linkage lives there, header stays lean).
+     data::Result<ObjectId> loadMesh(const std::string& path);
+     data::Result<ObjectId> loadVolume(const std::string& path);
+
+     // --- Asset identity V3.6 (T7) — SceneStore-owned AssetId per content hash (hashed at load/register time via data/content_hash.hpp:31, never per frame; identical bytes alias to same AssetId, the handle's contentHash is identity with no byObject pointer shim and no pinned refs==0 slots, keeping the renderer's resolve O(1) and slot growth bounded, and the store co-owns every asset via shared_ptr so nothing can dangle behind the caller's back) — T7, SPEC §7, V3.6.
     data::Result<AssetId> registerMeshAsset(
         AssetRegistry<data::Mesh>::SharedAsset mesh);
     data::Result<AssetRegistry<data::Mesh>::SharedAsset> resolveMeshAsset(

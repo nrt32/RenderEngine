@@ -4,6 +4,9 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "io/mesh/obj_mesh_loader.hpp"
+#include "io/volume/nrrd_volume_loader.hpp"
+
 namespace re::scene {
 
 // ---------------------------------------------------------------------------
@@ -154,6 +157,44 @@ data::Result<void> SceneStore::resolve(uint64_t id) const noexcept {
     }
     return data::makeError<void>(
         1, "SceneStore::resolve: unknown object id " + std::to_string(id));
+}
+
+// ---------------------------------------------------------------------------
+// SceneStore — loader facades V5 T7 (atomic load → register → add)
+// ---------------------------------------------------------------------------
+
+data::Result<ObjectId> SceneStore::loadMesh(const std::string& path) {
+    auto meshRes = io::loadObjMesh(path);
+    if (meshRes.failed()) {
+        return data::Result<ObjectId>(data::error, meshRes.error());
+    }
+    auto shared = std::make_shared<const data::Mesh>(std::move(*meshRes));
+    auto reg = registerMeshAsset(shared);
+    if (reg.failed()) {
+        return data::Result<ObjectId>(data::error, reg.error());
+    }
+    MeshObject obj;
+    obj.mesh = shared;
+    obj.transform = glm::mat4(1.0f);
+    uint64_t id = addObject(std::move(obj));
+    return data::makeValue<ObjectId>(id);
+}
+
+data::Result<ObjectId> SceneStore::loadVolume(const std::string& path) {
+    auto volRes = io::loadNrrdVolume(path);
+    if (volRes.failed()) {
+        return data::Result<ObjectId>(data::error, volRes.error());
+    }
+    auto shared = std::make_shared<const data::VolumeDataset>(std::move(*volRes));
+    auto reg = registerVolumeAsset(shared);
+    if (reg.failed()) {
+        return data::Result<ObjectId>(data::error, reg.error());
+    }
+    VolumeObject obj;
+    obj.volume = shared;
+    obj.transform = glm::mat4(1.0f);
+    uint64_t id = addObject(std::move(obj));
+    return data::makeValue<ObjectId>(id);
 }
 
 data::Result<AssetId> SceneStore::registerMeshAsset(

@@ -12,6 +12,7 @@
 // window-free render helper that T4 offscreen will reuse; the harness's
 // `run(maxFrames)` is BOUNDED and `runInteractive()` is the opt-in helper for
 // `until shouldClose()` loops (V5 T3 bounded-default discipline).
+// T7 single helper applyLiveDims lives in scene/builders.hpp (one helper, not six duplicates).
 
 #include "app/sample_harness.hpp"
 
@@ -148,20 +149,6 @@ float aspectFromDims(int width, int height) noexcept {
     const float w = static_cast<float>(width > 0 ? width : 1);
     const float h = static_cast<float>(height > 0 ? height : 1);
     return w / h;
-}
-
-void fitPerspectiveViewToPixels(scene::View& view,
-                                const PerspectiveFraming& framing, int width,
-                                int height) noexcept {
-    // The view covers the whole window and the camera's projection aspect
-    // follows the live pixel ratio; fov/near/far (and the eye framing built by
-    // the sample) are untouched. Both setters only bump generations on a real
-    // change, so repeated calls with unchanged dims cost nothing downstream.
-    view.setRect(scene::Rect{0, 0, width, height});
-    view.mutateCamera([&framing, width, height](scene::Camera& camera) {
-        camera.setPerspective(framing.fovDeg, aspectFromDims(width, height),
-                              framing.nearPlane, framing.farPlane);
-    });
 }
 
 int sampleMaxFrames(int defaultFrames) noexcept {

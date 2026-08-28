@@ -176,4 +176,20 @@ Camera Camera::makeOrthoForSlice(glm::vec3 center, glm::vec3 planeNormal, float 
     return cam;
 }
 
+void Camera::setPerspectiveFromFraming(const PerspectiveFraming& framing, float aspect) noexcept {
+    setPerspective(framing.fovDeg, aspect, framing.nearPlane, framing.farPlane);
+}
+
+Camera Camera::perspectiveFromFraming(const PerspectiveFraming& framing, float aspect, glm::vec3 eye, glm::vec3 center, glm::vec3 up) noexcept {
+    Camera cam(eye, center, up);
+    cam.setPerspective(framing.fovDeg, aspect, framing.nearPlane, framing.farPlane);
+    return cam;
+}
+
+Camera Camera::perspectiveFromFraming(const PerspectiveFraming& framing, float aspect) noexcept {
+    Camera cam;
+    cam.setPerspective(framing.fovDeg, aspect, framing.nearPlane, framing.farPlane);
+    return cam;
+}
+
 } // namespace re::scene
