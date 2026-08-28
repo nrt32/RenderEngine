@@ -14,6 +14,9 @@
 
 #include "core/re_context.hpp"
 #include "core/shader_program.hpp"
+#include "render/view.hpp"
+
+#include <glm/geometric.hpp>
 
 namespace re::render {
 
@@ -39,6 +42,13 @@ data::Result<void> MeshRenderer::drawInstances(const MeshScene& scene,
     program->use();
     program->setUniformMat4("uView", camera.view);
     program->setUniformMat4("uProj", camera.proj);
+    glm::vec3 lightDir{0.0f, 0.0f, 1.0f};
+    if (auto* cur = currentViewLights(); cur && !cur->empty()) {
+        glm::vec3 d = cur->front().dirWS;
+        float len = glm::length(d);
+        if (len > 1e-6f) lightDir = d / len;
+    }
+    program->setUniformVec3("uLightDir", lightDir);
 
     for (const MeshInstance& instance : scene.meshes) {
         if (!instance.material || instance.mesh.isNull()) {
@@ -70,8 +80,8 @@ data::Result<void> MeshRenderer::drawInstances(const MeshScene& scene,
 }
 
 data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
-                                            const Camera& camera,
-                                            const RenderTarget& target) {
+                                             const Camera& camera,
+                                             const RenderTarget& target) {
     (void)target;
     auto programResult = opaqueProgram();
     if (programResult.failed()) {
@@ -82,6 +92,20 @@ data::Result<void> MeshRenderer::drawOpaque(const MeshScene& scene,
     program->use();
     program->setUniformMat4("uView", camera.view);
     program->setUniformMat4("uProj", camera.proj);
+    // Upload per-View light direction (same path as drawInstances) — empty
+    // lights keeps fixed headlight (0,0,1) via fallback, one Directional
+    // forwards its normalized dirWS deterministically (SPEC §12.5 world-space
+    // forwarding; ViewSynchronizer per-field lightsGen uploads once per View
+    // before drawLayer loop, Render layer reads thread-local currentViewLights).
+    {
+        glm::vec3 lightDir{0.0f, 0.0f, 1.0f};
+        if (auto* cur = currentViewLights(); cur && !cur->empty()) {
+            glm::vec3 d = cur->front().dirWS;
+            float len = glm::length(d);
+            if (len > 1e-6f) lightDir = d / len;
+        }
+        program->setUniformVec3("uLightDir", lightDir);
+    }
     for (const MeshInstance& instance : scene.meshes) {
         if (!instance.material || instance.mesh.isNull()) {
             continue;

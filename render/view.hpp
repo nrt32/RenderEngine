@@ -199,4 +199,7 @@ class View {
 /// Alias for grep distinctness where both scene::View and render::View are in scope (broker ACL).
 using ReView = View;
 
+const std::vector<ReLight>* currentViewLights() noexcept;
+void setCurrentViewLights(const std::vector<ReLight>* lights) noexcept;
+
 } // namespace re::render

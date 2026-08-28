@@ -53,6 +53,12 @@ data::Result<void> View::ensureTarget() {
     return data::Result<void>(data::value);
 }
 
+namespace {
+thread_local const std::vector<ReLight>* t_currentLights = nullptr;
+} // namespace
+const std::vector<ReLight>* currentViewLights() noexcept { return t_currentLights; }
+void setCurrentViewLights(const std::vector<ReLight>* l) noexcept { t_currentLights = l; }
+
 data::Result<void> View::render() {
     if (!target_.has_value()) {
         return data::makeError<void>(2, "View: target not created (call ensureTarget)");
@@ -65,17 +71,23 @@ data::Result<void> View::render() {
     // View is composition owner: it clears exactly once here, layers never clear.
     // 2 layers sharing viewport within same GL context issue 1 glViewport (dedup
     // via the global current's cache). Per-frame local ctx instances deleted.
+    // T15: publish per-View lights to the thread-local currentViewLights slot
+    // before the drawLayer loop so MeshRenderer can forward the world-space
+    // dirWS to uLightDir once per View (ViewSynchronizer per-field lightsGen
+    // already cached the ReLight vector; empty keeps fixed headlight).
     auto& ctx = core::REContext::current();
     ctx.beginPass(&target_->framebuffer(), target_->width(), target_->height(),
                   clearColor_.r, clearColor_.g, clearColor_.b, clearColor_.a,
                   depthTest_);
-
+    t_currentLights = &lights_;
     for (auto& item : items_) {
         auto res = item->drawLayer(camera_);
         if (res.failed()) {
+            t_currentLights = nullptr;
             return res;
         }
     }
+    t_currentLights = nullptr;
     return data::Result<void>(data::value);
 }
 

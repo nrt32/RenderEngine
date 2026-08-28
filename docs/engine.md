@@ -162,3 +162,32 @@ Until `T2` export lands, in-tree consumers link `re_engine`:
 ```cmake
 target_link_libraries(my_app PRIVATE re_engine)
 ```
+
+## Lights — minimal per-View surface (V5 T15, SPEC §12.3 — Phong-only non-goal preserved)
+
+`scene/light.hpp` `re::scene::Light` is the single-struct value type (no `render/light/` hierarchy this iteration — one struct keeps `View::lights` trivial; `Point`/`Spot` remain spec-deferred per §12.3). `View::lights` is `vector<Light>` inline — empty vector = **fixed headlight preserved** (`max(dot(n,(0,0,1)),0)` in `render/shaders/mesh_opaque.frag.glsl` with `uLightDir=(0,0,1)`), so all `FR-render.*` gates stay byte-identical within 1/255 on `N>=3` runs; a mesh rendered with `lights=={}` is pixel-identical to the historical Phong headlight path. `ViewBuilder::withLights(lights)` and `Engine::setLights(viewId, lights)` publish the same value type end-to-end (the 80% viz case): `scene::Light{Directional, dir{-1,-1,-1}}` → `broker::LightMapper` world-space forwarding (normalizes `dir` to `dirWS`, `SPEC §12.5` single responsibility is translation, not view-space multiplication) → `render::ReLight` (`render/light.hpp` uniform-ready) uploaded once per `View` before the `drawLayer` loop via `ViewSynchronizer` per-field `lightsGen` cache (one upload per view, not per item, `SPEC §10.4`). `broker/light_mapper.hpp` is the single Directional minimal path; `Point`/`Spot` fields are carried but unused this iteration (stretch).
+
+`Engine` facade:
+
+```cpp
+re::viz::Engine e;
+auto id = *e.addMesh("data/meshes/bunny.obj", I, mat);
+re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
+cam.setPerspective(60, 1, 0.1f, 10.0f);
+e.setView({{0,0,800,600}, cam, {id}}); // creates view id 1 with headlight
+re::scene::Light l; l.type = re::scene::LightType::Directional; l.dir = glm::vec3(-1,-1,-1);
+e.setLights(e.views().front().id, {l}); // one Directional shifts diffuse ≥5/255 deterministically
+e.render(fb);
+```
+
+`SceneViewBuilder` chaining:
+
+```cpp
+auto view = re::scene::SceneViewBuilder{1, {0,0,800,600}}
+                .withCamera(cam).withItems({id}).withLights({l}).build();
+e.setView(view);
+```
+
+Gate: `e.setLights(viewId, {Directional dir{-1,-1,-1}})` renders within 1/255 of direct `scene::View::setLights` + `broker::ViewSynchronizer` path (`N>=3` offscreen parity, analytic not `>0`); empty preserves headlight pixel, one Directional shifts `diffuse` ≥5/255 at the analytic center probe (front-facing `n=(0,0,1)` with headlight shade 1.0 vs `normalize(-1,-1,-1)` shade 0.0 → baseColor `0.85→0.00` delta `217` >>5). `grep -c "class Light" scene/light.hpp ==1` and `grep -c "setLights" include/render_engine/engine.hpp ==1` (analytic `==1`, not `>=1`).
+
+Keep `render::IMaterial→PhongMaterial` single path; this task only wires the value type end-to-end for the 80% viz case — no new `render/light/` hierarchy, no PBR.

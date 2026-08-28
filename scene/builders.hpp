@@ -72,6 +72,11 @@ class SceneViewBuilder {
         return *this;
     }
 
+    SceneViewBuilder& withLights(std::vector<Light> lights) noexcept {
+        view_.setLights(std::move(lights));
+        return *this;
+    }
+
     /// One call live-dims update — replaces the former per-sample helper.
     ///
     /// Sets rect to {0,0,width,height} and re-derives camera perspective from stored framing at aspect `width/height` (clamped degenerate dims → 1, same rule as app::aspectFromDims). Change-guarded so same-size reapplication is free. This is the sole helper definition (the 6 private duplicates in samples are removed, T7 gate expects single helper in this builder, not 6 copies).

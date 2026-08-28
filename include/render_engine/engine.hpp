@@ -32,6 +32,7 @@
 #include "io/mesh/obj_mesh_loader.hpp"
 #include "io/volume/nrrd_volume_loader.hpp"
 #include "scene/camera.hpp"
+#include "scene/light.hpp"
 #include "scene/material_desc.hpp"
 #include "scene/object.hpp"
 #include "scene/store.hpp"
@@ -200,6 +201,24 @@ class Engine {
     }
     void setViews(std::span<const ::re::scene::View> views) {
         views_.assign(views.begin(), views.end());
+    }
+
+    /// Publish per-View lights through the facade — mirrors View light setter
+    /// bumping lightsGen/generation exactly when the value changes (SPEC §12.3,
+    /// TASKS T15 — empty lights = fixed headlight preserved, one Directional
+    /// shifts diffuse ≥5/255 deterministically; non-empty via LightMapper to
+    /// ReLight upload via ViewSynchronizer per-field cache before drawLayer).
+    void setLights(uint64_t viewId, std::vector<::re::scene::Light> lights) {
+        for (auto& v : views_) {
+            if (v.id == viewId) {
+                if (v.lights != lights) {
+                    v.lights = std::move(lights);
+                    ++v.lightsGen;
+                    ++v.generation;
+                }
+                return;
+            }
+        }
     }
 
     /// Single-site helper that centralizes the Rect + Camera ceremony every

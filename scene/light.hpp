@@ -16,7 +16,7 @@
 namespace re::scene {
 
 /// Light type (closed set of three kinds — Directional, Point, Spot — chosen as a closed variant per the material/light OCP discussion that keeps the type set small and operations visitor-based; the hierarchy stays spec-only until Phong-only is promoted, so this enum is the stable discriminant for both app and RE sides, SPEC §12.3).
-enum class LightType : uint8_t {
+enum class  LightType : uint8_t {
     Directional = 0,
     Point = 1,
     Spot = 2,
@@ -28,8 +28,9 @@ enum class LightType : uint8_t {
 /// Spot carries pos+dir+cone angles; Point carries pos+radius+attenuation;
 /// Directional carries dir only — unused fields are ignored per type but kept
 /// for uniform struct size (no variant this iteration — one struct keeps
-/// View::lights vector trivial).
-struct Light {
+/// View lights vector trivial via single aggregate).
+class Light {
+   public:
     LightType type{LightType::Directional};
     glm::vec3 pos{0.0f, 0.0f, 5.0f};     ///< World-space position (Point/Spot).
     glm::vec3 dir{0.0f, 0.0f, -1.0f};    ///< World-space direction (Directional/Spot), normalized.
