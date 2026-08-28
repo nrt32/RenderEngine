@@ -30,15 +30,21 @@
   `(data::Error::domain, data::Error::code)`: numeric code ranges repeat
   across producers (the three io/ loaders all start at `FileOpen == 1`), so
   each producer stamps its `data::ErrorDomain` (`ImageIo`/`MeshIo`/
-  `VolumeIo`/`Shader`/`Core`/`Utils`/`Render`/`Broker`/`Scene`) and
-  consumers disambiguate structurally — never by parsing message strings
-  (SPEC §6 "Error codes carry their domain"; landed T22). Dereferencing a
-  failed `Result` asserts in debug builds (abort, never an exception);
-  release builds keep the documented UB, so callers branch on `ok()` /
-  `failed()` first. The dead `hasValue()` accessor (could never differ from
-  `ok()`) was removed in T22; monadic `map()`/`andThen()` helpers collapse
-  sequential fallible-call chains (e.g. the MPR bridge's
-  sync → renderAll → presentAll).
+  `VolumeIo`/`Shader`/`Core`/`Utils`/`Render`/`Broker`/`Scene` + generic
+  `Io` alias for `MeshIo`) and consumers disambiguate structurally — never by
+  parsing message strings (SPEC §6 "Error codes carry their domain"; landed
+  T22). Dereferencing a failed `Result` asserts in debug builds (abort, never
+  an exception); release builds keep the documented UB, so callers branch on
+  `ok()` / `failed()` first. The dead `hasValue()` accessor (could never
+  differ from `ok()`) was removed in T22; monadic `map()`/`andThen()` helpers
+  collapse sequential fallible-call chains (e.g. the MPR bridge's
+  sync → renderAll → presentAll). **T10 ergonomics:** `Result<T>` adds
+  `map(F)`, `andThen(F)` (alias `and_then` per std), `orElse(F)` (error
+  recovery `Error → Result<T>`), `valueOr(default)` (value or fallback), plus
+  macros `RE_TRY(expr)` / `RE_EXPECT(expr)` that early-return the enclosing
+  `Result` error with `__FILE__:__LINE__` provenance appended to the message
+  (no exceptions, `[[nodiscard]]` preserved, debug-trap on failed `operator*`
+  unchanged).
 - **Logging** — **spdlog** (pinned) provides trace/debug/info/warn/error/fatal;
   no custom logging framework. Logging-discipline guardrail still applies: no
   raw `printf`/`std::cout` for diagnostics.
