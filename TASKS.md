@@ -117,7 +117,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 > Archived draft `T1..T4` logic is preserved as `T8` (layering), `T3` (harness decoupling → `renderViews`/`FrameLoop`, supersedes draft T2), `T12` (FPS), `T9` (camera).
 > Follow-up gaps `G1–G6` (light minimal, mapper cache dedup, layer/technique orthogonality, depth default, sample split, naming sweep) are folded as `T15..T17` below — same R3/R4 regime, no new FRs.
 
-### T1: Engine facade — `viz::Engine` one-liner for visualization consumers (P0)
+## T1: Engine facade — `viz::Engine` one-liner for visualization consumers (P0)
 
 **D** — Publish `include/render_engine/engine.hpp` (`viz::Engine` or `re::viz::Engine`) that hides `SceneStore`/`Broker`/`AppContext`/`TranslateContext`/`CompositeKey`/`GenerationTracker` for the 80% case. Facade owns an `AppContext` + `SceneStore` internally and exposes: `Result<ObjectId> addMesh(path, mat4, Material)`, `addVolume(path/tf, mat4)`, `setView({rect,camera,ids})`, `Result<void> render(Framebuffer&)` / `render(windowFb)`, plus `appContext()`/`store()` accessors for advanced users (broker path stays). Single-site helper `Engine::createView` covers `fitPerspectiveViewToPixels` + `Rect` + `Camera` ceremony. No `CompositeKey` in public header.
 
@@ -127,7 +127,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green (`N>=3` for `Engine` vs direct pixel gate), audit green, `Engine` header in `include/` + `docs/engine.md` facade docs.
 
-### T2: CMake install/export — make RE a real library (P0)
+## T2: CMake install/export — make RE a real library (P0)
 
 **D** — `CMakeLists.txt` + `cmake/RenderEngineConfig.cmake.in`: `install(TARGETS re_core re_scene re_broker re_render re_app EXPORT RenderEngineTargets)`, `write_basic_package_version_file` (semver 0.1), `install(EXPORT ...)`, `install(DIRECTORY include/ ...)`, `install(DIRECTORY scene/ TYPE INCLUDE FILES_MATCHING *.hpp)` only where needed. Privatize `re_core`'s `glad`/`glfw` linkage (`core/CMakeLists.txt:27` `PUBLIC` → `PRIVATE` with explicit downstream `target_link_libraries(render PRIVATE glad)` where `REContext` body needs it) so header firewall T5 is not leaked via `INTERFACE`. `FetchContent` deps become `find_package` fallbacks (not forced `FetchContent` in consumer). `re_project_sanitizers` `INTERFACE` not installed on Release.
 
@@ -135,7 +135,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green, audit green, `cmake --install` reproduces.
 
-### T3: Harness decoupling — `Window` + `ImGuiOverlay` + `FrameLoop` + bounded-run discipline (P0, supersedes draft T2 — note: draft was P2, now P0 because `T4` offscreen depends on it)
+## T3: Harness decoupling — `Window` + `ImGuiOverlay` + `FrameLoop` + bounded-run discipline (P0, supersedes draft T2 — note: draft was P2, now P0 because `T4` offscreen depends on it)
 
 **D** — Split `app/sample_harness.*` (`SampleHarness::run(maxFrames)` `app/sample_harness.cpp:67`) into: `app/frame_loop.hpp` (`FrameLoop{ poll(), render(), present() }` free function `Result<void> renderViews(span<View>, SceneStore&, Framebuffer&)` callable without `Window`), `app/imgui_overlay.hpp` (optional overlay, not owned by loop), `core/window.hpp` stays. Keep **bounded `run(maxFrames)` as the sole public contract**; add `runInteractive()` as opt-in helper only — `runSample` dispatches via `sampleMaxFrames(kDefaultFrames)` (`app/sample_harness.hpp:191`) when `RE_SAMPLE_MAX_FRAMES` is set (CI bounded) and **defaults to bounded `kDefaultFrames` (e.g., 20) when the var is unset** — interactive `until shouldClose()` only via explicit `runInteractive()` opt-in. Samples' `main()` keeps bounded dispatch; harness never hangs CI when env var is forgotten (bounded default, not interactive). Remove `SampleHarness::initImGui` hard-coupling (`sample_harness.cpp:29` → overlay). This is the **prerequisite for T4 offscreen** — `renderViews` is the window-free render helper that `T4:renderOffscreen` will reuse.
 
@@ -143,7 +143,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green (`N>=3` for parity gate), audit green.
 
-### T4: Headless/offscreen public API — server-side visualization (P0, depends on T3)
+## T4: Headless/offscreen public API — server-side visualization (P0, depends on T3)
 
 **D** — Promote `utils::OffscreenContext` (`utils/offscreen_context.hpp`) + `core::loadCoreGl` + `REContext::current().readRgba8` to public `core/offscreen.hpp` + `render/offscreen.hpp` API: `Result<Image> renderOffscreen(uint32_t w, uint32_t h, span<View> views, SceneStore& store)` (creates hidden context, owns `GlfwRuntime` ref, creates `View` FBOs, calls `T3:renderViews` + `ViewSynchronizer`+`ViewCompositor` without a `Window`, reads back via `REContext`). No `core/window.hpp` include in this path. `Window` remains for interactive samples; offscreen path is window-free. Depends on `T3:frame_loop` — fresh session for `T4` has proven `renderViews` to reuse.
 
@@ -151,7 +151,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green (`N>=3`), audit green, no raw `glReadPixels` outside `core/re_context.cpp` (`grep -R glReadPixels -- core/ ==1, -- render/ ==0, -- utils/ ==0`).
 
-### T5: Collapse mesh-backed object types — `MeshObject` + `GeometryKind` (P0)
+## T5: Collapse mesh-backed object types — `MeshObject` + `GeometryKind` (P0)
 
 **D** — 11 byte-identical headers (`scene/objects/cube_object.hpp` vs `sphere_object.hpp` diff 8 lines; pattern `AssetRef<Mesh> mesh; mat4 transform; MeshMaterialDesc presentation;` `scene/objects/*.hpp:36-40`) collapse to one `MeshObject` carrying `GeometryKind {Mesh, Cube, Sphere, Cylinder, Torus, Cone, Arrow, Grid, Axes, Capsule, PointCloud, Teapot}` or `ProceduralMesh` factory, plus the core six technique kinds (`Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour`). Keep `SceneKind` for technique dispatch only (6 values). `SceneFactory` + `REGISTER_SCENE_OBJECT` stays for truly new techniques (e.g., `StreamlineObject`), not for data-driven mesh variations. `SceneStore` 17 partitions → 6 partitions (next task `T6` tightens further to single-map — see T6). Migrate `broker/*ObjectMapper` for merged kinds to one mapper. **Sizing note (spec-review #12):** `T5` reduces 17→6 partitions but does not yet single-map; `T6` completes single-map — the intermediate 6-partition state is gated (see T5/G) so no churn vacates T5's gate. Sequential rewrite is intentional SRP: `T5` owns `GeometryKind` collapse, `T6` owns `store` template.
 
@@ -159,7 +159,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green (`N>=3` for parity), audit green.
 
-### T6: Store consolidation — single-map + `kindIndex_` (P0, depends on T5)
+## T6: Store consolidation — single-map + `kindIndex_` (P0, depends on T5)
 
 **D** — Replace remaining 6 hand-written `unordered_map<uint64_t, unique_ptr<ISceneObject>> meshObjects_ …` (`scene/store.hpp:331-351` after `T5`'s 17→6) + remaining `add*/remove*/get*` families with one `unordered_map<Id, unique_ptr<ISceneObject>> objects_` + `unordered_map<SceneKind, unordered_set<Id>> kindIndex_` (already existing `scene/store.hpp:357` secondary index). Provide templated `addObject<T>(T) -> Id`, `get<T>(Id)`, `remove(Id)` plus `objectsOfKind(SceneKind)` `O(kind)` via index (already `scene/store.hpp:126`). Remove 12 `*Count()` hand copies (`scene/store.hpp:186-202`) — keep `count(SceneKind)` + `totalObjectCount()`. One SRP template, not hand-copied families. **Builds on `T5`'s 6-partition gate** — `T5` gate's `Broker::registeredTypes()==6` remains true; `T6` gate checks single-map (`grep -c "meshObjects_\|sphereObjects_" ==0`).
 
@@ -167,7 +167,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green, audit green; `grep -c "meshObjects_" scene/store.hpp ==0` still holds after `T7` (store single-map preserved — `T7` additive `loadMesh` only).
 
-### T7: Loader facade + Scene/View builders — kill sample boilerplate (P1, 25–35 line ceremony, depends on T5+T6)
+## T7: Loader facade + Scene/View builders — kill sample boilerplate (P1, 25–35 line ceremony, depends on T5+T6)
 
 **D** — `scene/store.hpp`: `Result<ObjectId> loadMesh(path)` / `loadVolume(path)` that does `io::load*` + `register*Asset` + `add*Object` atomically (today `load → shared_ptr → MeshObject → add` 4 steps, 5/6 samples duplicate). Add `scene/builders.hpp`: `SceneViewBuilder{ ViewId, Rect }.withCamera(cam).withItems(ids).withClear(color).build() -> View` and `Objects::mesh(asset, mat4, mat) -> MeshObject` helpers; `PerspectiveFraming` (`app/sample_harness.hpp:83`) removed in favor of `Camera::perspectiveFromFraming(framing, aspect)` on `scene/camera.hpp`. `fitPerspectiveViewToPixels` (`app/sample_harness.cpp:169`) becomes `builder.applyLiveDims(w,h)` one call. **Depends on `T5` (`MeshObject{GeometryKind}`) + `T6` (single-map store) — builder targets `objects_` single-map API, not the deleted 17-partition API.**
 
@@ -175,7 +175,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green (`N>=3` for loader parity), audit green; additive `loadMesh`/`loadVolume` + `builders.hpp` only, single-map preserved.
 
-### T8: Simplified ordering — 8 layers + per-view override, technique priority orthogonal (P1, supersedes draft T1 64+deferred override, depends on T5+T6) — **split per Q1 per Sr. Architect: T8a ordering (this task) + T9 depth (next task, DepthConfig)**
+## T8: Simplified ordering — 8 layers + per-view override, technique priority orthogonal (P1, supersedes draft T1 64+deferred override, depends on T5+T6) — **split per Q1 per Sr. Architect: T8a ordering (this task) + T9 depth (next task, DepthConfig)**
 
 **D** — Replace draft `T1` 64-layer `Layer : uint8_t {L0…L63, Count=64}` + `LayerMask uint64_t` + deferred `layerOverrides` (`TASKS.md:98` "duplicate entry" workaround) with **8 layers** `enum class Layer : uint8_t { Background=0, Volume=1, VolumeSlice=2, Plane=3, Mesh=4, MeshSlice=5, Contour=6, OverlayTop=7, Count=8 }` and `using LayerMask = uint32_t` (`1u<<layer`, future-proof, `0xFFu`). Every `SceneObject` (`MeshObject` etc. via `ObjectBase`) carries `Layer layer{Mesh}` + `setLayer()` bumping `generation`/`layerGen` (`FieldId::Layer` + `CompositeKey` includes `layer/mask`). `scene::View` carries `LayerMask layerMask{0xFFu}` + `setLayerMask()` + **`unordered_map<ObjectId, Layer> layerOverrides`** from day one (per-view override, `O(1)` lookup). `ViewSynchronizer` groups by `(layer, techniquePriority)` ascending — **Layer is visual stacking, TechniquePriority `Volume(0)…Contour(5)` is a separate orthogonal sort key** (G3 amendment): default is `Volume(0)→VolumeSlice(1)→Plane(2)→Mesh(3)→MeshSlice(4)→Contour(5)` but a per-view override can place `Contour` under `Mesh` without touching `Mesh.layer`. Per-view `layerMask & (1u<<layer)` culls without removing objects. **Depth is NOT in this task — see T9 `DepthConfig` (Sr. Architect: View owns DepthConfig value object, not raw bool on View, Renderer never allocates FBO).** Default stays color-only for deterministic llvmpipe gates (see T9).
 
@@ -193,7 +193,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green (`N>=3` depth gate, `GALLIUM_DRIVER=llvmpipe` `MESA_GL_VERSION_OVERRIDE=4.6`), audit green, `docs/engine.md` depth default note + `tools/audit.rules` `engine_depth_default`.
 
-### T9: Camera controller extraction — `scene/CameraController` pure math (P1, supersedes draft T4 `app/CameraController`)
+## T9: Camera controller extraction — `scene/CameraController` pure math (P1, supersedes draft T4 `app/CameraController`)
 
 **D** — Extract pure math `scene/camera_controller.hpp` `CameraController` (`onMouseDrag(dx,dy, button, modifiers) -> CameraDelta`, `onScroll(delta)`, `onKey`) with no `glfw*`/`ImGui` includes; `app/glfw_camera_interactor.hpp` adapter polls `glfwGetMouseButton/CursorPos/Scroll` each frame before `renderFrame` and forwards to controller when `!ImGui::GetIO().WantCaptureMouse` (`TASKS.md:126` `WantCaptureMouse` guard), then calls `View::mutateCamera([&](Camera& c){ c.rotate(...); })` so `viewGen` bumps and broker re-translates only dirty fields. `CameraBindings{ rotateButton=LMB, panButton=RMB, zoomButton=MMB/wheel, modifiers, rotateSpeed, panSpeed, zoomSpeed }` plain struct stays. Wired in `mesh/slice/volume/oit/mpr-3D`; plane + MPR 2D orthographic skip.
 
@@ -201,7 +201,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green (`N>=3` for controller parity), audit green, `scene/` disposition still `render/`-free.
 
-### T10: Result ergonomics — `map/andThen` + `RE_EXPECT` (P1)
+## T10: Result ergonomics — `map/andThen` + `RE_EXPECT` (P1)
 
 **D** — `data/result.hpp:83` `Result<T,E>` today has UB on failed deref and verbose `if(failed()) return` ladders (`mpr_sample.cpp:269` triple). Add monadic `map(F)`, `andThen(F)`, `orElse`, `valueOr(default)` plus `RE_EXPECT(expr)` / `RE_TRY` macro that early-returns `Result` error with `__FILE__:__LINE__` provenance. Keep `[[nodiscard]]` and debug-trap on failed `operator*` (already T22). Document that `ErrorDomain` disambiguates numeric codes (already `data/result.hpp` domain tag).
 
@@ -209,7 +209,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green, audit green, no exception path introduced.
 
-### T11: Volume large-data — tiling/bricking + `core::Caps` (P1, depends on `core::Caps` wrapper, Sr. Architect: No cap streaming via `core::Caps`)
+## T11: Volume large-data — tiling/bricking + `core::Caps` (P1, depends on `core::Caps` wrapper, Sr. Architect: No cap streaming via `core::Caps`)
 
 **D** — **Volume bricking / cap lift (No cap streaming per Q4):** `io/volume/nrrd_volume_loader.cpp` `≤128³` gate is test convenience, not product limit; replace hard window with **No cap streaming** — any dims via `core::Caps` tiled/downsampled streaming (see `docs/spec/assets.md:14` `FR-io.2` `goals.md:50` `nfr.md:26`): `render/volume_renderer.cpp` checks `maxTexture3DSize` via **`core::Caps` `core/caps.hpp` `Caps{uint32_t maxTexture3DSize; bool ssboAtomics;}` cached `core::caps()`** ( `core/caps.cpp` calls `glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE)` / `glGetString` once until RHI lands, `TODO(RHI)` → `IRHIContext::capabilities()` after T10 `core/rhi/` per `docs/spec/nfr.md:25` `modules.md:34` ) and either downsamples or tiles `Texture3D` (tiled `1/255` within reference, not `BudgetExceeded` for `>128³` alone — `BudgetExceeded` only when `core::Caps` probe fails). **Depends on: `core::Caps` wrapper (no `IRHIContext` yet, `IRHIContext` is `(stretch)` T10; `T11` uses `TODO(RHI)` adapter).** **Sizing:** `T11` single phase ~60 lines loader + caps plumbing, single session.
 
@@ -225,7 +225,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green (`N>=3` weighted-blended 1/255), audit green, `ssboAtomics` via `core::Caps`.
 
-### T12: FPS standalone + draw-header cleanup (P2 batch, depends on T2)
+## T12: FPS standalone + draw-header cleanup (P2 batch, depends on T2)
 
 **D** — **FPS:** Move `app/FpsCounter` (`TASKS.md:118` draft `app/FpsCounter` owned by `SampleHarness`) to `utils/fps_counter.hpp` `utils::FpsCounter` standalone (`std::chrono::steady_clock`, 0.5s window, `tick()`, `fps()`, `ms()`); `app/sample_harness` queries it. **Draw header:** delete legacy `core/draw.hpp` vs `core/re_context.hpp` duality (`core/draw.hpp:1` façade delegating to `REContext::current()` vs `core/re_context.hpp:182 beginPass` single ledger) — keep one `core/re_context.hpp` header, `core/draw.hpp` becomes alias include or deleted. `REContext` single-writer discipline already T4, header duality remains. **Depends on `T2` (PRIVATE glad firewall) — preserves `grep PRIVATE glad` after header sweep.**
 
@@ -233,7 +233,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green, audit green; `grep "PRIVATE" core/CMakeLists.txt | grep glad ==1` firewall not regressed (T2 `PUBLIC→PRIVATE` preserved) && `grep -c "add_compile_options.*-fsanitize" ==0` still.
 
-### T13: Minimal example + versioned serialize docs (P2 batch, depends on T1+T2)
+## T13: Minimal example + versioned serialize docs (P2 batch, depends on T1+T2)
 
 **D** — `examples/minimal.cpp` (20 lines) using `viz::Engine` facade (`T1`): `Engine e; auto id=e.addMesh("data/meshes/bunny.obj"); e.setView({{0,0,800,600}, camera, {id}}); e.render(windowFb);` — the first file a visualization project copies. `README.md` "Minimal example" section + `docs/engine.md` full facade docs. `SceneStore::serialize()` stabilization: `MaterialDesc`/`LightDesc` JSON via `nlohmann/json` (`CMakeLists.txt:117`) already, but `View` persistence via `CompositeKey{Version,LayoutId,ViewId,Type,Gen,Hash}` (`docs/spec/persistence.md:36`) not serialized — document versioned `SceneStore::serialize()` JSON with `Version` migrations and `View` wire format. **Depends on `T1` (facade header) + `T2` (`cmake --install` + `RenderEngineConfig.cmake` for `find_package` probe).**
 
@@ -241,7 +241,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green, audit green, `examples/minimal` built by T2 installed config.
 
-### T14: Drift guard — sample line count + `scene/objects` duplicate ratio (P2, audit, depends on T5+T7)
+## T14: Drift guard — sample line count + `scene/objects` duplicate ratio (P2, audit, depends on T5+T7)
 
 **D** — `tools/audit.rules`: `no_sample_bloat` (`forbid_grep` on `app/*_sample.cpp` line count >80 via `wc` check in `tools/audit.sh` or `max_lines` audit) and `no_object_duplicate` (`forbid_grep` on `scene/objects/*.hpp` duplicate ratio >10% via `tools/audit.sh` `diff` check). Keeps `app/mesh_sample.cpp` 160→80 and 11 identical object headers from re-introducing debt after T5/T7. `app/mpr_slice.hpp` 230-line mix (layout+geometry+oracle) split guard via `max_lines` per file (`mpr_slice` further split via T7/T8 builders — if `mpr_sample.cpp` cannot reach 80 alone, waist gauge is `mpr_slice.hpp` ≤100). **Depends on `T5` (collapse to `MeshObject`) + `T7` (builders trim `mesh_sample.cpp` to ≤80).**
 
@@ -249,7 +249,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green, audit green (new rules enforced).
 
-### T15: Minimal light API for visualization consumers (P2, gap G1 — reprioritized from P1 to P2 per spec-review #3 to keep priority monotonic P0→P1→P2; depends on T1+T8, independent of T12-T14)
+## T15: Minimal light API for visualization consumers (P2, gap G1 — reprioritized from P1 to P2 per spec-review #3 to keep priority monotonic P0→P1→P2; depends on T1+T8, independent of T12-T14)
 
 **D** — Even though `SPEC §1` keeps Phong-only + fixed headlight as non-goal (PBR/`Slice`/`Contour`+`ILight` deferred), visualization reuse needs a *minimal per-View light surface* without promoting the full hierarchy. Publish `scene/light.hpp` `Light` (already `View::lights` `vector<Light>` `scene/view.hpp:61`) through `Engine`: `Engine::setLights(ViewId, vector<Light>)` and `ViewBuilder::withLights(lights)`; document that empty `lights` = existing fixed headlight/unlit 2D preservation (FR-render gates stay byte-identical), non-empty → `broker/light_mapper.hpp` → `render/light.hpp` `ReLight` upload once per `View` before `drawLayer` loop (already `ViewSynchronizer` path). No new `render/light/` hierarchy this iteration — one struct keeps `View::lights` trivial. Keep `render::IMaterial→PhongMaterial` single path; this task only wires the value type end-to-end for the 80% viz case.
 
@@ -257,7 +257,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green (`N>=3` light parity), audit green, `docs/engine.md` lights section added; `include/render_engine/engine.hpp` incremental — `T1` facade API (`class Engine`==1, `addMesh==1`, `setView`/`render`) still builds (`grep -c "class Engine" include/render_engine/engine.hpp ==1 && grep -c "addMesh" include/render_engine/engine.hpp ==1`).
 
-### T16: Mapper cache consolidation — `CachedMapperBase` (P2, gap G2 — reprioritized from P1 to P2 per spec-review #3 to keep priority monotonic P0→P1→P2; depends on T5 broker inventory, independent of T12-T14)
+## T16: Mapper cache consolidation — `CachedMapperBase` (P2, gap G2 — reprioritized from P1 to P2 per spec-review #3 to keep priority monotonic P0→P1→P2; depends on T5 broker inventory, independent of T12-T14)
 
 **D** — Every `*ObjectMapper` (`broker/mesh_object_mapper.hpp:82`, `teapot_object_mapper.hpp:52`, `volume_object_mapper.hpp`, …) repeats `struct Entry{uint64_t generation; ReType instance;}; unordered_map<uint64_t,Entry> cache_;` + `mapCached` generation short-circuit + `invalidate(id)`. Extract `broker/cached_mapper_base.hpp` `template<AppT,ReT> class CachedMapperBase : public ICachedMapper<AppT,ReT>` that owns `unordered_map<uint64_t,Entry> cache_` + `mapCached`/`invalidate` + `clear()` and requires derived only to implement `map()`. Migrate all cached object mappers to inherit it — one definition, no per-file hand copy. Keeps `PlaneMapper`/`PlaneObjectMapper` stateless `IMapper` (ISP) untouched.
 
@@ -265,7 +265,7 @@ All 19 review follow-up tasks (T1–T19, dependency-ordered) have been completed
 
 **G** — suite green, audit green.
 
-### T17: Depth default & naming sweep + doc polish (P2, gaps G4/G6, depends on T8b+T14)
+## T17: Depth default & naming sweep + doc polish (P2, gaps G4/G6, depends on T8b+T14)
 
 **D** — **Depth default (G4):** document divergence: low-level `render::View::setDepthTest` / `scene::View::setDepthTest` default stays `false` (color-only, deterministic llvmpipe gates), `Engine` facade (`T1`) defaults `depthTest=true` for mesh-containing `createView`/`setView` (viz correctness). Add `tools/audit.rules` guard `engine_depth_default` (`require_grep` that `Engine` wiring sets `DepthConfig{true}` / `setDepthConfig(true)` for mesh layers). **Naming sweep (G6):** `docs/spec/*.md` + task comments still cite `AppMeshObject` — sweep to `scene::MeshObject` (`re::scene` namespace is prefix per `NAMING_CONVENTIONS.md §6`); `PerspectiveFraming` already removed T7, ensure no `App` prefix remains outside `broker/README.md` ACL wording. **Doc polish:** `README.md` module list add `scene/ broker/ utils/ test_utils/` (already `AUDIT_SOURCE_DIRS`), `docs/engine.md` add depth default note.
 
