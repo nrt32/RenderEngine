@@ -177,8 +177,8 @@ Q36/Q47 `nlohmann/json` 3.11.x — not `glaze`):
       "ClearColor": [0.10,0.10,0.12,1.0],
       "DepthTest": false,
       "Lights": [],
-      "LayerMask": 255,
-      "LayerOverrides": {}
+      "Layer": 0,
+      "Priority": 0
     }
   ],
   "Objects": [
@@ -220,7 +220,7 @@ Why `View` was not serialized before T13: `MaterialDesc`/`LightDesc` already had
 JSON via `nlohmann/json`, but `View` persistence via the content-addressed
 `CompositeKey` was in-memory only; the T13 stabilization documents the `View`
 wire (`Rect`, `Camera`, `CompositeKey`, `Plane`, `ItemIds`, `ClearColor`,
-`DepthTest`, `Lights`, `LayerMask`, `LayerOverrides`) and the `Version` migration
+`DepthTest`, `Lights`) and the `Version` migration
 contract so future `Version` bumps have a pinned format. `SceneStore::serialize()`
 lives in `scene/store.hpp` (`std::string serialize() const` returning JSON text)
 and `scene/store.cpp` (`deserialize` static), header-only `CompositeKey` stays
