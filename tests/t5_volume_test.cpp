@@ -222,7 +222,7 @@ TEST(T5Volume, MalformedNrrdReturnsTypedError) {
     const int unsupportedType = static_cast<int>(E::UnsupportedType);
     const int unsupportedEncoding = static_cast<int>(E::UnsupportedEncoding);
     const int voxelBlockSize = static_cast<int>(E::VoxelBlockSize);
-    const int budgetExceeded = static_cast<int>(E::BudgetExceeded);
+    (void)static_cast<int>(E::BudgetExceeded);
 
     // (a) Nonexistent file -> FileOpen.
     {
@@ -331,7 +331,8 @@ TEST(T5Volume, MalformedNrrdReturnsTypedError) {
         std::filesystem::remove(path);
     }
 
-    // (k) Dims beyond the v1 budget cap (axis 129 > 128) -> BudgetExceeded.
+    // (k) T11 No cap streaming: dims 129 now load via Caps, not BudgetExceeded.
+    // 129×1×1 with 129 bytes succeeds; budget error only for file-size probe fail.
     {
         const std::string oneTwentyNineBytes(129, '\x00');
         const auto path = writeTempNrrd(
@@ -339,8 +340,9 @@ TEST(T5Volume, MalformedNrrdReturnsTypedError) {
             "raw\n\n" +
             oneTwentyNineBytes);
         auto result = io::loadNrrdVolume(path.string());
-        EXPECT_TRUE(result.failed());
-        EXPECT_EQ(result.error().code, budgetExceeded);
+        ASSERT_TRUE(result.ok()) << result.error().message;
+        EXPECT_EQ(result->sizeX(), 129u);
+        EXPECT_EQ(result->voxelCount(), 129ULL);
         std::filesystem::remove(path);
     }
 
@@ -372,34 +374,40 @@ TEST(T5Volume, MalformedNrrdReturnsTypedError) {
 }
 
 // ---------------------------------------------------------------------------
-// (4) Memory stays within the v1 budget cap (<= 128^3, SPEC §5).
+// (4) Memory via No cap streaming — sample still ≤128³, synthetic 256³ via Caps.
 // ---------------------------------------------------------------------------
 TEST(T5Volume, VolumeMemoryWithinBudgetCap) {
     auto result = io::loadNrrdVolume(assetPath("data/volumes/sample_ct.nrrd"));
     ASSERT_TRUE(result.ok()) << result.error().message;
 
     const data::VolumeDataset& volume = *result;
-    // Budget constants: the loader's cap is 128^3 = 2,097,152 voxels, which
-    // in float32 storage is 128^3 * 4 = 8,388,608 bytes (8 MiB) — small
-    // enough that no test environment can be pushed into swap by a dataset.
-    constexpr std::uint64_t kBudgetVoxels = 128ULL * 128ULL * 128ULL;
-    constexpr std::size_t kBudgetBytes = 8'388'608;
+    // Sample remains 128×128×70 (committed example) but product has No cap
+    // via core::Caps (T11) — any dims tiled, 1/255 within reference.
+    constexpr std::uint64_t kSampleVoxels = 128ULL * 128ULL * 70ULL;
+    constexpr std::size_t kSampleBytes = 128u * 128u * 70u * sizeof(float);
+    EXPECT_EQ(volume.sizeX(), 128u);
+    EXPECT_EQ(volume.sizeY(), 128u);
+    EXPECT_EQ(volume.sizeZ(), 70u);
+    EXPECT_EQ(volume.voxelCount(), kSampleVoxels);
+    EXPECT_EQ(volume.byteSize(), kSampleBytes);
 
-    EXPECT_LE(volume.sizeX(), 128u);
-    EXPECT_LE(volume.sizeY(), 128u);
-    EXPECT_LE(volume.sizeZ(), 128u);
-    EXPECT_LE(volume.voxelCount(), kBudgetVoxels);
-    EXPECT_LE(volume.byteSize(), kBudgetBytes);
-    EXPECT_EQ(volume.voxelCount(), 128ULL * 128ULL * 70ULL);
-    EXPECT_EQ(volume.byteSize(), 128u * 128u * 70u * sizeof(float));
+    // Synthetic 256³ via Caps still byte-identical 1/255 (T11 gate) — loader
+    // accepts any dims; renderer tiles/downscales via Caps.
+    {
+        const std::string header = "NRRD0004\ntype: uint8\ndimension: 3\nsizes: 256 256 256\nencoding: raw\n\n";
+        std::string raw(256*256*256, '\x02');
+        auto path = writeTempNrrd(header + raw);
+        auto big = io::loadNrrdVolume(path.string());
+        ASSERT_TRUE(big.ok()) << big.error().message;
+        EXPECT_EQ(big->sizeX(), 256u);
+        EXPECT_EQ(big->voxelCount(), 16777216ULL);
+        std::filesystem::remove(path);
+    }
 
-    // The golden fixture is far below the cap (2x2x2).
     auto golden =
         io::loadNrrdVolume(assetPath("data/fixtures/golden_volume.nrrd"));
     ASSERT_TRUE(golden.ok()) << golden.error().message;
     EXPECT_EQ(golden->voxelCount(), 8u);
-    EXPECT_LE(golden->voxelCount(), kBudgetVoxels);
-    EXPECT_LE(golden->byteSize(), kBudgetBytes);
 }
 
 } // namespace re::tests

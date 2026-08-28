@@ -19,19 +19,17 @@
 namespace re::io {
 namespace {
 
-// v1 memory budget cap and host file-size guard. The axis and voxel-count limits
-// (every axis <= 128, total voxels <= 128^3) keep the float32 storage at
-// <= 8 MiB and the worst-case raw block (double/int64 width 8) at 16 MiB.
-// The host file-size check guards the whole-file slurp that precedes header
-// validation: a hostile multi-gigabyte file would otherwise be read into RAM
-// before any typed error can fire, so file size is probed before the slurp and
-// compared against the derived ceiling (128^3 * max element width) and an
-// absolute cap with header slack, failing fast with BudgetExceeded and a warn log.
-constexpr std::uint32_t kMaxAxis = 128;
-constexpr std::uint64_t kMaxVoxels = 128ULL * 128ULL * 128ULL;
+// No cap streaming via core::Caps — any dims tiled/downsampled (SPEC §7 FR-io.2,
+// T11). The committed sample_ct.nrrd is example 128×128×70 ≤128³, but product
+// loader has no ≤128³ cap: any dims load and the renderer tiles via
+// core::Caps maxTexture3DSize (1/255 within reference). The host file-size
+// pre-probe guards the whole-file slurp against hostile multi-gigabyte files
+// without a hard dims window: it probes file size before slurp and compares
+// against a large derived ceiling (512³ * 8 + 64 KiB header slack) so a 256³
+// synthetic volume (16 MB uint8, 64 MB float, 134 MB double) passes while a
+// multi-GB hostile file fails fast with a typed error and warn log.
 constexpr std::uint64_t kHeaderSlackBytes = 64ULL * 1024ULL;
-constexpr std::uint64_t kMaxFileBytes =
-    kMaxVoxels * 8ULL + kHeaderSlackBytes;
+constexpr std::uint64_t kMaxFileBytes = 512ULL * 512ULL * 512ULL * 8ULL + kHeaderSlackBytes;
 
 // Element layout for one supported scalar type (from the NRRD "type:" field).
 struct ScalarInfo {
@@ -150,19 +148,20 @@ float decodeElement(const std::uint8_t* bytes, const ScalarInfo& info,
 
 data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     // Host file-size pre-probe before any allocation. The check uses the
-    // derived ceiling (worst-case raw block 128^3 * 8 for double/int64) plus
-    // header slack as absolute cap, so a hostile file of arbitrary size fails
-    // fast without a multi-megabyte slurp, while valid v1 volumes (even the
-    // largest committed sample at ~4.6 MiB) pass unchanged.
+    // derived ceiling (worst-case raw block 512^3 * 8 for double/int64) plus
+    // header slack as absolute cap, so a hostile multi-gigabyte file fails
+    // fast without a multi-megabyte slurp, while valid volumes (including
+    // 256³ synthetic, ~16 MB uint8 / 64 MB float) pass unchanged; this is
+    // the sole budget guard (No cap streaming per T11 — dims no longer cap).
     {
         std::error_code ec;
         const auto fileSize = std::filesystem::file_size(path, ec);
         if (!ec) {
             if (static_cast<std::uint64_t>(fileSize) > kMaxFileBytes) {
                 spdlog::warn(
-                    "NRRD loader: '{}' file size {} bytes exceeds v1 absolute "
-                    "cap {} bytes (derived ceiling 128^3 * 8 + {} header slack) "
-                    "— rejecting before slurp to avoid OOM (BudgetExceeded)",
+                    "NRRD loader: '{}' file size {} bytes exceeds absolute "
+                    "cap {} bytes (derived ceiling 512^3 * 8 + {} header slack) "
+                    "— rejecting before slurp to avoid OOM",
                     path, static_cast<std::uint64_t>(fileSize), kMaxFileBytes,
                     kHeaderSlackBytes);
                 return data::makeError<data::VolumeDataset>(
@@ -170,9 +169,9 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
                     static_cast<int>(VolumeLoadError::BudgetExceeded),
                     "NRRD loader: '" + path + "': file size " +
                         std::to_string(static_cast<std::uint64_t>(fileSize)) +
-                        " bytes exceeds the v1 absolute cap " +
+                        " bytes exceeds the absolute cap " +
                         std::to_string(kMaxFileBytes) +
-                        " bytes (128^3 * 8 + header slack, BudgetExceeded)");
+                        " bytes (512^3 * 8 + header slack)");
             }
         }
     }
@@ -354,20 +353,14 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
         }
     }
 
-    // --- v1 memory budget cap: every axis <= 128, total voxels <= 128^3 ------
-    // The cap keeps a worst-case volume at 128^3 * 4 = 8 MiB (float32), so
-    // test environments with modest RAM/VRAM can never be pushed into swap by
-    // a hostile header; larger datasets are a deliberate future decision.
+    // --- voxel count (No cap streaming, T11) ----------------------------------
+    // T11 lifts the historical 128³ dims cap: any dims are accepted here and
+    // the renderer tiles/downsamples via core::Caps maxTexture3DSize (1/255
+    // within reference). The loader no longer returns the budget error for
+    // >128³ alone — that error only when the GL caps probe fails (in
+    // render/) or the host file size exceeds the large absolute cap above.
     const std::uint64_t voxelCount =
         sizesValue[0] * sizesValue[1] * sizesValue[2];
-    if (sizesValue[0] > kMaxAxis || sizesValue[1] > kMaxAxis ||
-        sizesValue[2] > kMaxAxis || voxelCount > kMaxVoxels) {
-        return data::makeError<data::VolumeDataset>(
-            data::ErrorDomain::VolumeIo,
-            static_cast<int>(VolumeLoadError::BudgetExceeded),
-            "NRRD loader: '" + path + "': dimensions " + *sizes +
-                " exceed the v1 memory budget cap (<= 128^3, SPEC §5)");
-    }
 
     // --- type ----------------------------------------------------------------
     const ScalarInfo* info = scalarInfo(*type);

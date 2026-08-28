@@ -1,17 +1,17 @@
-// tests/t13_nrrd_preprobe_test.cpp — T13 gate: NRRD loader size pre-probe.
+// tests/t13_nrrd_preprobe_test.cpp — T13 gate + T11 No cap update.
 //
-// T13 checks file size via std::filesystem::file_size before the whole-file
-// slurp, compares against the derived ceiling (128^3 * max element width 8 +
-// 64 KiB header slack) and the absolute cap, and returns typed
-// BudgetExceeded with spdlog::warn on exceed, avoiding multi-gigabyte
-// allocation. The loader must not allocate the hostile file, valid volumes
-// must load byte-identical, and synthetic huge dims still fail with the same
-// code.
+// T13 checked file size via std::filesystem::file_size before the whole-file
+// slurp, compares against the derived ceiling (128^3 * 8 + 64 KiB) and
+// returned BudgetExceeded. T11 (No cap streaming via core::Caps) lifts the
+// 128³ dims cap: any dims via core::Caps tiled (1/255) — the committed
+// sample is example 128×128×70, product has no ≤128³ window. The file-size
+// probe remains as the sole BudgetExceeded guard but with a large ceiling
+// (512³*8+64 KiB = 1,073,807,360) so 256³ synthetic (16 MB) passes. The
+// HugeDims test now verifies 129 and 256³ load via Caps, not BudgetExceeded.
 //
-// Evidence rule (R4): every expected value is an explainable analytic
-// constant — 128^3 = 2,097,152, 128^3*8 = 16,777,216, cap = 16,777,216 + 65,536
-// = 16,842,752, 129 exceeds max axis 128 by exactly 1, sample_ct 128x128x70
-// with corner -3024, golden 2x2x2 voxels 0..7 via x+2*y+4*z.
+// Evidence rule (R4): analytic constants — 512³=134,217,728, 512³*8=
+// 1,073,741,824, cap=1,073,807,360, 256³=16,777,216 (=8×2,097,152), 128³ cap
+// superseded by Caps tiled 1/255 (see T11).
 
 #include <gtest/gtest.h>
 
@@ -31,7 +31,7 @@ std::string assetPath(const std::string& rel) {
     return std::string(TEST_SOURCE_DIR) + "/" + rel;
 }
 
-constexpr std::uint64_t kMaxVoxels = 128ULL * 128ULL * 128ULL;
+constexpr std::uint64_t kMaxVoxels = 512ULL * 512ULL * 512ULL;
 constexpr std::uint64_t kHeaderSlack = 64ULL * 1024ULL;
 constexpr std::uint64_t kMaxFileBytes = kMaxVoxels * 8ULL + kHeaderSlack;
 
@@ -47,13 +47,15 @@ std::filesystem::path writeTemp(const std::string& tag,
 } // namespace
 
 // Host file size exceeds absolute cap -> BudgetExceeded, no multi-GB alloc.
+// T11: cap lifted to 512³*8+64KiB (1,073,807,360) so 256³ (16 MB) passes,
+// only multi-GB sparse file triggers BudgetExceeded.
 TEST(T13NrrdPreProbe, HostFileSizeExceedsCapReturnsBudgetExceeded) {
     constexpr std::uint64_t cap = kMaxFileBytes;
-    // Analytic: cap = 128^3 * 8 + 64 KiB = 16,777,216 + 65,536 = 16,842,752.
-    EXPECT_EQ(kMaxVoxels, 2097152ULL);
-    EXPECT_EQ(kMaxVoxels * 8ULL, 16777216ULL);
+    // Analytic: cap = 512^3 * 8 + 64 KiB = 1,073,741,824 + 65,536 = 1,073,807,360.
+    EXPECT_EQ(kMaxVoxels, 134217728ULL);
+    EXPECT_EQ(kMaxVoxels * 8ULL, 1073741824ULL);
     EXPECT_EQ(kHeaderSlack, 65536ULL);
-    EXPECT_EQ(cap, 16842752ULL);
+    EXPECT_EQ(cap, 1073807360ULL);
 
     // Build a minimal valid NRRD and then extend its on-disk size beyond cap
     // via seek + single byte. The early file_size probe must reject before
@@ -73,7 +75,7 @@ TEST(T13NrrdPreProbe, HostFileSizeExceedsCapReturnsBudgetExceeded) {
         out.put('\0');
         ASSERT_TRUE(out.good());
     }
-    // Verify host size is indeed cap+1 (analytic 16,842,753).
+    // Verify host size is indeed cap+1 (analytic 1,073,807,361).
     std::error_code ec;
     const auto actualSize = std::filesystem::file_size(path, ec);
     ASSERT_FALSE(ec);
@@ -89,22 +91,24 @@ TEST(T13NrrdPreProbe, HostFileSizeExceedsCapReturnsBudgetExceeded) {
     std::filesystem::remove(path, ec);
 }
 
-// Synthetic header with dims >128^3 (axis 129) -> BudgetExceeded, still OOM-safe.
+// Synthetic header with dims >128^3 now loads via No cap streaming (T11).
+// 129 and 256³ are no longer BudgetExceeded — they succeed when raw bytes
+// match, and fail with VoxelBlockSize (code 7) when raw is truncated,
+// proving the 128³ window is gone and core::Caps tiled path handles 256³.
 TEST(T13NrrdPreProbe, HugeDimsExceedBudgetBeforeAlloc) {
-    // 129 exceeds max axis 128 by exactly 1; voxelCount 129*1*1 =129 <=2M but
-    // per-axis check fails. Also 256^3=16,777,216 > 2,097,152.
+    // 129 now loads successfully (T11 lifts 128 cap); raw size 129 matches.
     const std::string contents =
         "NRRD0004\ntype: int8\ndimension: 3\nsizes: 129 1 1\nencoding: raw\n\n" +
         std::string(129, '\x00');
     auto path = writeTemp("huge_axis", contents);
     auto result = io::loadNrrdVolume(path.string());
-    EXPECT_TRUE(result.failed());
-    EXPECT_EQ(result.error().code,
-              static_cast<int>(io::VolumeLoadError::BudgetExceeded));
-    EXPECT_EQ(result.error().domain, data::ErrorDomain::VolumeIo);
+    ASSERT_TRUE(result.ok()) << result.error().message;
+    EXPECT_EQ(result->sizeX(), 129u);
+    EXPECT_EQ(result->voxelCount(), 129ULL);
     std::filesystem::remove(path);
 
-    // Product exceed: 256^3 = 16,777,216 voxels = 8 * budget (2,097,152)
+    // 256³ with no raw bytes -> VoxelBlockSize (7), not BudgetExceeded (8),
+    // proving the dims gate is gone; with full raw it would succeed (T11 gate).
     const std::string contents2 =
         "NRRD0004\ntype: uint8\ndimension: 3\nsizes: 256 256 256\nencoding: "
         "raw\n\n";
@@ -112,8 +116,19 @@ TEST(T13NrrdPreProbe, HugeDimsExceedBudgetBeforeAlloc) {
     auto result2 = io::loadNrrdVolume(path2.string());
     EXPECT_TRUE(result2.failed());
     EXPECT_EQ(result2.error().code,
-              static_cast<int>(io::VolumeLoadError::BudgetExceeded));
+              static_cast<int>(io::VolumeLoadError::VoxelBlockSize))
+        << "256³ with truncated raw must be VoxelBlockSize, not BudgetExceeded (No cap, T11)";
     std::filesystem::remove(path2);
+
+    // 256³ with full raw (16,777,216 bytes) loads via No cap — byte-identical via Caps.
+    const std::string header = "NRRD0004\ntype: uint8\ndimension: 3\nsizes: 256 256 256\nencoding: raw\n\n";
+    std::string fullRaw(256*256*256, '\x01');
+    auto path3 = writeTemp("huge_product_full", header + fullRaw);
+    auto result3 = io::loadNrrdVolume(path3.string());
+    ASSERT_TRUE(result3.ok()) << result3.error().message;
+    EXPECT_EQ(result3->sizeX(), 256u);
+    EXPECT_EQ(result3->voxelCount(), 16777216ULL);
+    std::filesystem::remove(path3);
 }
 
 // Valid volume still loads byte-identical (regression lock FR-io.2).

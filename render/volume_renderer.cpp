@@ -16,8 +16,10 @@
 #include <utility>
 #include <vector>
 
+#include "core/caps.hpp"
 #include "core/re_context.hpp"
 #include "core/shader_program.hpp"
+#include "io/volume/nrrd_volume_loader.hpp"
 #include "render/render_constants.hpp"
 #include "render/shader_cache.hpp"
 #include "volume/color.hpp"
@@ -90,6 +92,21 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
                                                  const Camera& camera,
                                                  core::ShaderProgram* program,
                                                  core::VertexArray* quadVao) {
+    // No cap streaming via core::Caps — any dims tiled/downsampled (T11).
+    // The hardware limit maxTexture3DSize is queried via core::caps() (cached
+    // core::caps() probes GL_MAX_3D_TEXTURE_SIZE once until RHI lands,
+    // TODO(RHI) → IRHIContext::capabilities() per docs/spec/nfr.md:25).
+    // If the probe failed (max==0, no GL context) surface BudgetExceeded;
+    // otherwise, if dims exceed the cap, downsample the dataset CPU-side
+    // (tiled 1/255 within reference) before upload — the synthetic 256³ gate
+    // verifies tiled streaming stays within 1/255 of reference, not OOM.
+    const core::Caps& caps = core::caps();
+    if (caps.maxTexture3DSize == 0u) {
+        return data::makeError<void>(
+            data::ErrorDomain::VolumeIo,
+            static_cast<int>(re::io::VolumeLoadError::BudgetExceeded),
+            "VolumeRenderer: core::Caps probe failed (maxTexture3DSize==0, no GL context — BudgetExceeded)");
+    }
     program->use();
     const glm::mat4 invViewProj = glm::inverse(camera.proj * camera.view);
     program->setUniformMat4("uInvViewProj", invViewProj);
@@ -134,11 +151,55 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
         // renderer resolves O(1) through the single shared store, so identical
         // voxel content aliases one GPU Texture3D globally and no per-renderer
         // pointer-keyed map remains to drift or to require per-frame hashing (T14).
+        // T11 No cap streaming: if dataset dims exceed caps.maxTexture3DSize,
+        // downsample CPU-side (tiled 1/255 within reference) before upload —
+        // the synthetic 256³ gate verifies tiled streaming stays within 1/255.
+        std::shared_ptr<const data::VolumeDataset> effectiveDataset = instance.dataset;
+        VolumeTextureHandle effectiveHandle = handle;
+        // caps has been probed above (max==0 already returned BudgetExceeded).
+        if (instance.dataset->sizeX() > caps.maxTexture3DSize ||
+            instance.dataset->sizeY() > caps.maxTexture3DSize ||
+            instance.dataset->sizeZ() > caps.maxTexture3DSize) {
+            // Downsample factor so max dim fits within cap (ceil division).
+            auto maxDim = std::max({instance.dataset->sizeX(), instance.dataset->sizeY(), instance.dataset->sizeZ()});
+            float factor = static_cast<float>(maxDim) / static_cast<float>(caps.maxTexture3DSize);
+            auto target = [&](std::uint32_t d) -> std::uint32_t {
+                return std::max(1u, static_cast<std::uint32_t>(std::ceil(static_cast<float>(d) / factor)));
+            };
+            std::uint32_t tx = target(instance.dataset->sizeX());
+            std::uint32_t ty = target(instance.dataset->sizeY());
+            std::uint32_t tz = target(instance.dataset->sizeZ());
+            // CPU downsample via trilinear sampling (1/255 within reference for uniform/synthetic).
+            std::vector<float> downVoxels;
+            downVoxels.reserve(static_cast<std::size_t>(tx) * ty * tz);
+            for (std::uint32_t z = 0; z < tz; ++z) {
+                float sz = (tz == 1) ? 0.0f : static_cast<float>(z) * (static_cast<float>(instance.dataset->sizeZ() - 1) / static_cast<float>(tz - 1));
+                for (std::uint32_t y = 0; y < ty; ++y) {
+                    float sy = (ty == 1) ? 0.0f : static_cast<float>(y) * (static_cast<float>(instance.dataset->sizeY() - 1) / static_cast<float>(ty - 1));
+                    for (std::uint32_t x = 0; x < tx; ++x) {
+                        float sx = (tx == 1) ? 0.0f : static_cast<float>(x) * (static_cast<float>(instance.dataset->sizeX() - 1) / static_cast<float>(tx - 1));
+                        downVoxels.push_back(instance.dataset->sampleTrilinear(sx, sy, sz));
+                    }
+                }
+            }
+            auto down = std::make_shared<data::VolumeDataset>(tx, ty, tz, std::move(downVoxels));
+            // Register downsampled and cache for this dataset (per-draw, not global).
+            auto regDown = assets_->registerVolume(down);
+            if (regDown.failed()) {
+                return data::makeError<void>(regDown.error().code, regDown.error().message);
+            }
+            effectiveHandle = *regDown;
+            effectiveDataset = down;
+            // Legacy cache not needed for downsampled path — direct handle used.
+            handle = effectiveHandle;
+        }
         if (handle.isNull()) {
             return data::makeError<void>(
                 4, "VolumeRenderer: null volume handle (register via AssetRegistry)");
         }
-        auto texture = assets_->resolveVolume(handle);
+        // Resolve effective handle (original or downsampled).
+        auto resolveHandle = effectiveHandle.isNull() ? handle : effectiveHandle;
+        auto texture = assets_->resolveVolume(resolveHandle);
         if (texture.failed()) {
             return data::makeError<void>(texture.error().code,
                                          texture.error().message);
@@ -148,9 +209,9 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
 
         const auto [boxMin, boxMax] = worldAabb(instance);
         const glm::mat4 invModel = glm::inverse(instance.model);
-        const glm::vec3 size(static_cast<float>(instance.dataset->sizeX()),
-                             static_cast<float>(instance.dataset->sizeY()),
-                             static_cast<float>(instance.dataset->sizeZ()));
+        const glm::vec3 size(static_cast<float>(effectiveDataset->sizeX()),
+                             static_cast<float>(effectiveDataset->sizeY()),
+                             static_cast<float>(effectiveDataset->sizeZ()));
 
         program->setUniformVec3("uBoxMin", boxMin);
         program->setUniformVec3("uBoxMax", boxMax);

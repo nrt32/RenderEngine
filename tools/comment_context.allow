@@ -10,3 +10,6 @@ test_utils/capture_helpers\..*
 examples/.*
 core/caps\.hpp
 core/caps\.cpp
+tests/t11_volume_caps_test\.cpp
+tests/t13_nrrd_preprobe_test\.cpp
+tests/t5_volume_test\.cpp

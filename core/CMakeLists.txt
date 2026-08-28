@@ -19,6 +19,7 @@ add_library(re_core STATIC
     transform_feedback.cpp
     read_pixels.cpp
     offscreen.cpp
+    caps.cpp
 )
 
 target_include_directories(re_core PUBLIC
