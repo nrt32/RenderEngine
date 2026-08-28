@@ -49,6 +49,7 @@
 #include <utility>
 #include <vector>
 
+#include "app/glfw_camera_interactor.hpp"
 #include "app/mpr_slice.hpp" // app::makeBoxMesh
 #include "app/oit_scene.hpp"
 #include "app/sample_harness.hpp"
@@ -57,6 +58,7 @@
 #include "data/mesh.hpp"
 #include "data/result.hpp"
 #include "io/mesh/obj_mesh_loader.hpp"
+#include "scene/camera_controller.hpp"
 
 #ifndef RE_SOURCE_DIR
 #define RE_SOURCE_DIR "."
@@ -119,6 +121,7 @@ class OitSample final : public app::ISample {
 
     data::Result<void> renderFrame(int width, int height) override {
         syncViewSize(width, height);
+        interactor_.update(view_);
         views_ = {view_};
         return app::syncRenderPresent(ctx_, views_);
     }
@@ -137,6 +140,10 @@ class OitSample final : public app::ISample {
                "fragments are captured into a per-pixel linked list, sorted "
                "by depth, and composited back-to-front over the opaque image "
                "— correct regardless of draw order.\n"
+               "Controls: left-drag orbits, right-drag pans, middle/wheel "
+               "zooms via scene::CameraController with WantCaptureMouse guard; "
+               "View::mutateCamera bumps viewGen so broker re-translates only "
+               "dirty camera fields.\n"
                "Resize check: drag a window edge — the composition reframes "
                "to the live pixel size (ortho extents follow width/height), "
                "no stretching.\n"
@@ -147,9 +154,19 @@ class OitSample final : public app::ISample {
    private:
     void syncViewSize(int width, int height) {
         view_.setRect(scene::Rect{0, 0, width, height});
-        view_.mutateCamera([&](scene::Camera& c) {
-            c = oit::cameraFor(app::aspectFromDims(width, height));
-        });
+        const float aspect = app::aspectFromDims(width, height);
+        // Preserve eye/center/up across resizes so an orbit applied by the interactor survives the aspect
+        // update. The base framing is ortho with eye at (0,0,5) looking at origin; on first call the view's
+        // camera is the default perspective at eye (0,0,5), so we seed it with the analytic arrangement camera,
+        // then on subsequent resizes only the ortho extents change (the eye orbit is not reset). Detect the
+        // first call by isPerspective() (the default) rather than a fragile eye==0 sentinel that never matches
+        // the default eye (0,0,5). This keeps the WantCaptureMouse guard and generation bump semantics while
+        // allowing the OIT composition to be orbited interactively.
+        if (view_.camera.isPerspective()) {
+            view_.mutateCamera([&](scene::Camera& c) { c = oit::cameraFor(aspect); });
+        } else {
+            view_.mutateCamera([&](scene::Camera& c) { c.setOrtho(-aspect, aspect, -1.0f, 1.0f, oit::kNearPlane, oit::kFarPlane); });
+        }
     }
 
     /// A flat-shaded axis-aligned box MeshObject value (identity transform —
@@ -178,6 +195,8 @@ class OitSample final : public app::ISample {
     broker::AppContext ctx_;
     scene::View view_{};
     std::vector<scene::View> views_{};
+    scene::CameraController controller_{};
+    app::GlfwCameraInteractor interactor_{controller_};
 };
 
 } // namespace

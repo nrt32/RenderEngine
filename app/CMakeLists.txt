@@ -37,6 +37,7 @@ add_library(re_app STATIC
     frame_loop.cpp
     imgui_overlay.cpp
     mpr_slice.cpp
+    glfw_camera_interactor.cpp
 )
 
 target_include_directories(re_app PUBLIC

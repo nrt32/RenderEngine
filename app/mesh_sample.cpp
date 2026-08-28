@@ -31,6 +31,7 @@
 #include <string>
 #include <utility>
 
+#include "app/glfw_camera_interactor.hpp"
 #include "app/sample_harness.hpp"
 #include "broker/app_context.hpp"
 #include "core/window.hpp"
@@ -39,6 +40,7 @@
 #include "io/mesh/obj_mesh_loader.hpp"
 #include "scene/builders.hpp"
 #include "scene/camera.hpp"
+#include "scene/camera_controller.hpp"
 
 #ifndef RE_SOURCE_DIR
 #define RE_SOURCE_DIR "."
@@ -102,6 +104,11 @@ class MeshSample final : public app::ISample {
     }
 
     data::Result<void> renderFrame(int width, int height) override {
+        // Camera interaction: poll windowing input and forward to the pure-math controller when the overlay
+        // does not capture the mouse, then mutate the builder's view camera via View::mutateCamera so the
+        // generation bump lets the broker re-translate only dirty fields. The builder's view is mutated before
+        // the live-dims sync so the eye orbit survives the projection aspect update.
+        interactor_.update(builder_.view());
         syncLive(width, height);
         views_ = {view_};
         return app::syncRenderPresent(ctx_, views_);
@@ -111,11 +118,16 @@ class MeshSample final : public app::ISample {
         return "Mesh sample: Stanford bunny (Phong opaque)";
     }
 
-    const char* instructions() const noexcept override {
+     const char* instructions() const noexcept override {
         return "Capability: shaded triangle mesh (SPEC FR-render.1).\n"
                "A Phong (opaque) mesh is translated by the broker mapper "
                "inventory (MeshObjectMapper + MaterialMapper) and drawn "
                "through the IViewBridge façade.\n"
+               "Controls: left-drag orbits (yaw/pitch), right-drag pans, "
+               "middle-drag or wheel zooms — via scene::CameraController "
+               "pure math and app::GlfwCameraInteractor polling with "
+               "WantCaptureMouse guard; viewGen bumps and broker re-translates "
+               "only dirty camera fields.\n"
                "Resize check: drag a window edge — the view reframes to the "
                "live pixel size (camera aspect follows width/height), no "
                "stretching.\n"
@@ -134,6 +146,8 @@ class MeshSample final : public app::ISample {
     scene::View view_{};
     scene::SceneViewBuilder builder_{1, scene::Rect{0, 0, 800, 600}};
     std::vector<scene::View> views_{};
+    scene::CameraController controller_{};
+    app::GlfwCameraInteractor interactor_{controller_};
 };
 
 } // namespace

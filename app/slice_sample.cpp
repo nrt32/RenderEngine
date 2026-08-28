@@ -36,6 +36,7 @@
 #include <string>
 #include <utility>
 
+#include "app/glfw_camera_interactor.hpp"
 #include "app/sample_harness.hpp"
 #include "broker/app_context.hpp"
 #include "core/window.hpp"
@@ -43,6 +44,7 @@
 #include "data/result.hpp"
 #include "io/mesh/obj_mesh_loader.hpp"
 #include "scene/builders.hpp"
+#include "scene/camera_controller.hpp"
 
 #ifndef RE_SOURCE_DIR
 #define RE_SOURCE_DIR "."
@@ -117,6 +119,7 @@ class SliceSample final : public app::ISample {
     }
 
     data::Result<void> renderFrame(int width, int height) override {
+        interactor_.update(builder_.view());
         builder_.syncLive(width, height);
         view_ = builder_.view();
         views_ = {view_};
@@ -136,6 +139,10 @@ class SliceSample final : public app::ISample {
                "compositing). The MeshSliceObject translates through "
                "broker::MeshSliceObjectMapper with the plane supplied by its "
                "View.\n"
+               "Controls: left-drag orbits, right-drag pans, middle/wheel "
+               "zooms via scene::CameraController with WantCaptureMouse guard; "
+               "View::mutateCamera bumps viewGen so broker re-translates only "
+               "dirty camera fields.\n"
                "Resize check: drag a window edge — the view reframes to the "
                "live pixel size (camera aspect follows width/height), no "
                "stretching.\n"
@@ -149,6 +156,8 @@ class SliceSample final : public app::ISample {
     scene::View view_{};
     scene::SceneViewBuilder builder_{1, scene::Rect{0, 0, 800, 600}};
     std::vector<scene::View> views_{};
+    scene::CameraController controller_{};
+    app::GlfwCameraInteractor interactor_{controller_};
 };
 
 } // namespace

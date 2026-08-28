@@ -169,24 +169,43 @@ both opaque meshes along the view direction are captured by the injected
 are sorted by depth, and composite back-to-front over the opaque result
 (FR-render.2/3).
 
+### Camera controls (V5 T9 — `scene::CameraController` pure math + `app::GlfwCameraInteractor` adapter)
+
+Interactive camera orbit is driven by the pure-math `scene::CameraController` (`scene/camera_controller.hpp`, V5 T9) and its
+windowing adapter `app::GlfwCameraInteractor` (`app/glfw_camera_interactor.hpp`). The controller is GL-free and
+render-free — it maps pixel deltas to a `CameraDelta` (`onMouseDrag(dx,dy, button, modifiers) -> CameraDelta`,
+`onScroll(delta)`, `onKey`) with linear analytic speeds (`rotateSpeed` degrees per pixel, `panSpeed` world units per
+pixel, `zoomSpeed` factor per scroll unit) and exposes `CameraBindings{ rotateButton=LMB, panButton=RMB, zoomButton=MMB/wheel,
+modifiers, rotateSpeed, panSpeed, zoomSpeed }` as a plain POD so each view can override it without a new type. The
+adapter polls `glfwGetMouseButton`/`glfwGetCursorPos`/`glfwGetScroll` each frame before `renderFrame`, checks
+`!ImGui::GetIO().WantCaptureMouse` (the `TASKS.md:126` guard — when the overlay wants the mouse the camera does not move),
+forwards the delta into the controller, and then calls `View::mutateCamera([&](Camera& c){ c.rotate(...); })` so the
+per-field `viewGen` bump propagates to `View::generation` and the broker's `ViewSynchronizer` re-translates only the
+dirty camera fields per SPEC §10.4 (no full dump). Dragging 10 px with the default `rotateSpeed 0.5` yields a 5 deg
+yaw/pitch orbit; the gate asserts the resulting `viewMatrix` against the analytic `Camera::rotate(5,0)` within `1e-6`,
+and the `WantCaptureMouse=true` guard leaves the matrix unchanged (`delta 0` within `1e-6`) versus `false` yielding the
+analytic orbit. The plane sample and the three MPR 2D orthographic slice views keep their fixed dataset-extent
+orthographic framing and are **not** orbited (the `Wired in mesh/slice/volume/oit/mpr-3D; plane + MPR 2D orthographic skip`
+rule); the mesh, slice, volume, OIT, and MPR 3D perspective views are all wired through the interactor.
+
 ### Driving each capability (per-sample instructions)
 
 Every sample's ImGui overlay shows a short "How to drive this capability" help
-block (from `ISample::instructions()`, T13). Each sample is static in v1 (one
-window, one GL context, one render thread, SPEC §5 — no camera controls), so
-"driving" the capability means running the sample, observing the rendered
-result, optionally resizing the window to verify the live-aspect reframe
-(manual verification, T23 — the overlay instructions carry the same note), and
-exiting cleanly:
+block (from `ISample::instructions()`, T13). Since V5 T9 the perspective samples are interactive (orbit/pan/zoom via the
+controller above); the overlay still describes the resize check (T23) and the harness exits cleanly after
+`RE_SAMPLE_MAX_FRAMES` bounded frames, so the gate can run them headlessly. "Driving" a capability now means running
+the sample, orbiting/panning/zooming the perspective view with the mouse (left-drag orbits yaw/pitch, right-drag pans,
+middle-drag or wheel zooms, guarded by `WantCaptureMouse`), optionally resizing the window to verify the live-aspect
+reframe, and exiting cleanly:
 
 | Sample | How to drive it |
 |---|---|
-| `re_sample_mesh` | observe the shaded bunny (opaque Phong, FR-render.1); resize check: drag an edge — the view reframes, no stretching; close the window to exit. |
-| `re_sample_plane` | observe the two GPU-extracted CT planes (axial left, oblique right; FR-render.5 extension); resize check: the split follows the live window halves; close the window to exit. |
-| `re_sample_volume` | observe the ray-cast CT chest (FR-render.6); resize check: drag an edge — the view reframes, no stretching; close the window to exit. |
-| `re_sample_slice` | observe the teapot cut open along its horizontal midplane with the on-plane cross-section (FR-render.4); resize check: drag an edge — the view reframes, no stretching; close the window to exit. |
-| `re_sample_oit` | observe the golden box and bunny (depth-tested opaque pass) under the two glass shells blended in depth order by the linked-list OIT (FR-render.2/3); resize check: ortho extents follow the live aspect; close the window to exit. |
-| `re_sample_mpr` | scroll the auto-advancing slices and watch the 3D crosshair view track them (FR-app.2/3); resize check: the 2x2 grid re-splits into four equal quadrants of the live window; close the window to exit. |
+| `re_sample_mesh` | orbit/pan/zoom the bunny with left/right/middle-drag or wheel (controller `rotateSpeed 0.5 deg/px`, `WantCaptureMouse` guard, `viewGen` bump); resize check: drag an edge — the view reframes, no stretching; close the window to exit. |
+| `re_sample_plane` | observe the two GPU-extracted CT planes (axial left, oblique right; fixed orthographic, not orbited per T9 skip); resize check: the split follows the live window halves; close the window to exit. |
+| `re_sample_volume` | orbit/pan/zoom the CT chest with left/right/middle-drag or wheel (same controller, `viewGen` bump, broker re-translates only dirty camera); resize check: drag an edge — the view reframes, no stretching; close the window to exit. |
+| `re_sample_slice` | orbit/pan/zoom the clipped teapot with left/right/middle-drag or wheel (same controller, `viewGen` bump); resize check: drag an edge — the view reframes, no stretching; close the window to exit. |
+| `re_sample_oit` | orbit/pan/zoom the OIT composition with left/right/middle-drag or wheel (same controller, depth-tested target, `viewGen` bump); resize check: ortho extents follow the live aspect; close the window to exit. |
+| `re_sample_mpr` | orbit/pan/zoom the 3D crosshair view with left/right/middle-drag or wheel (same controller, only the 3D perspective view is orbited, the three 2D orthographic slice views keep fixed framing per T9 skip); scroll the auto-advancing slices and watch the 3D crosshair view track them (FR-app.2/3); resize check: the 2x2 grid re-splits into four equal quadrants of the live window; close the window to exit. |
 
 The overlay instructions text is the authoritative per-sample help for each
 capability; the table above summarizes it.

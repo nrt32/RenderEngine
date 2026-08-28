@@ -55,6 +55,7 @@
 #include <vector>
 
 #include "app/ct_transfer_function.hpp"
+#include "app/glfw_camera_interactor.hpp"
 #include "app/mpr_slice.hpp"
 #include "app/sample_harness.hpp"
 #include "broker/app_context.hpp"
@@ -64,6 +65,7 @@
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
 #include "io/volume/nrrd_volume_loader.hpp"
+#include "scene/camera_controller.hpp"
 #include "utils/pixel_reader.hpp"
 #include "volume/transfer_function.hpp"
 
@@ -259,6 +261,11 @@ class MPRView final : public app::ISample {
         // (voxel-index, converted by the broker), contour planes (world,
         // display-frame), cameras (slice extents + crosshair interplay).
         applySliceState();
+        // Camera interaction for the 3D view only — the three 2D slice views are orthographic and keep their
+        // fixed dataset-extent framing per the task's plane + MPR 2D orthographic skip. The interactor polls the
+        // windowing cursor and the WantCaptureMouse guard and mutates only views_[3] via View::mutateCamera so
+        // viewGen bumps and the broker re-translates only dirty camera fields. The 2D views are not touched.
+        interactor_.update(views_[3]);
 
         // Bridge façade via the single-site helper (AS2 syncRenderPresent):
         // sync → renderAll → presentAll blits each target 1:1 into its pinned
@@ -317,6 +324,11 @@ class MPRView final : public app::ISample {
                "IViewBridge); the slices are EXTRACTED ON THE GPU from the "
                "cached 3D texture: every few frames the next axis advances "
                "one voxel layer and all views track it.\n"
+               "Controls: left-drag orbits the 3D view (yaw/pitch), right-drag "
+               "pans, middle/wheel zooms via scene::CameraController with "
+               "WantCaptureMouse guard; View::mutateCamera bumps viewGen so "
+               "broker re-translates only dirty camera fields. The three 2D "
+               "orthographic slice views keep fixed framing and are not orbited.\n"
                "Resize check: drag a window edge — the grid re-splits into "
                "four equal quadrants of the live pixel size, no stale rects.\n"
                "Run the sample, then close the window (or set "
@@ -502,6 +514,8 @@ class MPRView final : public app::ISample {
     /// the 3D camera aspect derives from its quadrant).
     std::array<app::MprViewport, 4> grid_{};
     std::vector<scene::View> frame_{};
+    scene::CameraController controller_{};
+    app::GlfwCameraInteractor interactor_{controller_};
 
     /// One-shot guard for the RE_SAMPLE_DUMP_FRAME diagnostic capture.
     bool frameDumped_{false};

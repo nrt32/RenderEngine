@@ -60,6 +60,7 @@ add_executable(${RE_TEST_TARGET}
     t5_geometry_collapse_test.cpp
     t7_loader_facade_test.cpp
     t8_layer_ordering_test.cpp
+    t9_camera_controller_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

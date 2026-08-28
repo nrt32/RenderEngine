@@ -4,6 +4,7 @@
 # both sides), so the app-side scene stays portable and RE-agnostic.
 add_library(re_scene STATIC
     camera.cpp
+    camera_controller.cpp
     store.cpp
     layout.cpp
     view.cpp
