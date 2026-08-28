@@ -95,10 +95,10 @@ tests/       headless unit tests (consume core/ wrappers + the utils/ fixture; b
 
 ### 3.2 `render/` — RE-minimal types (SPEC §12) — landed T5 V3.4 (ViewRenderer deleted)
 
-- **RE keeps only what it can directly use.** Any field that needs conversion
+- **RE keeps only what it can directly use (V7 T7.6 RE-minimal).** Any field that needs conversion
   (voxel-index → world, `MaterialDesc → IMaterial`, TF → uniforms) is
   translated. `Re*Object`s carry `AssetHandle`/`Texture3D*`/`ReMaterial*`/`model`/
-  `ClipPlane`/`ReLight[]`/`worldBounds`, not `scene::MaterialDesc`.
+  `ClipPlane`/`ReLight[]`/`worldBounds`, not `scene::MaterialDesc`. `render/re_scene/` never stores verbatim `data::Mesh::positions`/`VolumeDataset::voxels` — only `handle|uniform-ready|derived` per `asset_indirection` (and `scene/` never includes `io/` — loaders belong to `utils/` per V7 T7.1, verified `grep -c "obj_mesh_loader" scene/ ==0`).
 - **Hierarchies mirror `scene/` disposition but are RE-shaped:**
   `render::IMaterial → MeshMaterial → {PhongMaterial,PBRMaterial}` plus
   `VolumeMaterial/SliceMaterial/ContourMaterial` siblings (SPEC §12), and

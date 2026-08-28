@@ -39,7 +39,7 @@ no_secrets	forbid_grep	(api[_-]?key|password|secret)\s*=\s*["'][A-Za-z0-9+/]{12,
 # floor below rejects common branch names in every build file incl. the root
 # CMakeLists.txt, reviewer verifies the rest; pinned tags: glfw 3.4, glad2 v2.0.8 (73db193), glm 1.0.1, imgui v1.92.9, googletest v1.15.2, spdlog v1.14.1, stb 2c980bb59875b0d32144a71867fbdebb2f77cd20, json v3.11.3 — see docs/spec/techstack.md §2 and docs/spec/assets.md)
 deps_pinned	require_grep	FetchContent_Declare\([^)]*GIT_TAG	dependencies must be pinned via FetchContent GIT_TAG
-deps_pinned_no_branch	forbid_flag	GIT_TAG\s+["']?(master|main|HEAD|develop|feature|release|hotfix|branch)\b	dependencies must pin a release tag or commit SHA, never a branch name
+deps_pinned_no_branch	forbid_flag	GIT_TAG\s+["']?(master|main|HEAD|develop|feature|release|hotfix|branch|stable|next|latest|trunk|dev|vNext)\b	dependencies must pin a release tag or commit SHA, never a branch name (covers stable/next/latest/trunk/dev per V8 T8.5)
 
 # --- GL ownership & RHI: raw GL calls ONLY under core/rhi/gl/ via IRHIContext (SPEC §3/§6 EOL) -------
 # render/, app/, tests/, broker/, scene/, and utils/ must go through core/rhi/ wrappers (IRHIContext); io/, data/, volume/ are GL-free.
@@ -178,7 +178,7 @@ no_object_duplicate	forbid_grep	__never_matches_no_object_duplicate__	scene obje
 # --- Sanitizer contract (SPEC §5) — catch re-introduction of per-target flags ----------
 # V3 T11 defines INTERFACE re_project_sanitizers linked by every re_* target; ad-hoc per-dir -fsanitize blocks deleted.
 # This forbid catches direct add_compile_options/add_definitions with -fsanitize outside the INTERFACE target.
-no_per_target_sanitize	forbid_grep	add_compile_options.*-fsanitize|add_definitions.*-fsanitize	per-target -fsanitize is forbidden — use INTERFACE re_project_sanitizers linked by every re_* target (T11)
+no_per_target_sanitize	forbid_grep	add_compile_options.*-fsanitize|add_definitions.*-fsanitize|target_compile_options.*-fsanitize|target_link_options.*-fsanitize|add_link_options.*-fsanitize	per-target -fsanitize is forbidden — use INTERFACE re_project_sanitizers linked by every re_* target (T11, hardened V8 T8.5 to cover target_* variant)
 
 # --- Build hygiene (generic, reinforce here) -----------------------------------
 # (built-in checks already cover warning-suppression flags/pragmas)
