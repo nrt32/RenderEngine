@@ -72,9 +72,29 @@ needed:
   `libxrandr-dev`, `libxcursor-dev`, `libxi-dev`, `libxinerama-dev`
   (GLFW build deps).
 
+## Engine facade (80% visualization, SPEC §3, TASKS T1)
+
+```cpp
+#include "render_engine/engine.hpp"
+re::viz::Engine engine;
+auto id = engine.addMesh("data/meshes/bunny.obj",
+                         glm::mat4(1.0f),
+                         glm::vec4(0.85f, 0.45f, 0.15f, 1.0f)).value();
+re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
+cam.setPerspective(60.0f, 800.0f/600.0f, 0.1f, 10.0f);
+engine.setView({{0,0,800,600}, cam, {id}});
+auto fb = re::core::Framebuffer::create().value(); // + Texture2D attach
+engine.render(fb).value(); // sync → renderAll → presentAll, 1/255 vs direct AppContext
+// helper: auto view = re::viz::Engine::createView({0,0,800,600}, cam, {id});
+```
+
+See `docs/engine.md` for the full facade docs and the `examples/minimal.cpp`
+20-line copy-paste. Advanced users keep `engine.appContext()` / `engine.store()`.
+
 ## Module layout
 
 ```
+include/    public facade headers (render_engine/engine.hpp — viz::Engine, SPEC §3)
 io/         loaders only, no GL
 data/       CPU containers + GL-free typed Result<T,E> (data/result.hpp), no GL
 volume/     pure math (sampling, transfer function, ray-cast compositing), no GL

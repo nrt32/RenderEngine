@@ -157,6 +157,19 @@ add_subdirectory(test_utils)
 add_subdirectory(render)
 add_subdirectory(app)
 
+# include/render_engine — Engine facade for the 80% visualization case (TASKS
+# T1, SPEC §3). Header-only interface that hides SceneStore/Broker/AppContext
+# wiring behind viz::Engine (owns AppContext+SceneStore, exposes
+# addMesh/addVolume/setView/render/createView, plus appContext()/store()
+# escape hatches). The include dir is the installed header prefix, so consumers
+# write `#include "render_engine/engine.hpp"`.
+add_library(re_engine INTERFACE)
+target_include_directories(re_engine INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(re_engine INTERFACE re_broker re_scene re_core re_io re_volume)
+
 if(RE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

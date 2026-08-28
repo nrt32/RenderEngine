@@ -60,6 +60,7 @@ class AppContext {
 
     /// The app-side scene value store (fill with objects, reference ids in views).
     scene::SceneStore& store() noexcept { return store_; }
+    const scene::SceneStore& store() const noexcept { return store_; }
 
     /// The façade the render loop drives: sync(views, store) → renderAll() →
     /// presentAll(dst). App never holds a mapper or renderer handle.

@@ -54,6 +54,7 @@ add_executable(${RE_TEST_TARGET}
     t13_nrrd_preprobe_test.cpp
     t15_glfw_runtime_test.cpp
     t19_view_lights_test.cpp
+    t1_engine_facade_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
@@ -68,6 +69,7 @@ target_link_libraries(${RE_TEST_TARGET}
         re_broker
         re_render
         re_app
+        re_engine
         re_project_warnings
         re_project_sanitizers
         GTest::gtest
