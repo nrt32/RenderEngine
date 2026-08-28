@@ -164,6 +164,17 @@ weak_assert_review_gated	forbid_grep	__never_matches_weak_assert_review_gated__	
 evidence_rule	forbid_grep	__never_matches_evidence_rule__	evidence rule is review-gated: every test asserts an explainable constant (analytic 1/255, 1e-6, 152MB) — reviewer checklist
 regression_lock	forbid_grep	__never_matches_regression_lock__	regression lock is review-gated: prior tests never weakened — reviewer checklist
 
+# --- Drift guards — sample bloat + object duplicate (T14, SPEC §6) -----------------
+# T14 keeps app/mesh_sample.cpp 160→42 and app/mpr_slice.hpp 230→98 after T5/T7
+# collapse to MeshObject + builders. The audit enforces the secondary caps via
+# wc in audit.sh (≤80 for samples, ≤100 for mpr_slice) while the precise T14
+# gate asserts ==42 and ==98 exact (primary 1/255 ordering already in T8).
+# The forbid_grep entries below are placeholders (never match) so the audit
+# passes when the built-in wc/diff checks pass; the built-ins are the real
+# enforcement and the gate asserts the exact counts (R4 analytic).
+no_sample_bloat	forbid_grep	__never_matches_no_sample_bloat__	app sample files must stay ≤80 lines (mesh_sample 42, mpr_slice 98) — enforced via wc in audit.sh, exact gate via wc -l ==42/==98
+no_object_duplicate	forbid_grep	__never_matches_no_object_duplicate__	scene objects duplicate ratio must stay ≤10% — enforced via diff in audit.sh, exact gate via grep -c class.*Object.*ObjectBase ==6
+
 # --- Sanitizer contract (SPEC §5) — catch re-introduction of per-target flags ----------
 # V3 T11 defines INTERFACE re_project_sanitizers linked by every re_* target; ad-hoc per-dir -fsanitize blocks deleted.
 # This forbid catches direct add_compile_options/add_definitions with -fsanitize outside the INTERFACE target.

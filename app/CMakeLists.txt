@@ -81,6 +81,7 @@ if(RE_BUILD_SAMPLES OR RE_BUILD_TESTS)
             re_app
             re_broker
             re_io
+            re_engine
             glm::glm
             spdlog::spdlog
             re_project_warnings
