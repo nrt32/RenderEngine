@@ -29,8 +29,8 @@ target_link_libraries(re_render PUBLIC
     re_core
     re_data
     re_volume
-    glm::glm
-    spdlog::spdlog
+    $<BUILD_INTERFACE:glm::glm>
+    $<BUILD_INTERFACE:spdlog::spdlog>
     re_project_warnings
     re_project_sanitizers
 )

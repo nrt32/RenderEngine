@@ -24,4 +24,7 @@ add_library(re_broker STATIC
     app_context.cpp
 )
 target_link_libraries(re_broker PUBLIC re_scene re_render re_core re_project_warnings re_project_sanitizers)
-target_include_directories(re_broker PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_include_directories(re_broker PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
+    $<INSTALL_INTERFACE:include>
+)

@@ -15,7 +15,7 @@ target_include_directories(re_volume PUBLIC
 # glm is a pure-math header-only dependency (no GL calls), so volume/ stays
 # GL-free. re_project_warnings keeps volume/ sources clean under -Werror.
 target_link_libraries(re_volume PUBLIC
-    glm::glm
+    $<BUILD_INTERFACE:glm::glm>
     re_project_warnings
     re_project_sanitizers
 )

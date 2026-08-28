@@ -27,8 +27,8 @@ target_include_directories(re_core PUBLIC
 
 target_link_libraries(re_core PUBLIC
     re_data
-    spdlog::spdlog
-    glm::glm
+    $<BUILD_INTERFACE:spdlog::spdlog>
+    $<BUILD_INTERFACE:glm::glm>
     re_project_warnings
     re_project_sanitizers
 )
@@ -38,9 +38,11 @@ target_link_libraries(re_core PUBLIC
 # GL-call-free). Core's .cpp files still need them privately, and downstream
 # that directly includes GLFW/glad (utils/offscreen_context.cpp,
 # tests that probe GLFW) links them explicitly in their own CMakeLists.
+# For install/export, PRIVATE deps are BUILD_INTERFACE only so the export does
+# not require them to be in the same export set (T2: header firewall).
 target_link_libraries(re_core PRIVATE
-    glfw
-    glad_gl_core_46
+    $<BUILD_INTERFACE:glfw>
+    $<BUILD_INTERFACE:glad_gl_core_46>
 )
 
 # EGL is used by the surfaceless fallback in utils/offscreen_context.cpp (the

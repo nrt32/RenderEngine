@@ -26,7 +26,7 @@ target_include_directories(re_imgui PUBLIC
 # loader; glfw is linked through re_core, but expose it here so re_app and the
 # samples resolve GLFW symbols regardless of link order.
 target_link_libraries(re_imgui PUBLIC
-    glfw
+    $<BUILD_INTERFACE:glfw>
 )
 
 # ---------------------------------------------------------------------------
@@ -49,10 +49,10 @@ target_include_directories(re_app PUBLIC
 # and the slice-display camera factories (broker/slice_display.hpp).
 target_link_libraries(re_app PUBLIC
     re_core
-    re_imgui
+    $<BUILD_INTERFACE:re_imgui>
     re_scene
     re_broker
-    spdlog::spdlog
+    $<BUILD_INTERFACE:spdlog::spdlog>
     re_project_warnings
     re_project_sanitizers
 )

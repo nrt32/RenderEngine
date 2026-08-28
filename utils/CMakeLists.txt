@@ -19,8 +19,8 @@ target_include_directories(re_utils PUBLIC
 
 target_link_libraries(re_utils PUBLIC
     re_core
-    glfw
-    spdlog::spdlog
+    $<BUILD_INTERFACE:glfw>
+    $<BUILD_INTERFACE:spdlog::spdlog>
     re_project_warnings
     re_project_sanitizers
 )

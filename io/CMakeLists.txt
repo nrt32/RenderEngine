@@ -19,8 +19,8 @@ target_include_directories(re_io PUBLIC
 # -Werror.
 target_link_libraries(re_io PUBLIC
     re_data
-    stb
-    spdlog::spdlog
+    $<BUILD_INTERFACE:stb>
+    $<BUILD_INTERFACE:spdlog::spdlog>
     re_project_warnings
     re_project_sanitizers
 )

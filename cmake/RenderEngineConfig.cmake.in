@@ -1,0 +1,32 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Dependencies that are PUBLIC in the exported targets. They were tried via
+# find_package fallback at build time (T2), so the consumer must have them
+# available via find_package as well. Quietly skip if already found by the
+# consumer's super-project.
+find_dependency(Threads)
+
+# GLM is header-only but exported via re_data/re_scene PUBLIC links.
+find_dependency(glm QUIET)
+if(NOT glm_FOUND)
+    # Fallback: some systems provide glm via lowercase config
+    find_dependency(glm)
+endif()
+
+# GLFW is PRIVATE to re_core (now PRIVATE per T2 header firewall) but still
+# needed for the installed re_core static archive's link interface when
+# consumers link RenderEngine::re_core. Use QUIET so missing system GLFW
+# can be provided via FetchContent in consumer if desired.
+find_dependency(glfw3 QUIET)
+
+# spdlog is PUBLIC via re_core/re_app
+find_dependency(spdlog QUIET)
+
+# nlohmann_json is header-only for SceneStore::serialize()
+find_dependency(nlohmann_json QUIET)
+
+include("${CMAKE_CURRENT_LIST_DIR}/RenderEngineTargets.cmake")
+
+check_required_components(RenderEngine)
