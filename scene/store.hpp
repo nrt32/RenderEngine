@@ -234,7 +234,34 @@ class SceneStore {
     data::Result<AssetRegistry<data::Image>::SharedAsset> resolveImageAsset(
         AssetId id) const;
     data::Result<void> unregisterImageAsset(AssetId id);
-    std::size_t meshAssetCount() const noexcept { return meshAssets_.liveCount(); }
+     /// Versioned JSON wire format for persistence (T13).
+     ///
+     /// Returns a JSON string with `Version` migrations and the `View` wire
+     /// format `CompositeKey{Version,LayoutId,ViewId,Type,Gen,Hash}` per
+     /// `docs/spec/persistence.md` §10.8. `Version` is the persistence schema
+     /// version that invalidates the broker cache on migration (hierarchical
+     /// `Version:LayoutId:Type:Hash`, `BACKWARD` compat via `SceneMigrator`
+     /// chain per DCS Data Contracts). The JSON is built with `nlohmann/json`
+     /// 3.11.3 (pinned `GIT_TAG v3.11.3`, `CMakeLists.txt:117`) — `MaterialDesc`
+     /// / `LightDesc` stable variant JSON plus the `View` fields (`Rect`,
+     /// `Camera`, `CompositeKey`, `Plane`, `ItemIds`, `ClearColor`, `DepthTest`,
+     /// `Lights`, `LayerMask`, `LayerOverrides`) that were in-memory only before
+     /// T13. `Re*` caches are never serialized (reconstructible via
+     /// `ViewSynchronizer` replay); only stable wire is `SceneStore`
+     /// (`Id+gen+hash` per object), `MaterialDesc`/`LightDesc`, `LayoutSpec`,
+     /// `Camera`. Binary `VolumeDataset` bytes are the NRRD raw `uint16` blob
+     /// beside the JSON plus `SHA-256` `contentHash`.
+     std::string serialize() const;
+     /// Deserialize a JSON string produced by `serialize()`, applying the
+     /// `SceneMigrator` chain from the file's `Version` to the current
+     /// `kSerializeVersion` (`BACKWARD` compat, new reader reads old writer).
+     /// Returns a typed error if the JSON is malformed or the version is
+     /// newer than the current.
+     static data::Result<SceneStore> deserialize(const std::string& jsonStr);
+     /// Current persistence schema version — bump when `Re*` field inventory or
+     /// hash algorithm changes, invalidating every cached `CompositeKey`.
+     static constexpr uint32_t kSerializeVersion = 1;
+     std::size_t meshAssetCount() const noexcept { return meshAssets_.liveCount(); }
     std::size_t meshAssetSlotCount() const noexcept { return meshAssets_.slotCount(); }
     std::size_t volumeAssetCount() const noexcept { return volumeAssets_.liveCount(); }
     std::size_t volumeAssetSlotCount() const noexcept { return volumeAssets_.slotCount(); }

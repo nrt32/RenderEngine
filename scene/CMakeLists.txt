@@ -12,6 +12,16 @@ add_library(re_scene STATIC
 target_link_libraries(re_scene PUBLIC re_data re_volume)
 target_link_libraries(re_scene PRIVATE re_io)
 target_link_libraries(re_scene PUBLIC $<BUILD_INTERFACE:glm::glm>)
+# T13 serialize uses nlohmann/json 3.11.3 (header-only, pinned GIT_TAG v3.11.3);
+# the .cpp includes <nlohmann/json.hpp> for SceneStore::serialize()/deserialize().
+# Header does not expose json types, so private BUILD_INTERFACE is sufficient —
+# the installed re_scene export does not require the json package (consumers
+# that parse the JSON string themselves can find_package it separately).
+if(TARGET nlohmann_json::nlohmann_json)
+    target_link_libraries(re_scene PRIVATE $<BUILD_INTERFACE:nlohmann_json::nlohmann_json>)
+elseif(TARGET nlohmann_json)
+    target_link_libraries(re_scene PRIVATE $<BUILD_INTERFACE:nlohmann_json>)
+endif()
 target_include_directories(re_scene PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
     $<INSTALL_INTERFACE:include>

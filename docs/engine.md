@@ -26,44 +26,61 @@ ceremony that every sample previously repeated through
 `app::fitPerspectiveViewToPixels` plus manual `Rect` plus `Camera` wiring.
 No file duplicates that helper.
 
-## Minimal usage (copy-paste, ~20 lines)
+## Minimal usage (copy-paste, 22 lines — the first file a viz project copies)
+
+`examples/minimal.cpp` is the 22-line copy-paste that a visualization project
+starts from — it builds via the installed `RenderEngineConfig.cmake` (`cmake -S
+examples -B /tmp/min && cmake --build /tmp/min` green, `find_package(RenderEngine
+0.1)` probe). One `Engine` occurrence, `wc -l ==22` committed exact, not a cap.
+
+```cpp
+// examples/minimal.cpp — 22 lines, headless offscreen (no Window)
+#include "render_engine/engine.hpp"
+#include "scene/camera.hpp"
+#include "render/offscreen.hpp"
+#include <glm/vec3.hpp>
+#include <glm/mat4x4.hpp>
+int main() {
+    re::viz::Engine e;
+    auto r = e.addMesh("data/meshes/bunny.obj");
+    if (r.failed()) return 1;
+    auto id = *r;
+    re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
+    cam.setPerspective(60, 800.0f/600.0f, 0.1f, 10.0f);
+    e.setView({{0,0,800,600}, cam, {id}});
+    auto v = e.views().front();
+    auto img = re::render::renderOffscreen(800, 600, std::span<const re::scene::View>(&v, 1), e.store());
+    if (img.failed()) return 2;
+    auto &im = *img;
+    (void)im.width(); (void)im.height(); (void)im.pixels().size();
+    return 0;
+}
+```
+
+Window path (samples) — same `Engine` plus a visible `Window`:
 
 ```cpp
 #include "render_engine/engine.hpp"
 #include "core/window.hpp"
-#include "core/framebuffer.hpp"
-#include "core/texture2d.hpp"
-
-int main() {
-    // Visible window path (samples) — 20-line copy-paste:
-    auto window = re::core::Window::create(800, 600, "Engine minimal").value();
-    re::viz::Engine engine;
-    auto id = engine.addMesh("data/meshes/bunny.obj",
-                             glm::mat4(1.0f),
-                             glm::vec4(0.85f, 0.45f, 0.15f, 1.0f)).value();
-    re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0),
-                          glm::vec3(0,1,0));
-    cam.setPerspective(60.0f, 800.0f/600.0f, 0.1f, 10.0f);
-    engine.setView({{0,0,800,600}, cam, {id}});
-    // Or via helper: auto view = re::viz::Engine::createView({0,0,800,600}, cam, {id});
-    // engine.setView(view);
-    while (!window.shouldClose()) {
-        window.pollEvents();
-        engine.render().value(); // sync+render+present to default FBO
-        window.swapBuffers();
-    }
-}
+auto window = re::core::Window::create(800, 600, "Engine minimal").value();
+re::viz::Engine engine;
+auto id = *engine.addMesh("data/meshes/bunny.obj", glm::mat4(1.0f), glm::vec4(0.85f,0.45f,0.15f,1.0f));
+re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
+cam.setPerspective(60.0f, 800.0f/600.0f, 0.1f, 10.0f);
+engine.setView({{0,0,800,600}, cam, {id}});
+// Or via helper: auto view = re::viz::Engine::createView({0,0,800,600}, cam, {id}); engine.setView(view);
+while (!window.shouldClose()) { window.pollEvents(); engine.render().value(); window.swapBuffers(); }
 ```
 
-Offscreen headless path (tests / server-side visualization):
+Offscreen headless path (tests / server-side visualization) is the same
+`renderOffscreen` facade that the T13 smoke gate compares to the direct
+`AppContext` oracle within 1/255 on N>=3 consecutive runs (analytic, not
+`non-empty`):
 
 ```cpp
 re::viz::Engine engine;
-auto id = engine.addMesh("data/meshes/bunny.obj",
-                         glm::mat4(1.0f),
-                         glm::vec4(0.2f, 0.4f, 0.8f, 1.0f)).value();
-re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0),
-                      glm::vec3(0,1,0));
+auto id = *engine.addMesh("data/meshes/bunny.obj", glm::mat4(1.0f), glm::vec4(0.2f,0.4f,0.8f,1.0f));
+re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
 cam.setPerspective(60.0f, 1.0f, 0.1f, 10.0f);
 engine.setView({{0,0,64,64}, cam, {id}});
 auto tex = re::core::Texture2D::create().value();
@@ -71,6 +88,12 @@ auto fb  = re::core::Framebuffer::create().value();
 // allocate tex, attach, then:
 engine.render(fb).value();
 ```
+
+T13 smoke gate: `examples/minimal` via `renderOffscreen` center pixel within
+1/255 of the `AppContext` oracle that does the 4-step ceremony manually
+(`loadObjMesh → shared_ptr<Mesh> → MeshObject → addMeshObject → View → sync/
+renderAll/presentAll`) on N>=3 runs — the analytic headlight color
+`(0.85,0.45,0.15)` at the center probe, not `>0`.
 
 ## API surface (one class, 80% path)
 

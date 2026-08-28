@@ -145,3 +145,94 @@ review found between the documented mechanism and its implementation:
 > `computeContentHash(VolumeDataset/Image)` overloads. §10's "Volume Tex lives
 > globally, deduped" becomes true only when T14 lands the typed multi-kind
 > store keyed by `(AssetId, generation, contentHash)`.
+
+### 10.8 Versioned `SceneStore::serialize()` JSON — wire format + migrations (T13)
+
+`SceneStore::serialize()` is the versioned persistence wire format for the
+scene value library — the only place the `CompositeKey{Version,LayoutId,ViewId,
+Type,Gen,Hash}` leaves memory as bytes. `MaterialDesc`/`LightDesc` JSON via
+`nlohmann/json` 3.11.3 (`CMakeLists.txt:117` `GIT_TAG v3.11.3`, already pinned)
+is the stable variant wire for `MeshMaterialDesc`/`LightDesc`; this section
+stabilizes `View` persistence on the same JSON lib, with `Version` migrations
+and the `View` wire that was missing before T13.
+
+Wire (JSON text + binary NRRD raw `uint16` blob + SHA-256 `contentHash` for
+`VolumeDataset` beside the JSON; see `assets.md:64` §7 addendum decision
+Q36/Q47 `nlohmann/json` 3.11.x — not `glaze`):
+
+```json
+{
+  "Version": 1,
+  "LayoutId": 0,
+  "Views": [
+    {
+      "ViewId": 1,
+      "Rect": {"x":0,"y":0,"w":800,"h":600},
+      "Camera": {"eye":[0,0,3],"center":[0,0,0],"up":[0,1,0],
+                 "fov":60,"aspect":1.333,"near":0.1,"far":10,
+                 "viewGen":7,"projGen":7},
+      "CompositeKey": {"Version":1,"LayoutId":0,"ViewId":1,"Type":"View","Gen":7,"Hash": 0x9e3779b9},
+      "Plane": null,
+      "ItemIds": [1],
+      "ClearColor": [0.10,0.10,0.12,1.0],
+      "DepthTest": false,
+      "Lights": [],
+      "LayerMask": 255,
+      "LayerOverrides": {}
+    }
+  ],
+  "Objects": [
+    {"ObjectId":1,"Type":"Mesh","Gen":1,"Hash":1469598103934665603,
+     "GeometryKind":"Mesh","Transform":[1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+     "Material": {"baseColor":[0.85,0.45,0.15,1.0],"metallic":0,"roughness":1},
+     "AssetId": 42, "ContentHash": 0x1234}
+  ],
+  "Assets": [
+    {"AssetId":42,"Type":"Mesh","ContentHash": 0x1234, "RefCount":1, "BytesSHA256":"abc..."}
+  ]
+}
+```
+
+`Version` is the persistence schema version (`CompositeKey::version`, `uint32`,
+bumped when `Re*` field inventory or hash algorithm changes per §10.1 — without
+it a V3.7 cache aliases a V3.8 cache, the EOL cache-coherence bug). `Version`
+prefix invalidates the broker cache on migration (hierarchical
+`Version:LayoutId:Type:Hash`, Software Patterns Lexicon + Dev Genius). On disk
+the `Version` field is the first key in the JSON object so a reader can branch
+before parsing the rest.
+
+Migrations — `SceneMigrator{Version→Version}` chain (OCP via migrator registry
+per `open_questions.md:78` Q36/Q47 DCS Data Contracts 2026-05-26 + `broker.md`
+EOL-4): each `Version` bump adds one `Migrator` file plus one
+`registerMigrator(from, to, fn)` call, zero edits to existing migrators. The
+chain is `BACKWARD` compatible (new reader reads old writer, per Confluent Schema
+Registry `BACKWARD` per V3 `EOL-4`) — old files remain readable to EOL; forward
+and full compat are not required. `Re*` caches are never serialized (they are
+reconstructible via `ViewSynchronizer` replay); only stable wire is
+`SceneStore` (`Id+gen+hash` per object), `MaterialDesc`/`LightDesc` (stable
+variant JSON `kind` discriminator), `LayoutSpec`/`ViewDesc` (relative), `Camera`
+(`view/proj` matrices). `SceneStore::deserialize()` applies the migrator chain
+from the file's `Version` to the current `CompositeKey::version` before
+rebuilding the secondary `kindIndex_` (`SceneKind→set<Id>`) from the single-map
+`objects_` (T6 single-map invariant — no `meshObjects_` partitions).
+
+Why `View` was not serialized before T13: `MaterialDesc`/`LightDesc` already had
+JSON via `nlohmann/json`, but `View` persistence via the content-addressed
+`CompositeKey` was in-memory only; the T13 stabilization documents the `View`
+wire (`Rect`, `Camera`, `CompositeKey`, `Plane`, `ItemIds`, `ClearColor`,
+`DepthTest`, `Lights`, `LayerMask`, `LayerOverrides`) and the `Version` migration
+contract so future `Version` bumps have a pinned format. `SceneStore::serialize()`
+lives in `scene/store.hpp` (`std::string serialize() const` returning JSON text)
+and `scene/store.cpp` (`deserialize` static), header-only `CompositeKey` stays
+the cache key, not the file format — the JSON `CompositeKey` field is the
+serialized projection of the in-memory key for debugging, the store rebuilds the
+live key via `CompositeKey{Version,LayoutId,ViewId,Type,Gen,Hash}` on load.
+
+Example `Version` migration (1→2): `View::clearColor` field added; migrator
+`Migrator{1→2}` inserts `"ClearColor":[0,0,0,0]` default when missing and bumps
+`Version` to 2; `Migrator{2→3}` would add `DepthTest` etc. — one file per bump,
+registry `SceneMigrator::registerMigrator(1,2,fn)` OCP, zero edits to `Migrator
+1→2` when `2→3` lands. `T6` single-map `objects_` is the only store of truth;
+`kindIndex_` is rebuilt, not serialized (derived index, not source). Binary
+`VolumeDataset` bytes are not in the JSON — they are the NRRD raw `uint16` blob
+beside the JSON file plus `SHA-256` `contentHash` (see `assets.md` §7).

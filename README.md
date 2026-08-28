@@ -77,9 +77,9 @@ needed:
 ```cpp
 #include "render_engine/engine.hpp"
 re::viz::Engine engine;
-auto id = engine.addMesh("data/meshes/bunny.obj",
-                         glm::mat4(1.0f),
-                         glm::vec4(0.85f, 0.45f, 0.15f, 1.0f)).value();
+auto id = *engine.addMesh("data/meshes/bunny.obj",
+                          glm::mat4(1.0f),
+                          glm::vec4(0.85f, 0.45f, 0.15f, 1.0f));
 re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
 cam.setPerspective(60.0f, 800.0f/600.0f, 0.1f, 10.0f);
 engine.setView({{0,0,800,600}, cam, {id}});
@@ -89,7 +89,52 @@ engine.render(fb).value(); // sync → renderAll → presentAll, 1/255 vs direct
 ```
 
 See `docs/engine.md` for the full facade docs and the `examples/minimal.cpp`
-20-line copy-paste. Advanced users keep `engine.appContext()` / `engine.store()`.
+22-line copy-paste. Advanced users keep `engine.appContext()` / `engine.store()`.
+
+## Minimal example (T13, 22 lines)
+
+The first file a visualization project copies — `examples/minimal.cpp` (exactly
+22 lines, one `Engine` occurrence, builds via the installed
+`RenderEngineConfig.cmake`):
+
+```sh
+cmake -S examples -B /tmp/min && cmake --build /tmp/min
+./build/examples/minimal  # headless via renderOffscreen, 1/255 vs AppContext oracle
+```
+
+```cpp
+// examples/minimal.cpp — 22 lines, headless offscreen path
+#include "render_engine/engine.hpp"
+#include "scene/camera.hpp"
+#include "render/offscreen.hpp"
+#include <glm/vec3.hpp>
+#include <glm/mat4x4.hpp>
+int main() {
+    re::viz::Engine e;
+    auto r = e.addMesh("data/meshes/bunny.obj");
+    if (r.failed()) return 1;
+    auto id = *r;
+    re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
+    cam.setPerspective(60, 800.0f/600.0f, 0.1f, 10.0f);
+    e.setView({{0,0,800,600}, cam, {id}});
+    auto v = e.views().front();
+    auto img = re::render::renderOffscreen(800, 600, std::span<const re::scene::View>(&v, 1), e.store());
+    if (img.failed()) return 2;
+    auto &im = *img;
+    (void)im.width(); (void)im.height(); (void)im.pixels().size();
+    return 0;
+}
+```
+
+`renderOffscreen` is the headless `core/offscreen.hpp` + `render/offscreen.hpp`
+facade that owns a hidden GL context via `utils::OffscreenContext` and reads back
+via `REContext::readRgba8` (sole raw readback in `core/re_context.cpp`). The
+T13 smoke gate asserts the offscreen center pixel is within 1/255 of the direct
+`AppContext` oracle on N>=3 consecutive runs (analytic, not `non-empty`).
+`SceneStore::serialize()` is versioned JSON (`Version` + `View` wire format
+`CompositeKey{Version,LayoutId,ViewId,Type,Gen,Hash}` per `docs/spec/persistence.md`
+§10.6) via `nlohmann/json` 3.11.3 — see `docs/spec/persistence.md` §10.6 and
+`docs/engine.md` §Serialize.
 
 ## Module layout
 

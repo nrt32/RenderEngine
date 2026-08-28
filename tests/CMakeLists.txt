@@ -63,6 +63,7 @@ add_executable(${RE_TEST_TARGET}
     t9_camera_controller_test.cpp
     t11_volume_caps_test.cpp
     t12_fps_standalone_test.cpp
+    t13_minimal_example_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
@@ -83,6 +84,14 @@ target_link_libraries(${RE_TEST_TARGET}
         GTest::gtest
         GTest::gtest_main
 )
+# T13 serialize test includes <nlohmann/json.hpp> directly; re_scene links it
+# PRIVATE, so the test needs its own header-only include. Provide it when the
+# fetched target exists (root CMakeLists pins v3.11.3).
+if(TARGET nlohmann_json::nlohmann_json)
+    target_link_libraries(${RE_TEST_TARGET} PRIVATE nlohmann_json::nlohmann_json)
+elseif(TARGET nlohmann_json)
+    target_link_libraries(${RE_TEST_TARGET} PRIVATE nlohmann_json)
+endif()
 
 # Repo root, so tests can locate the committed assets under data/ (they run
 # from the build dir). Pointed at the SOURCE tree, not the build tree.
