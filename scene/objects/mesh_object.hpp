@@ -17,12 +17,26 @@
 #include <glm/vec4.hpp>
 
 #include "data/mesh.hpp"
+#include "scene/geometry_kind.hpp"
 #include "scene/material_desc.hpp"
 #include "scene/iscene_object.hpp"
 
 namespace re::scene {
 
-/// MeshObject — see header comment for role and open-extension guarantee.
+/// MeshObject — collapsed mesh-backed object (T5).
+///
+/// The 11 byte-identical headers (CubeObject, SphereObject, Cylinder, Torus,
+/// Cone, Arrow, Grid, Axes, Capsule, PointCloud, Teapot sharing
+/// `AssetRef<Mesh> mesh; mat4 transform; MeshMaterialDesc presentation;` at
+/// scene/objects/*.hpp:36-40) are collapsed into one MeshObject carrying
+/// GeometryKind {Mesh, Cube, Sphere, Cylinder, Torus, Cone, Arrow, Grid, Axes,
+/// Capsule, PointCloud, Teapot}. SceneKind stays for technique dispatch only
+/// (6 values: Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour); adding a
+/// Sphere no longer needs a new header — `MeshObject{ .geometryKind =
+/// GeometryKind::Sphere }` via the single MeshObjectMapper renders within 1/255
+/// of the old per-kind path. SceneFactory + REGISTER_SCENE_OBJECT remain for
+/// truly new techniques (e.g., StreamlineObject), not for data-driven mesh
+/// variations. T5.
 class MeshObject : public ObjectBase<MeshObject> {
    public:
     static constexpr SceneKind Kind = SceneKind::Mesh;
@@ -38,10 +52,15 @@ class MeshObject : public ObjectBase<MeshObject> {
     AssetRef<data::Mesh> mesh{};
     glm::mat4 transform{1.0f};
     MeshMaterialDesc presentation{};
+    GeometryKind geometryKind{GeometryKind::Mesh};
     uint64_t generation{0};
 
     void setPresentation(MeshMaterialDesc p) noexcept {
         presentation = std::move(p);
+        ++generation;
+    }
+    void setGeometryKind(GeometryKind k) noexcept {
+        geometryKind = k;
         ++generation;
     }
 };

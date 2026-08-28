@@ -229,14 +229,17 @@ class Broker {
          return ownedByApp_.size() + ownedByMapper_.size();
      }
 
-     /// SceneKind-keyed registry view — the T1 open hierarchy map
-     /// `SceneKind → IMapperBase*` (Strategy per Kind, one file per mapper).
-     /// `ISceneObject` data is processed only by its own mapper; the alias is a
-     /// non-owning view into ownedByMapper_/ownedByApp_ storage (see
-     /// registerMapper overloads) so one registration populates both views.
-     /// Used by ViewSynchronizer's kind-dispatched sync and by the gate's
-     /// `Broker::registeredTypes()` check that TeapotObject count is 1. T1
-     /// Phase C.
+      /// SceneKind-keyed registry view — the T1 open hierarchy map
+      /// `SceneKind → IMapperBase*` (Strategy per Kind, one file per mapper).
+      /// `ISceneObject` data is processed only by its own mapper; the alias is a
+      /// non-owning view into ownedByMapper_/ownedByApp_ storage (see
+      /// registerMapper overloads) so one registration populates both views.
+      /// Used by ViewSynchronizer's kind-dispatched sync and by the gate's
+      /// `Broker::registeredTypes()` check that the 6 technique kinds
+      /// (Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour) are registered
+      /// — GeometryKind variations (Sphere, Cube, Teapot etc.) share the single
+      /// MeshObjectMapper via MeshObject.geometryKind, not a new SceneKind. T1
+      /// Phase C, T5 collapse 17→6.
      std::vector<scene::SceneKind> registeredTypes() const {
          std::vector<scene::SceneKind> out;
          out.reserve(sceneKindAliases_.size());

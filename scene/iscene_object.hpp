@@ -53,12 +53,23 @@ using ObjectId = uint64_t;
 template <typename T>
 using AssetRef = std::shared_ptr<const T>;
 
-/// Scene kind — the stable type identity for the open hierarchy (one value per
-/// concrete ISceneObject subclass). The factory and the broker both key on this
-/// enum, so adding a new kind needs only one enum entry plus one registration
-/// line, while existing mapper files and the view synchronizer remain closed for
-/// modification (open-closed principle via registry). Kept as a plain enum so
-/// the broker can use it as an unordered_map key without type_index RTTI.
+/// Scene kind — the stable type identity for technique dispatch (T5).
+///
+/// V5 T5 collapses the 11 byte-identical mesh-backed kinds (Cube, Sphere,
+/// Cylinder, Torus, Cone, Arrow, Grid, Axes, Capsule, PointCloud, Teapot that
+/// shared `AssetRef<Mesh> mesh; mat4 transform; MeshMaterialDesc presentation;`
+/// at scene/objects/*.hpp:36-40) into one MeshObject carrying GeometryKind
+/// {Mesh, Cube, Sphere, Cylinder, Torus, Cone, Arrow, Grid, Axes, Capsule,
+/// PointCloud, Teapot}. SceneKind stays for technique dispatch only — 6 values
+/// (Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour) — so adding a Sphere
+/// no longer needs a new header; `MeshObject{ .geometryKind = Sphere }` via the
+/// single MeshObjectMapper renders within 1/255 of the old per-kind path.
+/// SceneFactory + REGISTER_SCENE_OBJECT remain for truly new techniques (e.g.,
+/// StreamlineObject), not for data-driven mesh variations. The factory and the
+/// broker key on this 6-value enum, while existing mapper files and the view
+/// synchronizer remain closed for modification (open-closed via registry for
+/// techniques, GeometryKind for mesh variations). Kept as plain enum for
+/// unordered_map key without type_index RTTI. T5.
 enum class SceneKind : uint32_t {
     Mesh = 0,
     MeshSlice = 1,
@@ -66,18 +77,7 @@ enum class SceneKind : uint32_t {
     VolumeSlice = 3,
     Plane = 4,
     Contour = 5,
-    Teapot = 6,
-    Sphere = 7,
-    Cube = 8,
-    Cylinder = 9,
-    Torus = 10,
-    Cone = 11,
-    Arrow = 12,
-    Grid = 13,
-    Axes = 14,
-    PointCloud = 15,
-    Capsule = 16,
-    Count = 17
+    Count = 6
 };
 
 /// Shared header for every scene object — the duplicated {ObjectId,

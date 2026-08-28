@@ -13,7 +13,6 @@ add_library(re_broker STATIC
     light_mapper.cpp
     view_mapper.cpp
     plane_object_mapper.cpp
-    teapot_object_mapper.cpp
     volume_object_mapper.cpp
     volume_slice_object_mapper.cpp
     render_stack.cpp

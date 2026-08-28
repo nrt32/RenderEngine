@@ -57,6 +57,7 @@ add_executable(${RE_TEST_TARGET}
     t1_engine_facade_test.cpp
     t3_harness_decouple_test.cpp
     t4_offscreen_test.cpp
+    t5_geometry_collapse_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
