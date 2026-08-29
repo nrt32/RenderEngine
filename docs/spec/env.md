@@ -35,6 +35,7 @@
   are set in `tools/env.sh` for `ctest` leak gate — do not override; running
   the gate on `d3d12` path yields nondeterministic LSAN attribution per `nfr.md:5`.
   `ASAN_OPTIONS`/`LSAN_OPTIONS` suppressions for llvmpipe/d3d12 are documented in `docs/spec/nfr.md` T12 and `tools/env.sh` (suppression file `tools/lsan.supp` when present).
+  LSAN suppressions for llvmpipe/Wayland driver noise live in `tools/lsan.supp` (not for project code): `leak:<unknown module>` plus `libwayland`, `libdecor`, `libfontconfig`, `libpango`, `libcairo`, `libgtk-3`, `_glfwInitEGL`, `eglInitialize`, `glfwCreateWindow`, `libxkbcommon`, `libX11` — at least 8 `^leak:` lines covering `<unknown module>`, Wayland, decor, fontconfig, pango, cairo, gtk and EGL; `tools/env.sh:15` exports `LSAN_OPTIONS=suppressions=$ROOT/tools/lsan.supp` when the file exists (absolute `$ROOT` path, fix #10). Genuine project leaks (e.g. missed `glDeleteTextures`) remain unsuppressed and abort under `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1`.
 
 ### Toolchain
 - Compiler: GCC 12+ (Ubuntu default on 22.04+).

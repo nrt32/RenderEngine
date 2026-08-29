@@ -1,0 +1,25 @@
+# LeakSanitizer suppressions for RenderEngine (llvmpipe/Wayland driver noise).
+# KEEP FIRST LINE as template: leak:<unknown module> (EGL driver TLS).
+# Syntax: https://clang.llvm.org/docs/AddressSanitizer.html#suppressing-reports-in-lsan
+# Project leaks (e.g. missed glDeleteTextures) are NOT suppressed — only third-party
+# Wayland/fontconfig/Pango/Cairo/GTK and GLFW EGL driver noise.
+leak:<unknown module>
+leak:libwayland-client
+leak:libwayland-server
+leak:libdecor
+leak:libdecor-gtk
+leak:libfontconfig
+leak:libpango
+leak:libcairo
+leak:libglib
+leak:libgtk-3
+leak:FcValueSave
+leak:pango
+leak:gtk
+leak:_glfwInitEGL
+leak:eglInitialize
+leak:glfwCreateWindow
+leak:libxkbcommon
+leak:libX11
+leak:libdecor_frame_commit
+leak:FcFontRenderPrepare

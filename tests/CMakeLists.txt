@@ -43,7 +43,8 @@ add_executable(${RE_TEST_TARGET}
     t17_renderer_consolidation_test.cpp
     t18_depth_test.cpp
     t19_oit_sample_test.cpp
-    t20_broker_path_test.cpp
+    broker_path_test.cpp
+    t20_lsan_suppressions_test.cpp
     t21_persistence_honesty_test.cpp
     t22_error_model_test.cpp
     t23_resize_test.cpp

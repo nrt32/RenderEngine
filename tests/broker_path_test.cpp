@@ -1,4 +1,4 @@
-// tests/t20_broker_path_test.cpp — T20 gate (broker becomes the ONLY app
+// tests/broker_path_test.cpp — broker gate (broker becomes the ONLY app
 // path: complete mapper inventory; no silent drops; no Noop layers).
 //
 // Asserts (R4 evidence rule — every check is an explainable constant):
