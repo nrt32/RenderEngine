@@ -91,11 +91,16 @@ struct VolumeInstance {
     glm::mat4 model{1.0f};
 
     VolumeInstance() = default;
-    // Legacy 3-arg ctor for pre-T7 direct-renderer tests (dataset-only): leaves handle null so the renderer's fallback legacyHandleCache registers the dataset once at first use via AssetRegistry::registerVolume (hashed at load/register time per data/content_hash.hpp:31, never per frame) and then hits O(1) cache without per-frame FNV-1a; this shim keeps old fixtures green while new broker-mediated code and the T7 gate use explicit VolumeTextureHandle via register→resolve, where content-hash IS identity and pinned refs==0 slots are gone.
+    // Legacy 3-arg ctor for compatibility: leaves handle null so the renderer
+    // falls back to a direct register via AssetRegistry::registerVolume (hashed
+    // at load/register time per data/content_hash.hpp:31, never per frame via
+    // a per-renderer map — content-hash IS identity via shared byHash_, no
+    // pointer-key cache remains, T7). New broker-mediated code and the T7 gate
+    // must use the explicit handle ctor below.
     VolumeInstance(std::shared_ptr<const data::VolumeDataset> ds,
                    volume::TransferFunction tf, glm::mat4 m)
         : handle{}, dataset(std::move(ds)), transferFunction(std::move(tf)), model(m) {}
-    // Full T7 owner-driven ctor with explicit handle (SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame): the instance carries a VolumeTextureHandle minted by AssetRegistry::registerVolume; the renderer resolves O(1) via handle's contentHash (content-hash IS identity, no byObject shim, no pinned slots). New broker-mediated code and the T7 gate use this path; legacy 3-arg ctor remains only for pre-T7 direct tests via fallback cache.
+    // Full T7 owner-driven ctor with explicit handle (SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame): the instance carries a VolumeTextureHandle minted by AssetRegistry::registerVolume; the renderer resolves O(1) via handle's contentHash (content-hash IS identity, no pointer shim, no pinned slots). New broker-mediated code and the T7 gate use this path; legacy 3-arg ctor remains only for compatibility via direct register without a per-renderer cache.
     VolumeInstance(VolumeTextureHandle h,
                    std::shared_ptr<const data::VolumeDataset> ds,
                    volume::TransferFunction tf, glm::mat4 m)
@@ -189,12 +194,6 @@ class VolumeRenderer {
     std::shared_ptr<AssetRegistry> assets_;
     LazyProgramCache rayCastProgram_;
     std::optional<ScreenQuad> screenQuad_;
-    // Fallback cache for legacy dataset-only instances (pre-T7): maps raw
-    // dataset pointer to its owner-driven handle (registered once, then O(1)).
-    // This keeps old direct-renderer tests green without per-frame hashing
-    // while new code should set handle explicitly via AssetRegistry::registerVolume.
-    mutable std::unordered_map<const data::VolumeDataset*, VolumeTextureHandle>
-        legacyHandleCache_;
 };
 
 } // namespace re::render

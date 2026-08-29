@@ -10,7 +10,7 @@
 //  (4) typed store extensibility: AssetRegistry<Mesh> / VolumeDataset / Image
 //      share one template (no per-kind duplicate) — compile-time trait;
 //  (5) render::AssetRegistry dedups distinct pointer same bytes to same handle
-//      (dual-key shim).
+//      (content-hash byHash_ only, no byObject_ shim, T7).
 
 #include <gtest/gtest.h>
 
@@ -18,7 +18,6 @@
 
 #include <glm/vec3.hpp>
 
-#include "broker/asset_store.hpp"
 #include "data/mesh.hpp"
 #include "data/volume_dataset.hpp"
 #include "data/image.hpp"
@@ -137,19 +136,23 @@ TEST(T7AssetIdentity, DistinctPointerIdenticalBytesDedupsViaContentHash) {
     // Pointer-identity would have produced 2 slots — prove hash dedup, not pointer dedup
     EXPECT_EQ(idA->contentHash, idB->contentHash);
 
-    // Broker asset store also dedups distinct pointer same bytes. Fresh
-    // distinct allocations again (the earlier ones were moved into the scene
-    // store above): identical bytes must still alias to ONE slot.
-    broker::AssetStore bstore;
+    // Scene AssetRegistry also dedups distinct pointer same bytes (second
+    // registry instance, same content-hash path — broker AssetStore deleted at
+    // T7, canonical is scene::AssetRegistry<T> via SceneStore, content-hash IS
+    // identity, no byObject_ pointer map). Fresh distinct allocations again
+    // (the earlier ones were moved into the scene store above): identical
+    // bytes must still alias to ONE slot.
+    scene::AssetRegistry<data::Mesh> secondReg;
     auto meshA2 = std::make_shared<const data::Mesh>(makeBoxMesh());
     auto meshB2 = std::make_shared<const data::Mesh>(makeBoxMesh());
     EXPECT_NE(meshA2.get(), meshB2.get()) << "distinct allocations (explainable)";
-    auto bhA = bstore.registerAsset(meshA2);
+    auto bhA = secondReg.registerAsset(meshA2);
     ASSERT_TRUE(bhA.ok());
-    auto bhB = bstore.registerAsset(meshB2);
+    auto bhB = secondReg.registerAsset(meshB2);
     ASSERT_TRUE(bhB.ok());
-    EXPECT_EQ(bhA->index, bhB->index) << "broker AssetStore must dedup distinct pointer same bytes (hash path)";
-    EXPECT_EQ(bstore.slotCount(), 1u) << "broker slotCount 1 for identical content (explainable)";
+    EXPECT_EQ(bhA->index, bhB->index) << "AssetRegistry must dedup distinct pointer same bytes (hash path)";
+    EXPECT_EQ(secondReg.slotCount(), 1u) << "slotCount 1 for identical content (explainable)";
+    EXPECT_EQ(bhA->contentHash, bhB->contentHash) << "same contentHash for identical bytes (explainable)";
 }
 
 // ---------------------------------------------------------------------------

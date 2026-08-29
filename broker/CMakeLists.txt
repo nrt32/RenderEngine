@@ -3,7 +3,6 @@
 # Only lib that may include both scene/ and render/.
 add_library(re_broker STATIC
     broker.cpp
-    asset_store.cpp
     camera_mapper.cpp
     material_mapper.cpp
     mesh_object_mapper.cpp

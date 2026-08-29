@@ -69,6 +69,7 @@ add_executable(${RE_TEST_TARGET}
     t1_store_io_depollution_test.cpp
     t5_dumb_layers_test.cpp
     t6_technique_order_test.cpp
+    t7_unified_dedup_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

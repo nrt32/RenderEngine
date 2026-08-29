@@ -71,23 +71,20 @@ data::Result<void> VolumeSliceRenderer::drawOne(
     const VolumeSliceInstance& instance, const Camera& camera,
     core::ShaderProgram* program) {
     (void)camera;
+    // T7: content-hash IS identity via shared byHash_, no per-renderer pointer
+    // map (per-renderer cache deleted). Fallback without a cache still hashes
+    // at register time per data/content_hash.hpp:31.
     VolumeTextureHandle handle = instance.handle;
     if (handle.isNull()) {
         if (!instance.dataset) {
             return data::makeError<void>(
                 1, "VolumeSliceRenderer: slice instance carries null handle and null dataset");
         }
-        auto it = legacyHandleCache_.find(instance.dataset.get());
-        if (it != legacyHandleCache_.end()) {
-            handle = it->second;
-        } else {
-            auto reg = assets_->registerVolume(instance.dataset);
-            if (reg.failed()) {
-                return data::makeError<void>(reg.error().code, reg.error().message);
-            }
-            handle = *reg;
-            legacyHandleCache_[instance.dataset.get()] = handle;
+        auto reg = assets_->registerVolume(instance.dataset);
+        if (reg.failed()) {
+            return data::makeError<void>(reg.error().code, reg.error().message);
         }
+        handle = *reg;
     }
     if (!instance.dataset) {
         return data::makeError<void>(

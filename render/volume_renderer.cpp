@@ -113,26 +113,21 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
     program->setUniformInt("uVolume", 0); // sampler reads texture unit 0
 
     for (const VolumeInstance& instance : scene.volumes) {
-        // T7 owner-driven: prefer explicit handle; fallback to legacy
-        // dataset→handle cache for pre-T7 direct tests (hashed once at
-        // first use, then O(1) cache hit — no per-frame FNV-1a).
+        // T7 owner-driven: prefer explicit handle (content-hash IS identity via
+        // shared byHash_, no per-renderer pointer map — T7 deletes the per-
+        // renderer cache). Fallback without a cache still hashes at register
+        // time per data/content_hash.hpp:31 but has no per-renderer map.
         VolumeTextureHandle handle = instance.handle;
         if (handle.isNull()) {
             if (!instance.dataset) {
                 return data::makeError<void>(
                     1, "VolumeRenderer: volume instance carries null handle and null dataset");
             }
-            auto it = legacyHandleCache_.find(instance.dataset.get());
-            if (it != legacyHandleCache_.end()) {
-                handle = it->second;
-            } else {
-                auto reg = assets_->registerVolume(instance.dataset);
-                if (reg.failed()) {
-                    return data::makeError<void>(reg.error().code, reg.error().message);
-                }
-                handle = *reg;
-                legacyHandleCache_[instance.dataset.get()] = handle;
+            auto reg = assets_->registerVolume(instance.dataset);
+            if (reg.failed()) {
+                return data::makeError<void>(reg.error().code, reg.error().message);
             }
+            handle = *reg;
         }
         if (!instance.dataset) {
             return data::makeError<void>(
@@ -190,7 +185,7 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
             }
             effectiveHandle = *regDown;
             effectiveDataset = down;
-            // Legacy cache not needed for downsampled path — direct handle used.
+            // No per-renderer cache needed for downsampled path — direct handle used.
             handle = effectiveHandle;
         }
         if (handle.isNull()) {

@@ -79,29 +79,35 @@
 namespace re::render {
 
 /// Copyable handle to a registered GPU geometry (mesh kind, SPEC §9 V2.5): the
-/// registry slot index plus the slot's generation at issue time.
-///
-/// Handles are cheap to copy and are the currency scene instances and views
-/// exchange — a `MeshInstance` holds one instead of a raw `const data::Mesh*`
-/// pointer, so a scene never touches a CPU mesh directly. A handle is valid
-/// only for the registry that issued it, and only until its slot's last
-/// reference is released: resolving a stale handle returns a typed error,
-/// never a crash (SPEC §5). The default-constructed handle `{0, 0}` is the
-/// reserved null handle (generation 0 is never issued to a live slot).
+/// registry slot index plus the slot's generation at issue time, plus the
+/// content hash the slot was created from (SPEC §7 T7, data/content_hash.hpp:31
+/// hashed at load/register time, never per frame). Unified with
+/// VolumeTextureHandle/ImageTextureHandle shape: `{index,generation,hash}` is
+/// the single identity (content-hash IS identity, no pointer shim, no pinned
+/// refs==0 slots). Handles are cheap to copy and are the currency scene
+/// instances and views exchange — a `MeshInstance` holds one instead of a raw
+/// `const data::Mesh*` pointer, so a scene never touches a CPU mesh directly.
+/// A handle is valid only for the registry that issued it, and only until its
+/// slot's last reference is released: resolving a stale handle returns a typed
+/// error, never a crash (SPEC §5). The default-constructed handle
+/// `{0,0,0}` is the reserved null handle (generation 0 is never issued to a
+/// live slot).
 struct AssetHandle {
-    std::uint32_t index = 0u;      ///< Slot index in the registry's slot table.
-    std::uint32_t generation = 0u; ///< Slot generation at issue time.
+    std::uint32_t index = 0u;       ///< Slot index in the registry's slot table.
+    std::uint32_t generation = 0u;  ///< Slot generation at issue time.
+    std::uint64_t contentHash = 0u;  ///< Content hash the slot was created from.
 
-    /// True for the reserved null handle {0, 0}: the "no asset" instance
+    /// True for the reserved null handle {0,0,0}: the "no asset" instance
     /// (renderers skip it, like the pre-V2 null mesh pointer).
     bool isNull() const noexcept {
-        return index == 0u && generation == 0u;
+        return index == 0u && generation == 0u && contentHash == 0u;
     }
 };
 
-/// Two handles are equal iff both their index and generation match.
+/// Two handles are equal iff their index, generation and content hash match.
 inline bool operator==(const AssetHandle& a, const AssetHandle& b) noexcept {
-    return a.index == b.index && a.generation == b.generation;
+    return a.index == b.index && a.generation == b.generation &&
+           a.contentHash == b.contentHash;
 }
 
 inline bool operator!=(const AssetHandle& a, const AssetHandle& b) noexcept {
@@ -571,16 +577,11 @@ class AssetRegistry {
    private:
     /// A single mesh-kind slot: GPU geometry (heap-stable), stable content
     /// hash, reference count, and generation (0 = never allocated; bumped on
-    /// every free and reuse). `cpuObject` is the diagnostic pointer shim
-    /// retained in V3.6 dual-key mode (not the dedup key — `contentHash` is).
-    /// @note lifetime: `cpuObject` borrows the CALLER-owned CPU mesh purely
-    /// for diagnostics; entries keyed by it are erased whenever a reference
-    /// is released (the borrow is not owned by the store), and the registry
-    /// never dereferences or frees it (the CPU mesh stays RE-agnostic,
-    /// SPEC §7).
+    /// every free and reuse). Content-hash IS identity (SPEC §7 T7,
+    /// data/content_hash.hpp:31 hashed at load/register time, never per frame);
+    /// no pointer shim remains — dedup is solely via `byHash_`.
     struct Slot {
         std::unique_ptr<MeshGeometry> geometry;
-        const data::Mesh* /*borrow*/ cpuObject = nullptr;
         std::uint64_t contentHash{0u};
         std::uint32_t refs{0u};
         std::uint32_t generation = 0u;
@@ -588,12 +589,9 @@ class AssetRegistry {
 
     std::vector<Slot> slots_;
     std::vector<std::size_t> freeIndices_;
-    // Dual-key mesh lookup: byObject_ maps the caller's CPU pointer to its
-    // slot for O(1) re-registration of the SAME object (a diagnostic shim,
-    // not the dedup key); byHash_ is the real identity map — content hash of
-    // stable bytes, so two distinct allocations with identical bytes alias
-    // one slot.
-    std::unordered_map<const data::Mesh*, AssetHandle> byObject_;
+    // Content-hash dedup only (SPEC §7 T7): `byHash_` maps stable-byte hash to
+    // slot; identical bytes alias one slot regardless of heap address, no
+    // pointer-key map remains (T7 deletes the dual-key shim).
     std::unordered_map<uint64_t, AssetHandle> byHash_;
     std::size_t liveCount_{0u};
 

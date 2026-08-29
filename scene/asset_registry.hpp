@@ -81,10 +81,6 @@ class AssetRegistry {
 
         std::size_t idx = 0;
         uint32_t gen = 0;
-        const T* /*borrow*/ raw = asset.get(); // byObject_ diagnostic key;
-        // borrow of the bytes this registry's Slot::object (shared_ptr below)
-        // co-owns — the key lives exactly as long as the slot (erased on
-        // unregister).
         if (!freeIndices_.empty()) {
             idx = freeIndices_.back();
             freeIndices_.pop_back();
@@ -107,9 +103,6 @@ class AssetRegistry {
         ++liveCount_;
         AssetId id{static_cast<uint32_t>(idx), gen, hash};
         byHash_[hash] = id;
-        byObject_[raw] = id; // diagnostic shim keyed on stable object address
-                             // while the slot lives (erased on unregister);
-                             // NOT the dedup key — contentHash is.
         return data::makeValue<AssetId>(id);
     }
 
@@ -159,9 +152,6 @@ class AssetRegistry {
         if (s.contentHash != id.contentHash) {
             return data::makeError<void>(2, "AssetRegistry: contentHash mismatch");
         }
-        if (s.object) {
-            byObject_.erase(s.object.get());
-        }
         byHash_.erase(s.contentHash);
         s.object.reset(); // releases the registry's shared reference; other
                           // co-owners (resolved callers) keep the bytes alive
@@ -193,10 +183,6 @@ class AssetRegistry {
     std::vector<Slot> slots_;
     std::vector<std::size_t> freeIndices_;
     std::unordered_map<uint64_t, AssetId> byHash_;
-    // Diagnostic shim keyed by the live slot's object address (erased on
-    // unregister, so no entry ever outlives the object it keys). Not the
-    // dedup key — `byHash_` (content hash) is (T7).
-    std::unordered_map<const T*, AssetId> byObject_;
     std::size_t liveCount_{0u};
 };
 

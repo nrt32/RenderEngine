@@ -223,9 +223,11 @@ void AssetRegistry::resetShared() {
 // ---------------------------------------------------------------------------
 
 data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
-    // Content-hash dedup (primary): identical bytes alias even for distinct
-    // pointers. Pointer-identity byObject_ is retained as dual-key shim
-    // (diagnostics only); hash is the binding key from SceneStore::AssetId.
+    // Content-hash dedup only (SPEC §7 T7, data/content_hash.hpp:31 hashed at
+    // load/register time, never per frame): identical bytes alias even for
+    // distinct pointers; no pointer shim remains, dedup is solely via `byHash_`
+    // keyed by stable-byte hash so two allocations with identical vertex/index
+    // bytes share one GPU object and one slot.
     const uint64_t hash = data::computeContentHash(mesh);
     auto hashIt = byHash_.find(hash);
     if (hashIt != byHash_.end()) {
@@ -236,26 +238,6 @@ data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
                 slot.contentHash == hash) {
                 ++slot.refs; // one more owner of the same GPU object
                 return data::makeValue<AssetHandle>(existing);
-            }
-        }
-    }
-    // Fallback pointer shim (dual-key diagnostic) — same pointer dedup only
-    // while the live slot actually HOLDS this content (`slot.contentHash ==
-    // hash`): if the caller mutated the mesh through its non-const reference
-    // after registering it, the hash no longer matches the slot's bytes and a
-    // NEW geometry must be uploaded instead of aliasing stale GPU data (the
-    // T14 invalidation rule). Unreachable while slots outlive their map
-    // entries, but kept so a stale byHash_ entry can never cause a second
-    // upload of a still-live object.
-    const auto existing = byObject_.find(&mesh);
-    if (existing != byObject_.end()) {
-        const AssetHandle& shimHandle = existing->second;
-        if (shimHandle.index < slots_.size()) {
-            Slot& slot = slots_[shimHandle.index];
-            if (slot.geometry && slot.generation == shimHandle.generation &&
-                slot.contentHash == hash) {
-                ++slot.refs;
-                return data::makeValue<AssetHandle>(shimHandle);
             }
         }
     }
@@ -277,7 +259,6 @@ data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
         freeIndices_.pop_back();
         Slot& slot = slots_[index];
         slot.geometry = std::make_unique<MeshGeometry>(std::move(*geometry));
-        slot.cpuObject = &mesh; // diagnostic borrow (see Slot @note lifetime)
         slot.contentHash = hash;
         slot.refs = kFirstRef;
         ++slot.generation;
@@ -286,7 +267,6 @@ data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
         // handle marker).
         Slot slot;
         slot.geometry = std::make_unique<MeshGeometry>(std::move(*geometry));
-        slot.cpuObject = &mesh; // diagnostic borrow (see Slot @note lifetime)
         slot.contentHash = hash;
         slot.refs = kFirstRef;
         ++slot.generation;
@@ -296,8 +276,7 @@ data::Result<AssetHandle> AssetRegistry::registerAsset(const data::Mesh& mesh) {
 
     ++liveCount_;
     const AssetHandle handle{static_cast<std::uint32_t>(index),
-                             slots_[index].generation};
-    byObject_.emplace(&mesh, handle);
+                             slots_[index].generation, hash};
     byHash_[hash] = handle;
     return data::makeValue<AssetHandle>(handle);
 }
@@ -318,6 +297,11 @@ data::Result<MeshGeometry*> AssetRegistry::resolve(const AssetHandle& handle) {
                 std::to_string(handle.generation) + " != slot generation " +
                 std::to_string(slot.generation) + ")");
     }
+    if (slot.contentHash != handle.contentHash) {
+        return data::makeError<MeshGeometry*>(
+            kGenerationMismatchCode,
+            "AssetRegistry: stale handle (contentHash mismatch)");
+    }
     if (!slot.geometry) {
         return data::makeError<MeshGeometry*>(
             kFreedSlotCode, "AssetRegistry: handle references a freed slot");
@@ -336,6 +320,11 @@ data::Result<void> AssetRegistry::unregister(const AssetHandle& handle) {
             kGenerationMismatchCode,
             "AssetRegistry: stale handle (generation mismatch)");
     }
+    if (slot.contentHash != handle.contentHash) {
+        return data::makeError<void>(
+            kGenerationMismatchCode,
+            "AssetRegistry: stale handle (contentHash mismatch)");
+    }
     if (!slot.geometry) {
         return data::makeError<void>(kFreedSlotCode,
                                      "AssetRegistry: handle references a freed "
@@ -343,13 +332,6 @@ data::Result<void> AssetRegistry::unregister(const AssetHandle& handle) {
     }
     if (slot.refs > 0u) {
         --slot.refs;
-    }
-    // The diagnostic borrow may die independently of the slot's remaining
-    // references, so the pointer-shim entry is dropped on EVERY release; the
-    // content hash remains the binding dedup key.
-    if (slot.cpuObject != nullptr) {
-        byObject_.erase(slot.cpuObject);
-        slot.cpuObject = nullptr;
     }
     if (slot.refs != 0u) {
         return data::Result<void>(data::value); // other owners keep it alive

@@ -181,8 +181,6 @@ class VolumeSliceRenderer {
     std::shared_ptr<AssetRegistry> assets_;
     LazyProgramCache program_;
     std::optional<ScreenQuad> screenQuad_;
-    mutable std::unordered_map<const data::VolumeDataset*, VolumeTextureHandle>
-        legacyHandleCache_;
 };
 
 } // namespace re::render

@@ -132,24 +132,18 @@ data::Result<void> PlaneRenderer::drawInstances(const PlaneScene& scene,
             return data::makeError<void>(
                 1, "PlaneRenderer: plane instance carries null geometry");
         }
-        // T7 owner-driven handles (SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame): volume/image identity is minted via AssetRegistry::registerImage at sync, handing the renderer an ImageTextureHandle; the renderer resolves O(1) via handle's contentHash (content-hash IS identity, no byObject pointer shim, no pinned refs==0 slots). Prefer explicit handle; fallback to legacy image→handle cache for pre-T7 direct tests (hashed once at first use, then O(1) cache hit) to keep old fixtures green while new code registers explicitly.
+        // T7 owner-driven handles (SPEC §7, data/content_hash.hpp:31 hashed at load/register time, never per frame): image identity is minted via AssetRegistry::registerImage at sync, handing the renderer an ImageTextureHandle; the renderer resolves O(1) via handle's contentHash (content-hash IS identity, no pointer shim, no per-renderer pointer map — T7 deletes the per-renderer cache). Prefer explicit handle; fallback without a cache still hashes at register time per data/content_hash.hpp:31.
         ImageTextureHandle handle = instance.handle;
         if (handle.isNull()) {
             if (!instance.image) {
                 return data::makeError<void>(
                     1, "PlaneRenderer: plane instance carries null handle and null image");
             }
-            auto it = legacyHandleCache_.find(instance.image.get());
-            if (it != legacyHandleCache_.end()) {
-                handle = it->second;
-            } else {
-                auto reg = assets_->registerImage(instance.image);
-                if (reg.failed()) {
-                    return data::makeError<void>(reg.error().code, reg.error().message);
-                }
-                handle = *reg;
-                legacyHandleCache_[instance.image.get()] = handle;
+            auto reg = assets_->registerImage(instance.image);
+            if (reg.failed()) {
+                return data::makeError<void>(reg.error().code, reg.error().message);
             }
+            handle = *reg;
         }
         // T14 collapse: direct handle resolve via the shared AssetRegistry with no
         // per-renderer wrapper — the ImageTextureHandle minted at register time

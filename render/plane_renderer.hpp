@@ -117,7 +117,12 @@ struct PlaneInstance {
     glm::mat4 model{1.0f};
 
     PlaneInstance() = default;
-    // Legacy 3-arg ctor for pre-T7 direct-renderer tests: leaves handle null so the renderer's fallback legacyHandleCache registers the image once at first use and then hits O(1) without per-frame hashing (T7 owner-driven path prefers explicit handle via AssetRegistry::registerImage; this shim keeps old fixtures green while new broker-mediated code and the T7 gate use explicit handles, hashed at load/register time per data/content_hash.hpp:31, never per frame).
+    // Legacy 3-arg ctor for compatibility: leaves handle null so the renderer
+    // falls back to a direct register via AssetRegistry::registerImage (hashed
+    // at load/register time per data/content_hash.hpp:31, no per-renderer
+    // cache — content-hash IS identity via shared byHash_, T7).
+    // New broker-mediated code and the T7 gate must use the explicit handle
+    // ctor below.
     PlaneInstance(std::shared_ptr<const PlaneGeometry> g,
                   std::shared_ptr<const data::Image> img, glm::mat4 m)
         : geometry(std::move(g)), handle{}, image(std::move(img)), model(m) {}
@@ -200,8 +205,6 @@ class PlaneRenderer {
     std::optional<core::VertexArray> quadVao_;
     std::optional<core::VertexBuffer> quadVbo_;
     std::optional<core::ElementBuffer> quadEbo_; // index buffer referenced by quadVao_
-    mutable std::unordered_map<const data::Image*, ImageTextureHandle>
-        legacyHandleCache_;
 };
 
 } // namespace re::render

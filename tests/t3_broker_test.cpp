@@ -25,8 +25,8 @@
 #include <glm/vec3.hpp>
 #include <glm/vec4.hpp>
 
-#include "broker/asset_store.hpp"
 #include "broker/broker.hpp"
+#include "scene/asset_registry.hpp"
 #include "broker/camera_mapper.hpp"
 #include "broker/i_mapper.hpp"
 #include "broker/i_view_bridge.hpp"
@@ -127,26 +127,29 @@ TEST(T3Broker, AppTypedRegisterAndGet) {
 // ---------------------------------------------------------------------------
 
 TEST(T3Broker, StaleGenerationPlusOneReturnsCode2) {
-    broker::AssetStore store;
+    // T7: broker::AssetStore deleted — canonical is scene::AssetRegistry<T>
+    // (content-hash byHash_ only, no byObject_ pointer map). Verify stale
+    // generation+1 returns typed error code 2 via the canonical registry.
+    scene::AssetRegistry<data::Mesh> store;
     auto mesh = std::make_shared<const data::Mesh>(makeTriangleMesh());
     auto hRes = store.registerAsset(mesh);
     ASSERT_TRUE(hRes.ok()) << "registerAsset must succeed";
-    broker::BrokerAssetHandle h = *hRes;
+    scene::AssetId h = *hRes;
     auto live = store.resolve(h);
     ASSERT_TRUE(live.ok());
     EXPECT_EQ(*live, mesh) << "live handle must resolve to the same shared asset (explainable)";
 
-    broker::BrokerAssetHandle stale{h.index, static_cast<uint32_t>(h.generation + 1)};
+    scene::AssetId stale{h.index, static_cast<uint32_t>(h.generation + 1), h.contentHash};
     auto staleRes = store.resolve(stale);
     EXPECT_TRUE(staleRes.failed()) << "stale generation+1 must be error, not crash";
     EXPECT_EQ(staleRes.error().code, 2) << "stale handle error code must be 2 (StaleHandle, explainable)";
-    broker::BrokerAssetHandle bad{9999u, 1u};
+    scene::AssetId bad{9999u, 1u, h.contentHash};
     auto badRes = store.resolve(bad);
     EXPECT_TRUE(badRes.failed());
     EXPECT_EQ(badRes.error().code, 1) << "out-of-range index code must be 1 (explainable)";
 
     render::AssetRegistry renderReg;
-    render::AssetHandle fake{0, 99};
+    render::AssetHandle fake{0, 99, 0};
     auto fakeRes = renderReg.resolve(fake);
     EXPECT_TRUE(fakeRes.failed());
     EXPECT_EQ(fakeRes.error().code, 1);
