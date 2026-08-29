@@ -19,6 +19,7 @@ target_include_directories(re_utils PUBLIC
 
 target_link_libraries(re_utils PUBLIC
     re_core
+    re_io
     $<BUILD_INTERFACE:glfw>
     $<BUILD_INTERFACE:spdlog::spdlog>
     re_project_warnings

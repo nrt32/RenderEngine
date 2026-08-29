@@ -10,7 +10,6 @@ add_library(re_scene STATIC
     view.cpp
 )
 target_link_libraries(re_scene PUBLIC re_data re_volume)
-target_link_libraries(re_scene PRIVATE re_io)
 target_link_libraries(re_scene PUBLIC $<BUILD_INTERFACE:glm::glm>)
 # T13 serialize uses nlohmann/json 3.11.3 (header-only, pinned GIT_TAG v3.11.3);
 # the .cpp includes <nlohmann/json.hpp> for SceneStore::serialize()/deserialize().

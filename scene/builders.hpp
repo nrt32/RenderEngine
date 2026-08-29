@@ -1,9 +1,8 @@
 #pragma once
 
-// scene/builders.hpp — V5 T7 loader helpers + Scene/View builders (SPEC §3.1).
+// scene/builders.hpp — V5 T7 loader helpers + Scene/View builders (SPEC §3.1, T1).
 //
-// T7 kills sample boilerplate: 4-step load→shared_ptr→MeshObject→add (5/6 samples duplicated) becomes SceneStore::loadMesh(path)→ObjectId atomically,
-// and the per-sample private applyLiveDims + PerspectiveFraming ceremony becomes one builder call.
+// T7 killed sample boilerplate: 4-step load→shared_ptr→MeshObject→add (5/6 samples duplicated) became SceneStore::loadMesh(path)→ObjectId atomically; T1 extracted the filesystem IO to utils/asset_utils.hpp so the 4-step ceremony `load→shared_ptr→registerMeshAsset→addMeshObject` now lives in `utils::loadMeshAsset`/`loadVolumeAsset` (header-only, IO-only, `utils/` owns filesystem) while Objects::mesh stays a pure value builder (no IO) and the per-sample private applyLiveDims + PerspectiveFraming ceremony becomes one builder call — SceneStore stays pure value lib `data+volume+glm` per docs/spec/modules.md:21 (header keeps no io headers, linkage via `utils/` not `scene/`).
 //
 // Two helpers:
 //  - SceneViewBuilder{ ViewId, Rect }.withCamera(cam).withItems(ids).withClear(color).build() → View
@@ -115,7 +114,7 @@ class SceneViewBuilder {
 /// Objects namespace — factory helpers for scene object values.
 ///
 /// Each helper takes the shared asset ref, transform, and presentation material and returns a ready-to-add MeshObject/VolumeObject/etc. value.
-/// The helpers target the single-map store's templated addObject<T> path (T6) — they produce Values, never touch the store map. The 4-step load→shared_ptr→MeshObject→add ceremony in 5/6 samples becomes store.loadMesh(path) via store.cpp; where samples need custom transforms/materials they use these helpers to build the object before addObject.
+/// The helpers target the single-map store's templated addObject<T> path (T6) — they produce Values, never touch the store map. The 4-step load→shared_ptr→MeshObject→add ceremony in 5/6 samples became SceneStore::loadMesh(path) via store.cpp in V5 T7; at T1 the filesystem IO was extracted to utils/asset_utils.hpp so the ceremony `load→shared_ptr→registerMeshAsset→addMeshObject` now lives in `utils::loadMeshAsset`/`loadVolumeAsset` (header-only, `utils/` owns filesystem) while Objects::mesh stays a pure value builder (no IO) — samples needing custom transforms/materials build the object with these helpers then addObject, keeping SceneStore pure value per docs/spec/modules.md:21.
 namespace Objects {
 
 /// Build a MeshObject value from asset + transform + Phong material (identity + opaque Phong default).

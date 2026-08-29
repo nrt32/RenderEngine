@@ -33,6 +33,7 @@
 #include "scene/camera.hpp"
 #include "scene/store.hpp"
 #include "scene/view.hpp"
+#include "utils/asset_utils.hpp"
 
 namespace re::tests {
 namespace {
@@ -75,12 +76,17 @@ TEST(T7LoaderFacade, LoadMeshCenterPixelWithin1_255_OfManualPath) {
     mo.presentation.phong.baseColor = glm::vec4(0.85f, 0.45f, 0.15f, 1.0f);
     uint64_t manualId = manualStore.addMeshObject(std::move(mo));
 
-    // Facade path — same store but separate instance to prove equivalence via rendering parity
+    // Facade path via utils::loadMeshAsset — this proves T1 depollution parity where the 4-step filesystem ceremony (load via IO, wrap in shared_ptr, register through the content-hashed AssetRegistry, add via the single-map path) now lives in utils/asset_utils.hpp instead of the retired SceneStore helpers; both stores render the same view so the center pixel can be compared within the analytic 1/255 tolerance while keeping SceneStore data-only.
     scene::SceneStore facadeStore;
-    auto facadeRes = facadeStore.loadMesh(path);
-    ASSERT_TRUE(facadeRes.ok()) << facadeRes.error().message;
-    uint64_t facadeId = *facadeRes;
-    // Customize facade object's material to match manual (facade defaults to opaque white)
+    auto facadeAsset = re::utils::loadMeshAsset(path);
+    ASSERT_TRUE(facadeAsset.ok()) << facadeAsset.error().message;
+    auto reg = facadeStore.registerMeshAsset(*facadeAsset);
+    ASSERT_TRUE(reg.ok()) << reg.error().message;
+    scene::MeshObject facadeObj;
+    facadeObj.mesh = *facadeAsset;
+    facadeObj.transform = glm::mat4(1.0f);
+    uint64_t facadeId = facadeStore.addMeshObject(std::move(facadeObj));
+    // Customize facade object's material to match manual (utils path defaults via MeshObject empty presentation → opaque white, so set to match manual)
     if (auto* mut = facadeStore.get<scene::MeshObject>(facadeId)) {
         const_cast<scene::MeshObject*>(mut)->presentation.phong.baseColor = glm::vec4(0.85f, 0.45f, 0.15f, 1.0f);
     }
@@ -239,8 +245,8 @@ TEST(T7LoaderFacade, MechanicalFloorsForSampleCleanupAndSingleMap) {
 // ---------------------------------------------------------------------------
 
 TEST(T7LoaderFacade, LoadMeshMalformedPreservesDomainAndCodeAndAndThenChain) {
-    scene::SceneStore store;
-    auto res = store.loadMesh("data/fixtures/malformed.obj");
+    // T1 migrated: SceneStore::loadMesh retired → utils::loadMeshAsset owns IO, preserve typed errors.
+    auto res = re::utils::loadMeshAsset("data/fixtures/malformed.obj");
     // File may exist but be malformed — either FileOpen or parse error, but domain must be MeshIo
     if (res.failed()) {
         EXPECT_EQ(res.error().domain, data::ErrorDomain::MeshIo) << "domain must be MeshIo";
@@ -248,21 +254,21 @@ TEST(T7LoaderFacade, LoadMeshMalformedPreservesDomainAndCodeAndAndThenChain) {
         EXPECT_GE(res.error().code, 1) << "code >=1";
         EXPECT_LE(res.error().code, 6) << "code <=6 per MeshLoadError";
     } else {
-        // If fixture not present, at least ensure success path returns valid id
-        EXPECT_NE(*res, 0u) << "valid id non-zero";
+        // If fixture not present, at least ensure success path returns valid asset non-null
+        EXPECT_NE(*res, nullptr) << "valid shared asset non-null";
     }
 
-    // andThen chain preserves domain/code — mimic T10 style but via loadMesh
-    auto chain = store.loadMesh("data/fixtures/malformed.obj").andThen([](uint64_t id) -> data::Result<scene::View> {
-        scene::View v; v.id = id; return data::makeValue<scene::View>(v);
+    // andThen chain preserves domain/code — mimic T10 style but via utils::loadMeshAsset
+    auto chain = re::utils::loadMeshAsset("data/fixtures/malformed.obj").andThen([](const re::utils::SharedMesh& sh) -> data::Result<scene::View> {
+        scene::View v; v.id = 1; (void)sh; return data::makeValue<scene::View>(v);
     });
     if (chain.failed()) {
         EXPECT_EQ(chain.error().domain, data::ErrorDomain::MeshIo) << "andThen must preserve MeshIo domain";
     }
 
     // Non-existent file must be FileOpen ==1
-    auto noFile = store.loadMesh("data/meshes/does_not_exist_bunny.obj");
-    ASSERT_TRUE(noFile.failed()) << "non-existent mesh must fail";
+    auto noFile = re::utils::loadMeshAsset("data/meshes/does_not_exist_bunny.obj");
+    ASSERT_TRUE(noFile.failed()) << "non-existent mesh must fail via utils::loadMeshAsset";
     EXPECT_EQ(noFile.error().domain, data::ErrorDomain::MeshIo) << "domain MeshIo";
     EXPECT_EQ(noFile.error().code, 1) << "FileOpen ==1 per io/mesh_loader 12";
 }

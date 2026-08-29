@@ -18,10 +18,12 @@
 #include "io/mesh/obj_mesh_loader.hpp"
 #include "render/offscreen.hpp"
 #include "render_engine/engine.hpp"
+#include "scene/builders.hpp"
 #include "scene/camera.hpp"
 #include "scene/store.hpp"
 #include "scene/view.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "utils/asset_utils.hpp"
 #include "utils/pixel_reader.hpp"
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -114,10 +116,14 @@ TEST(T13MinimalExample, SerializeVersionAndViewWire){
     // Add one mesh so serialize has an Objects entry to prove the wire includes Objects.
     const std::string meshPath = std::string(TEST_SOURCE_DIR)+"/data/meshes/bunny.obj";
     ASSERT_TRUE(std::filesystem::exists(meshPath));
-    auto r = store.loadMesh(meshPath);
-    // loadMesh may fail if asset missing; still serialize must contain Version.
-    if(r.ok()){
-        (void)*r;
+    // SceneStore IO depollution at T1: the former SceneStore helpers are retired and the filesystem ceremony (load via IO, wrap in shared_ptr, register through the content-hashed registry, add via Objects::mesh) now lives in utils/asset_utils.hpp; this keeps SceneStore pure value and the header lean while the test still proves the serialize wire includes Objects after a successful asset load.
+    auto asset = re::utils::loadMeshAsset(meshPath);
+    if(asset.ok()){
+        auto reg = store.registerMeshAsset(*asset);
+        if(reg.ok()){
+            scene::MeshObject mo = scene::Objects::mesh(*asset);
+            (void)store.addMeshObject(std::move(mo));
+        }
     }
     std::string jsonStr = store.serialize();
     ASSERT_FALSE(jsonStr.empty()) << "serialize must not be empty";
