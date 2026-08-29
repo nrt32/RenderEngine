@@ -10,25 +10,25 @@
 // outside core/). T4 validates 2D ortho vs 3D perspective (plane present →
 // ortho) via TranslateContext::hasPlane().
 //
-// mapCached memoizes per CAMERA IDENTITY (persistence-honesty task T21):
-// each owning view id (TranslateContext::view.viewId) owns ONE memo slot
-// holding its last translation together with the scene::CompositeKey it was
-// computed from ({viewId, generations, FNV-1a fingerprint of the camera's
-// stable parameter bytes}). A hit therefore implies byte-identical input, so
-// serving the memo is indistinguishable from recomputing; a second camera's
-// entry lives in ITS OWN slot, which is what kills the old single-slot
-// defect where two views' cameras thrashed one shared entry (and at
-// generation zero even served each other's matrices). One slot per id also
-// bounds memory by the view count — a continuously orbiting camera replaces
-// its slot instead of accumulating history. invalidate(id) evicts exactly
-// that view's slot. Hit/miss counters are exposed as test evidence that
-// alternating pans over several cameras produce per-camera hits (no
-// cross-camera thrash).
+// mapCached memoizes per CAMERA IDENTITY (persistence-honesty task T21 + T14b StableKey fix):
+// each owning StableKey{version,layoutId,viewId} owns ONE memo slot holding
+// its last translation together with the scene::CompositeKey it was computed
+// from ({layoutId,viewId, generations, fingerprint of the camera's stable
+// parameter bytes}). A hit therefore implies byte-identical input, so serving
+// the memo is indistinguishable from recomputing; a second camera's entry
+// lives in ITS OWN slot, which kills the old single-slot defect and the
+// T14b cross-layout alias where two layouts held viewId=42 under different
+// layoutId but shared one cache_[id] entry with hard-coded layoutId=0. One
+// slot per StableKey also bounds memory by the view count — a continuously
+// orbiting camera replaces its slot instead of accumulating history.
+// invalidate(id) evicts all slots whose viewId matches (layout-scoped erase
+// iterates the map so callers that only know viewId still evict correctly).
 
 #include <cstdint>
 #include <unordered_map>
 
 #include "broker/i_mapper.hpp"
+#include "broker/stable_key.hpp"
 #include "render/types.hpp"
 #include "scene/camera.hpp"
 #include "scene/composite_key.hpp"
@@ -79,12 +79,14 @@ class CameraMapper : public ICachedMapper<scene::Camera, render::Camera> {
                                        const scene::TranslateContext& ctx) noexcept;
 
     /// One memo slot per owning-view identity: the exact key the value was
-    /// translated from plus the translated render-side camera.
+    /// translated from plus the translated render-side camera. Keyed by
+    /// StableKey{version,layoutId,viewId} so two layouts with the same viewId
+    /// never alias (T14b fix — previously cache_[key.id] with layoutId=0).
     struct Memo {
         scene::CompositeKey key{};
         render::Camera value{};
     };
-    std::unordered_map<uint64_t, Memo> cache_{};
+    std::unordered_map<StableKey, Memo> cache_{};
     uint64_t hits_{0};
     uint64_t misses_{0};
 };

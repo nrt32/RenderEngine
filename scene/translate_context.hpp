@@ -32,6 +32,12 @@ using Aabb = data::Aabb;
 
 /// View-scoped context — needed by every mapper (ISP role interface).
 struct ViewContext {
+    /// Owning layout/page scope — carried from StableKey{version,layoutId,viewId}
+    /// so per-view memos keyed by {layoutId,viewId} never alias two layouts that
+    /// hold different views under the same viewId (T14b alias fix — previously
+    /// CameraMapper hard-coded layoutId=0 and keyed cache_[id] only, so layout
+    /// A viewId=42 and layout B viewId=42 shared one ReCamera slot).
+    uint64_t layoutId{0};
     /// Identity of the app view this translation serves (its stable View
     /// handle). Cached mappers whose input type carries no intrinsic id
     /// (scene::Camera is a plain value copied freely between views) key

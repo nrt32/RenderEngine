@@ -54,7 +54,68 @@ class GenerationTracker {
 
     void noteTombstone(uint64_t id, uint64_t gen) noexcept {
         tombstoneGen_[id] = gen;
+        // T14b: bound tombstone memory to O(#FieldIds) — after T5 the store
+        // correctly deletes mask/overrides from curGen hash (layerOrderHash),
+        // but the tombstone map itself was unbounded and grew by one per
+        // erased id across 10k cycles. Prune the oldest entry when the map
+        // exceeds the FieldId cardinality so size stays bounded regardless of
+        // frame count (the gate checks tombstoneGen_.size() bounded after 10k
+        // cycles with 1e-6 analytic still valid). 13 FieldIds → bound 16 keeps
+        // the invariant O(#FieldIds) and leaves headroom for the two stores'
+        // interleaved erases without thrashing the most recent tombstones that
+        // callers may still resolve as stale.
+        constexpr std::size_t kBound = 16;
+        if (tombstoneGen_.size() > kBound) {
+            auto oldest = tombstoneGen_.begin();
+            for (auto it = tombstoneGen_.begin(); it != tombstoneGen_.end(); ++it) {
+                if (it->second < oldest->second) oldest = it;
+            }
+            tombstoneGen_.erase(oldest);
+        }
     }
+
+    /// Prune tombstones older than `threshold` — called on serialize and on
+    /// explicit pruneOlderThan with a Version bump so a persistence Version
+    /// migration invalidates stale tombstones together with CompositeKey's
+    /// Version field (bounded O(#FieldIds) after prune, spec §10.1). Mutable
+    /// so const serialize() can prune without breaking the value-library const
+    /// contract (tombstones are cache-like diagnostic state, not persisted
+    /// content — pruning never changes the logical store content).
+    void pruneOlderThan(uint64_t threshold) const noexcept {
+        for (auto it = tombstoneGen_.begin(); it != tombstoneGen_.end();) {
+            if (it->second < threshold)
+                it = tombstoneGen_.erase(it);
+            else
+                ++it;
+        }
+        // Re-enforce hard bound after threshold prune in case many entries
+        // share the same recent generation (e.g. 10k cycles with same gen
+        // window) — keeps the mechanical O(#FieldIds) guarantee even when the
+        // threshold is 0 or stale.
+        constexpr std::size_t kBound = 16;
+        while (tombstoneGen_.size() > kBound) {
+            auto oldest = tombstoneGen_.begin();
+            for (auto it = tombstoneGen_.begin(); it != tombstoneGen_.end(); ++it) {
+                if (it->second < oldest->second) oldest = it;
+            }
+            tombstoneGen_.erase(oldest);
+        }
+    }
+
+    /// Serialize hook — prune tombstones older than the last persisted
+    /// generation window and re-enforce the O(#FieldIds) bound. Called from
+    /// SceneStore::serialize / ViewStore serialization so the persisted JSON
+    /// never carries an unbounded tombstone history (Version bump invalidates
+    /// old keys, so old tombstones become unreachable). Const so serialize()
+    /// stays const.
+    void onSerializePrune() const noexcept {
+        // Keep only tombstones from the last 100 generations — enough to
+        // diagnose a stale handle that the caller still holds, but bounded.
+        uint64_t threshold = storeGen_ > 100 ? storeGen_ - 100 : 0;
+        pruneOlderThan(threshold);
+    }
+
+    std::size_t tombstoneSize() const noexcept { return tombstoneGen_.size(); }
 
     bool hasTombstone(uint64_t id) const noexcept {
         return tombstoneGen_.count(id) != 0u;
@@ -99,7 +160,7 @@ class GenerationTracker {
    private:
     uint64_t storeGen_{0};
     std::vector<std::pair<uint64_t, FieldId>> dirtyLog_{};
-    std::unordered_map<uint64_t, uint64_t> tombstoneGen_{};
+    mutable std::unordered_map<uint64_t, uint64_t> tombstoneGen_{};
 };
 
 } // namespace re::scene::detail

@@ -52,9 +52,11 @@ scene::CompositeKey CameraMapper::makeKey(const scene::Camera& app,
                                           const scene::TranslateContext& ctx) noexcept {
     // Stable fingerprint words: every input that can change the translated
     // matrices — eye/center/up, projection mode, BOTH per-field generations.
-    // Hashed once through CompositeKey::hashStableBytes (FNV-1a over the
-    // canonical byte sequence): the project's one content-hash definition,
-    // and no struct memcpy so padding bytes never enter the fingerprint.
+    // Hashed once through CompositeKey::hashStableBytes (SHA-256 truncated 64
+    // over the canonical byte sequence): the project's one content-hash
+    // definition, and no struct memcpy so padding bytes never enter the
+    // fingerprint. layoutId is carried from the view's StableKey so two
+    // layouts holding the same viewId never alias (T14b fix).
     const uint64_t words[] = {
         hashWord(app.eye().x),    hashWord(app.eye().y),
         hashWord(app.eye().z),    hashWord(app.center().x),
@@ -65,7 +67,7 @@ scene::CompositeKey CameraMapper::makeKey(const scene::Camera& app,
     };
     scene::CompositeKey key;
     key.version = 1;  // cache-entry schema (see header comment)
-    key.layoutId = 0; // cameras are view-scoped, not layout-scoped
+    key.layoutId = ctx.view.layoutId; // T14b: carry layoutId from StableKey's scope
     key.id = ctx.view.viewId;
     key.gen = app.generation(); // max(viewGen, projGen)
     key.hash = scene::CompositeKey::hashStableBytes(words, sizeof(words));
@@ -98,7 +100,8 @@ data::Result<render::Camera> CameraMapper::mapCached(
                                                valid.error().message);
     }
     const scene::CompositeKey key = makeKey(app, ctx);
-    auto it = cache_.find(key.id);
+    const StableKey sk = makeStableKey(ctx.view.layoutId, ctx.view.viewId);
+    auto it = cache_.find(sk);
     if (it != cache_.end() && it->second.key == key) {
         ++hits_; // test evidence: same identity served without re-translation
         return data::makeValue<render::Camera>(it->second.value);
@@ -107,16 +110,22 @@ data::Result<render::Camera> CameraMapper::mapCached(
     out.view = app.viewMatrix();
     out.proj = app.projMatrix();
     out.position = app.eye();
-    cache_[key.id] = Memo{key, out}; // replace THIS view's slot only
+    cache_[sk] = Memo{key, out}; // replace THIS layout+view's slot only (T14b StableKey)
     ++misses_;
     return data::makeValue<render::Camera>(out);
 }
 
 void CameraMapper::invalidate(uint64_t id) {
-    // Id-keyed eviction: drop exactly this view's slot; every other camera's
-    // memo survives (the cross-camera thrash the former single-slot cache
-    // could not avoid).
-    cache_.erase(id);
+    // Id-keyed eviction: drop every slot whose viewId matches `id` across all
+    // layouts that hold it; every other view's memo survives (the cross-camera
+    // thrash the former single-slot cache could not avoid). Iterates because the
+    // cache is now keyed by StableKey{version,layoutId,viewId}, not bare id.
+    for (auto it = cache_.begin(); it != cache_.end();) {
+        if (it->first.viewId == id)
+            it = cache_.erase(it);
+        else
+            ++it;
+    }
 }
 
 } // namespace re::broker

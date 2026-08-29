@@ -212,6 +212,13 @@ class SceneStore {
     /// code 1 when the id never existed.
      data::Result<void> resolve(uint64_t id) const noexcept;
 
+    /// Prune tombstones older than `threshold` — called on Version bump so
+    /// stale tombstones that correspond to invalidated CompositeKey Versions
+    /// do not accumulate unbounded (T14b bounded O(#FieldIds) after prune).
+    void pruneOlderThan(uint64_t threshold) const noexcept { tracker_.pruneOlderThan(threshold); }
+    /// Current tombstone count (bounded O(#FieldIds) by GenerationTracker).
+    std::size_t tombstoneCount() const noexcept { return tracker_.tombstoneSize(); }
+
      // --- Loader facades — retired at T1 (scene/store.hpp:215 note retains 4 steps →1 call but points to utils/).
       //
       // Prior to T1 the store offered atomic IO sugar (filesystem → shared_ptr → register → add, 4 steps →1 call, 5/6 samples deduped) that kept the single-map invariant by loading via the mesh/volume loaders (GL-free, typed Result), wrapping in a shared_ptr, registering through the content-hashed Asset Registry (alias on identical bytes, T7 asset identity), and inserting as a Mesh/Volume object via the templated `addObject<T>` path (single primary map + kindIndex_, T6). Failure at any stage short-circuits and propagates the typed Error Domain (MeshIo/VolumeIo) unchanged, so callers branch on domain+code without string parsing (SPEC §5). The transform stays identity and presentation defaults to opaque Phong (mesh) / default TF (volume); samples that need a custom transform or TF mutate the returned object via getMut or use the Objects:: helpers in scene/builders.hpp. At T1 the filesystem IO was extracted to `utils/asset_utils.hpp` (IO-only, header-only, `utils/` owns filesystem) — the 4-step ceremony `load→shared_ptr→registerMeshAsset→addMeshObject` now lives in `utils/` (header stays lean, `SceneStore` stays pure value lib `data+volume+glm` per `docs/spec/modules.md:21`; header no longer includes io headers, linkage is via `utils/` not `scene/`). See `utils/asset_utils.hpp` for the IO entry points (header-only, filesystem-owned).
@@ -314,6 +321,9 @@ class ViewStore {
     size_t count() const noexcept { return views_.size(); }
     std::vector<FieldId> dirtyFieldsSince(uint64_t lastGen) const noexcept;
     data::Result<void> resolve(uint64_t id) const noexcept;
+    void pruneOlderThan(uint64_t threshold) const noexcept { tracker_.pruneOlderThan(threshold); }
+    std::size_t tombstoneCount() const noexcept { return tracker_.tombstoneSize(); }
+    void onSerializePrune() const noexcept { tracker_.onSerializePrune(); }
    private:
      uint64_t allocId() noexcept { return nextId_++; }
      void recordDirty_(FieldId field) noexcept;

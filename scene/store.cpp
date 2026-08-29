@@ -193,6 +193,7 @@ data::Result<void> SceneStore::unregisterImageAsset(AssetId id) {
 }
 
 std::string SceneStore::serialize() const {
+    tracker_.onSerializePrune(); // T14b: prune tombstones on serialize with Version bump, bounded O(#FieldIds)
     nlohmann::json j;
     j["Version"] = kSerializeVersion;
     j["LayoutId"] = 0;
@@ -278,6 +279,7 @@ uint64_t ViewStore::addView(View view) {
     view.itemsGen = view.generation;
     view.clearColorGen = view.generation;
     view.depthConfigGen = view.generation;
+    view.lightsGen = view.generation; // T14b: seed lightsGen from generation so ViewStore-owned views start with consistent per-field gens (lights dirty check via lightsGen works from birth, not stale 0)
     views_.emplace(id, std::move(view));
     tracker_.incStoreGen();
     tracker_.recordDirty(FieldId::Rect);
@@ -286,6 +288,7 @@ uint64_t ViewStore::addView(View view) {
     tracker_.recordDirty(FieldId::Items);
     tracker_.recordDirty(FieldId::ClearColor);
     tracker_.recordDirty(FieldId::DepthTest);
+    tracker_.recordDirty(FieldId::Lights); // seed dirty log for Lights so first sync translates lights
     return id;
 }
 const View* /*borrow*/ ViewStore::getView(uint64_t id) const noexcept {

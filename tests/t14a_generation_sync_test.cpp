@@ -16,6 +16,8 @@
 #include "scene/view.hpp"
 #include "scene/camera.hpp"
 #include "data/mesh.hpp"
+#include "tests/offscreen_fixture.hpp"
+#include "utils/offscreen_context.hpp"
 
 namespace re::tests {
 
@@ -26,6 +28,7 @@ static data::Mesh makeQuadMesh() {
 }
 
 TEST(T14aSync, WithoutCompositorReturnsCode10) {
+    if (auto* ctx = re::tests::OffscreenEnvironment::context()) ctx->makeCurrent();
     auto registry = std::make_shared<render::AssetRegistry>();
     auto broker = std::make_shared<broker::Broker>();
     broker->registerMapper(std::make_unique<broker::CameraMapper>());
@@ -51,6 +54,11 @@ TEST(T14aSync, WithoutCompositorReturnsCode10) {
 }
 
 TEST(T14aSync, StoreGenerationUnchangedEarlyOut) {
+    // T14b fix: ensure a GL context is current — T13 leaves a local OffscreenContext
+    // current then destroys it, so the global fixture's context is not current for
+    // the next GL-touching sync (ViewTarget creation). Making the fixture's context
+    // current here restores the suite-wide headless GL state.
+    if (auto* ctx = re::tests::OffscreenEnvironment::context()) ctx->makeCurrent();
     auto registry = std::make_shared<render::AssetRegistry>();
     auto broker = std::make_shared<broker::Broker>();
     broker->registerMapper(std::make_unique<broker::CameraMapper>());

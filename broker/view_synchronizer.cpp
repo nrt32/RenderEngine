@@ -68,9 +68,10 @@ class ItemTranslator {
 public:
     ItemTranslator(Broker* /*borrow*/ b, RenderStack* /*borrow*/ s) : broker_(b), stack_(s) {}
     data::Result<void> translate(const scene::View& av, const scene::SceneStore& scene, uint64_t oid,
-                                 render::View* /*borrow*/ rv, std::vector<render::MeshInstance>& tout) {
+                                 render::View* /*borrow*/ rv, std::vector<render::MeshInstance>& tout,
+                                 uint64_t layoutId = 0) {
         if (!stack_) return data::makeError<void>(12, "ViewSynchronizer: no RenderStack wired");
-        scene::TranslateContext ctx; ctx.view.viewId = av.id; ctx.view.viewPlane = av.plane;
+        scene::TranslateContext ctx; ctx.view.layoutId = layoutId; ctx.view.viewId = av.id; ctx.view.viewPlane = av.plane;
         ctx.view.viewMatrix = av.camera.viewMatrix(); ctx.view.projMatrix = av.camera.projMatrix();
         auto* /*borrow*/ obj = scene.getObject(oid);
         if (!obj) return data::makeError<void>(11, "ViewSynchronizer: item id " + std::to_string(oid) + " resolves to no scene object in the store");
@@ -172,7 +173,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views, co
         if (depthDirty) { rv->setDepthTest(av.depthConfig.enabled); cache.depthConfigGen = av.depthConfigGen; }
         if (clearDirty) { rv->setClearColor(av.clearColor); cache.clearColorGen = av.clearColorGen; }
         if (lightsDirty) {
-            scene::TranslateContext lctx; lctx.view.viewId = av.id; lctx.view.viewPlane = av.plane;
+            scene::TranslateContext lctx; lctx.view.layoutId = layoutId; lctx.view.viewId = av.id; lctx.view.viewPlane = av.plane;
             lctx.view.viewMatrix = av.camera.viewMatrix(); lctx.view.projMatrix = av.camera.projMatrix();
             auto* /*borrow*/ lm = broker_ ? broker_->get<scene::Light, render::ReLight>() : nullptr;
             auto lr = ViewMapper::mapLights(av.lights, lm, lctx); if (lr.failed()) return data::makeError<void>(lr.error().code, lr.error().message);
@@ -184,7 +185,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views, co
         bool planeDirty = isNew || cache.planeGen != av.planeGen || hasPushDirty(av.id, scene::FieldId::Plane);
         if (planeDirty) {
             if (av.plane.has_value()) {
-                scene::TranslateContext pctx; pctx.view.viewPlane = av.plane;
+                scene::TranslateContext pctx; pctx.view.layoutId = layoutId; pctx.view.viewId = av.id; pctx.view.viewPlane = av.plane;
                 for (uint64_t vid : av.itemIds) {
                     const glm::mat4* /*borrow*/ model = nullptr; glm::ivec3 dims{0};
                     if (auto* /*borrow*/ vo = scene.getVolumeObject(vid)) { model = &vo->transform; dims = glm::ivec3{static_cast<int>(vo->volume->sizeX()), static_cast<int>(vo->volume->sizeY()), static_cast<int>(vo->volume->sizeZ())}; }
@@ -200,7 +201,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views, co
         }
         bool camDirty = isNew || cache.cameraGen != av.cameraGen || cache.viewGen != av.camera.viewGen() || cache.projGen != av.camera.projGen() || hasPushDirty(av.id, scene::FieldId::CameraView) || hasPushDirty(av.id, scene::FieldId::CameraProj);
         if (camDirty) {
-            scene::TranslateContext ctx; ctx.view.viewId = av.id; ctx.view.viewPlane = av.plane; ctx.view.viewMatrix = av.camera.viewMatrix(); ctx.view.projMatrix = av.camera.projMatrix();
+            scene::TranslateContext ctx; ctx.view.layoutId = layoutId; ctx.view.viewId = av.id; ctx.view.viewPlane = av.plane; ctx.view.viewMatrix = av.camera.viewMatrix(); ctx.view.projMatrix = av.camera.projMatrix();
             auto* /*borrow*/ cm = broker_ ? broker_->getMutable<broker::CameraMapper>() : nullptr;
             if (cm) { auto res = cm->mapCached(av.camera, ctx); if (res.failed()) return data::makeError<void>(res.error().code, res.error().message); rv->setCamera(*res); }
             else { render::Camera rc; rc.view = av.camera.viewMatrix(); rc.proj = av.camera.projMatrix(); rc.position = av.camera.eye(); rv->setCamera(rc); }
@@ -211,7 +212,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views, co
         bool itemsDirty = isNew || storeItemsDirty || cache.itemsGen != av.itemsGen || planeDirty || orderDirty || hasPushDirty(av.id, scene::FieldId::Items);
         if (itemsDirty) {
             rv->clearItems(); std::vector<render::MeshInstance> trans;
-            for (auto& e : order) { auto r = translator.translate(av, scene, e.oid, rv, trans); if (r.failed()) return r; }
+            for (auto& e : order) { auto r = translator.translate(av, scene, e.oid, rv, trans, layoutId); if (r.failed()) return r; }
             eff->setTransparentItems(layoutId, av.id, stack_ && stack_->pipeline ? std::move(trans) : std::vector<render::MeshInstance>{});
             cache.itemsGen = av.itemsGen; cache.layerOrderHash = orderHash;
         }
