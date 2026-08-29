@@ -12,15 +12,23 @@
 #include "io/image/image_loader.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 #include <vector>
+
+#include <spdlog/spdlog.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
 namespace re::io {
+namespace {
+constexpr std::uint64_t kHeaderSlackBytes = 64ULL * 1024ULL;
+constexpr std::uint64_t kMaxFileBytes = 512ULL * 512ULL * 512ULL * 8ULL + kHeaderSlackBytes;
+} // namespace
 
 data::Result<data::Image> loadImage(const std::string& path,
                                     std::int32_t requestedChannels) {
@@ -33,6 +41,23 @@ data::Result<data::Image> loadImage(const std::string& path,
                 " (must be 0..4; 0 keeps the file's native channel count)");
     }
 
+    // Host file-size pre-probe before slurp (mirror NRRD 512^3*8+64KiB).
+    {
+        std::error_code ec;
+        const auto fileSize = std::filesystem::file_size(path, ec);
+        if (!ec && static_cast<std::uint64_t>(fileSize) > kMaxFileBytes) {
+            spdlog::warn(
+                "image loader: '{}' file size {} exceeds cap {} — rejecting before slurp",
+                path, static_cast<std::uint64_t>(fileSize), kMaxFileBytes);
+            return data::makeError<data::Image>(
+                data::ErrorDomain::ImageIo,
+                static_cast<int>(ImageLoadError::BudgetExceeded),
+                "image loader: '" + path + "' file size " +
+                    std::to_string(static_cast<std::uint64_t>(fileSize)) +
+                    " exceeds cap " + std::to_string(kMaxFileBytes));
+        }
+    }
+
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
         return data::makeError<data::Image>(
@@ -41,7 +66,38 @@ data::Result<data::Image> loadImage(const std::string& path,
             "image loader: cannot open file '" + path + "'");
     }
     const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(file),
-                                          std::istreambuf_iterator<char>()};
+                                            std::istreambuf_iterator<char>()};
+
+    // Early overflow probe before stbi_load (T11b size_t(width)*height):
+    // stbi_info_from_memory decodes only the header, so a hostile 2GB PNG
+    // header with giant width*height is rejected before the full pixel buffer
+    // is allocated. Mirrors the file_size pre-probe above.
+    {
+        int wi = 0;
+        int hi = 0;
+        int ci = 0;
+        if (stbi_info_from_memory(bytes.data(), static_cast<int>(bytes.size()), &wi, &hi, &ci) == 1) {
+            if (wi > 0 && hi > 0) {
+                std::size_t pixelCount = 0;
+                if (__builtin_mul_overflow(static_cast<std::size_t>(wi),
+                                           static_cast<std::size_t>(hi), &pixelCount)) {
+                    return data::makeError<data::Image>(
+                        data::ErrorDomain::ImageIo,
+                        static_cast<int>(ImageLoadError::BudgetExceeded),
+                        "image loader: '" + path + "' pixel count overflow (header probe before stbi_load)");
+                }
+                const std::int32_t outCh = requestedChannels != 0 ? requestedChannels : ci;
+                std::size_t byteCount = 0;
+                if (__builtin_mul_overflow(pixelCount, static_cast<std::size_t>(outCh), &byteCount) ||
+                    byteCount > kMaxFileBytes) {
+                    return data::makeError<data::Image>(
+                        data::ErrorDomain::ImageIo,
+                        static_cast<int>(ImageLoadError::BudgetExceeded),
+                        "image loader: '" + path + "' decoded byte count exceeds cap (header probe before stbi_load)");
+                }
+            }
+        }
+    }
 
     int width = 0;
     int height = 0;
@@ -66,6 +122,29 @@ data::Result<data::Image> loadImage(const std::string& path,
             data::ErrorDomain::ImageIo,
             static_cast<int>(ImageLoadError::Decode),
             "image loader: '" + path + "' decoded to a zero-sized image");
+    }
+
+    // Overflow check size_t(width)*height before allocation (T11b).
+    {
+        std::size_t pixelCount = 0;
+        if (__builtin_mul_overflow(static_cast<std::size_t>(width),
+                                   static_cast<std::size_t>(height), &pixelCount)) {
+            stbi_image_free(pixels);
+            return data::makeError<data::Image>(
+                data::ErrorDomain::ImageIo,
+                static_cast<int>(ImageLoadError::BudgetExceeded),
+                "image loader: '" + path + "' pixel count overflow");
+        }
+        std::size_t byteCount = 0;
+        const std::int32_t outCh = requestedChannels != 0 ? requestedChannels : channels;
+        if (__builtin_mul_overflow(pixelCount, static_cast<std::size_t>(outCh), &byteCount) ||
+            byteCount > kMaxFileBytes) {
+            stbi_image_free(pixels);
+            return data::makeError<data::Image>(
+                data::ErrorDomain::ImageIo,
+                static_cast<int>(ImageLoadError::BudgetExceeded),
+                "image loader: '" + path + "' decoded byte count exceeds cap");
+        }
     }
 
     const std::size_t pixelCount =

@@ -30,6 +30,7 @@ enum class ImageLoadError : int {
     FileOpen = 1,        ///< The file could not be opened for reading.
     Decode = 2,          ///< stb_image could not decode the file.
     InvalidChannels = 3, ///< requestedChannels is not in {0, 1, 2, 3, 4}.
+    BudgetExceeded = 8,  ///< File size exceeds absolute cap or pixel overflow (T11b BudgetExceeded, code 8).
 };
 
 /// Load an image from `path` into a `data::Image` (FR-io.3).

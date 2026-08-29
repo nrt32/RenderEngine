@@ -73,6 +73,7 @@ add_executable(${RE_TEST_TARGET}
     t9_samples_bounded_test.cpp
     t10_long_lived_test.cpp
     t11a_nrrd_hardening_test.cpp
+    t11b_obj_image_hardening_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

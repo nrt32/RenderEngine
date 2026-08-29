@@ -31,12 +31,13 @@ namespace re::io {
 /// ranges of the other io/ loaders (all three start at FileOpen == 1)
 /// without string parsing.
 enum class MeshLoadError : int {
-    FileOpen = 1,    ///< The file could not be opened for reading.
-    VertexParse = 2, ///< A "v" line does not contain three valid floats.
-    FaceParse = 3,   ///< An "f" line does not contain >= 3 valid indices.
-    IndexRange = 4,  ///< A face references a vertex index out of range.
-    NoVertices = 5,  ///< The file contains no "v" vertices.
-    NoFaces = 6,     ///< The file contains no "f" faces.
+    FileOpen = 1,      ///< The file could not be opened for reading.
+    VertexParse = 2,   ///< A "v" line does not contain three valid floats.
+    FaceParse = 3,     ///< An "f" line does not contain >= 3 valid indices.
+    IndexRange = 4,    ///< A face references a vertex index out of range.
+    NoVertices = 5,    ///< The file contains no "v" vertices.
+    NoFaces = 6,       ///< The file contains no "f" faces.
+    BudgetExceeded = 8,///< File size exceeds absolute cap 512^3*8+64KiB (T11b BudgetExceeded, code 8).
 };
 
 /// Load an OBJ-style mesh from `path` into a `data::Mesh` (FR-io.1). Returns

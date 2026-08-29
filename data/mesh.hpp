@@ -36,7 +36,12 @@ class Mesh {
     /// Build a mesh from `positions` and `indices` (3 indices per triangle),
     /// computing face normals and the AABB. The caller must ensure every
     /// index is `< positions.size()` and `indices.size() % 3 == 0` (io/
-    /// loaders validate before calling).
+    /// loaders validate before calling). T11b hardens this contract with
+    /// debug asserts `assert(indices.size() % 3 == 0)` and
+    /// `assert(idx < positions.size())` for every `idx` in `indices`,
+    /// mirroring the `idx%3==0 && idx < positions.size()` guard in
+    /// `data/mesh.cpp:fromTriangles` (FR-data.1/FR-data.2, BudgetExceeded path
+    /// is typed `data::ErrorDomain::MeshIo` code 8, never partial).
     static Mesh fromTriangles(std::vector<glm::vec3> positions,
                               std::vector<std::uint32_t> indices);
 

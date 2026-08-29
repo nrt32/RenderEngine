@@ -12,9 +12,11 @@
 #include <memory>
 #include <string>
 
+#include "data/image.hpp"
 #include "data/mesh.hpp"
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
+#include "io/image/image_loader.hpp"
 #include "io/mesh/obj_mesh_loader.hpp"
 #include "io/volume/nrrd_volume_loader.hpp"
 
@@ -23,6 +25,7 @@ namespace re::utils {
 /// Shared-asset aliases matching `scene::AssetRegistry<...>::SharedAsset` (shared_ptr<const T>, content-hash dedup via SceneStore registry).
 using SharedMesh = std::shared_ptr<const data::Mesh>;
 using SharedVolume = std::shared_ptr<const data::VolumeDataset>;
+using SharedImage = std::shared_ptr<const data::Image>;
 
 /// Load a mesh asset from `path` via `io::loadObjMesh` and wrap in a shared_ptr (IO-only, header-only).
 ///
@@ -46,6 +49,16 @@ inline data::Result<SharedVolume> loadVolumeAsset(const std::string& path) {
     }
     auto shared = std::make_shared<const data::VolumeDataset>(std::move(*volRes));
     return data::Result<SharedVolume>(data::value, std::move(shared));
+}
+
+/// Load an image asset from `path` via `io::loadImage` and wrap in a shared_ptr (IO-only, header-only, T11b).
+inline data::Result<SharedImage> loadImageAsset(const std::string& path) {
+    auto imgRes = io::loadImage(path);
+    if (imgRes.failed()) {
+        return data::Result<SharedImage>(data::error, imgRes.error());
+    }
+    auto shared = std::make_shared<const data::Image>(std::move(*imgRes));
+    return data::Result<SharedImage>(data::value, std::move(shared));
 }
 
 } // namespace re::utils

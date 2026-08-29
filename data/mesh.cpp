@@ -2,6 +2,7 @@
 
 #include "data/mesh.hpp"
 
+#include <cassert>
 #include <cmath>
 #include <glm/geometric.hpp>
 
@@ -9,6 +10,11 @@ namespace re::data {
 
 Mesh Mesh::fromTriangles(std::vector<glm::vec3> positions,
                          std::vector<std::uint32_t> indices) {
+    // T11b asserts: every triangle index must be in range and count %3==0.
+    assert(indices.size() % 3 == 0 && "Mesh::fromTriangles: indices.size() % 3 must be 0");
+    for (std::uint32_t idx : indices) {
+        assert(idx < positions.size() && "Mesh::fromTriangles: idx < positions.size()");
+    }
     Mesh mesh;
     mesh.positions_ = std::move(positions);
     mesh.indices_ = std::move(indices);
