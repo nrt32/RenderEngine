@@ -132,10 +132,31 @@ uint64_t ViewSynchronizer::storeGeneration() const noexcept { return lastStoreGe
 std::vector<scene::FieldId> ViewSynchronizer::dirtyFieldsSince(uint64_t lastGen) const noexcept { bool ch=(lastStoreGen_!=lastGen); if(!ch&&pushDirties_.empty()) return {}; std::unordered_set<int> seen; std::vector<scene::FieldId> out; out.reserve(4); for(auto& kv:pushDirties_) for(auto f:kv.second){int k=static_cast<int>(f); if(!seen.count(k)){seen.insert(k); out.push_back(f);}} return out; }
 data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views, const scene::SceneStore& scene,
                                           uint64_t layoutId, ViewCompositor* /*borrow*/ compositor) {
+    ViewCompositor* /*borrow*/ eff = compositor ? compositor : legacyCompositor_.get();
+    if (!eff) {
+        return data::makeError<void>(10, "ViewSynchronizer: no ViewCompositor wired — sync requires a ViewCompositor to dispatch ReViews (code 10)");
+    }
+    if (scene.storeGeneration() == lastSceneStoreGen_ && pushDirties_.empty()) {
+        bool viewsDirty = false;
+        if (caches_.size() != views.size()) viewsDirty = true;
+        else {
+            for (const auto& av : views) {
+                StableKey key = makeStableKey(layoutId, av.id);
+                auto it = caches_.find(key);
+                if (it == caches_.end()) { viewsDirty = true; break; }
+                const ViewCache& c = it->second;
+                if (c.rectGen != av.rectGen || c.planeGen != av.planeGen || c.cameraGen != av.cameraGen ||
+                    c.viewGen != av.camera.viewGen() || c.projGen != av.camera.projGen() ||
+                    c.itemsGen != av.itemsGen || c.clearColorGen != av.clearColorGen ||
+                    c.depthConfigGen != av.depthConfigGen || c.lightsGen != av.lightsGen) {
+                    viewsDirty = true; break;
+                }
+            }
+        }
+        if (!viewsDirty) return data::Result<void>(data::value);
+    }
     ViewHasher hasher; uint64_t curGen = hasher.compute(views, scene, layoutId, pushDirties_);
     bool hasPush = !pushDirties_.empty(); if (curGen == lastStoreGen_ && !hasPush) return data::Result<void>(data::value);
-    ViewCompositor* /*borrow*/ eff = compositor ? compositor : legacyCompositor_.get();
-    if (!eff) { lastStoreGen_ = curGen; lastSceneStoreGen_ = scene.storeGeneration(); pushDirties_.clear(); return data::Result<void>(data::value); }
     auto dirtySet = scene.dirtyFieldsSince(lastSceneStoreGen_);
     bool storeItemsDirty = std::any_of(dirtySet.begin(), dirtySet.end(), [](scene::FieldId f) {
         switch (f) { case scene::FieldId::Items: case scene::FieldId::Transform: case scene::FieldId::Material: case scene::FieldId::TransferFunction: case scene::FieldId::Plane: case scene::FieldId::Layer: case scene::FieldId::Priority: return true; default: return false; }
