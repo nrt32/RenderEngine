@@ -124,7 +124,7 @@ class ViewSynchronizer : public IDirtyTracker {
           uint64_t viewGen{static_cast<uint64_t>(-1)};
           uint64_t projGen{static_cast<uint64_t>(-1)};
           uint64_t clearColorGen{static_cast<uint64_t>(-1)};
-          uint64_t depthTestGen{static_cast<uint64_t>(-1)};
+          uint64_t depthConfigGen{static_cast<uint64_t>(-1)};
           uint64_t lightsGen{static_cast<uint64_t>(-1)};
           uint64_t layerGen{static_cast<uint64_t>(-1)};
           uint64_t layerOrderHash{static_cast<uint64_t>(-1)};

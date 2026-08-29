@@ -95,7 +95,7 @@ class SceneViewBuilder {
     /// Build the View value (copy).
     View build() const noexcept { return view_; }
 
-    /// Direct mutable access to the in-builder View (for samples that need to set depthTest etc. after build).
+    /// Direct mutable access to the in-builder View (for samples that need to set depth config etc. after build).
     View& view() noexcept { return view_; }
     const View& view() const noexcept { return view_; }
 

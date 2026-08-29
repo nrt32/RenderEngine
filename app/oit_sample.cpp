@@ -110,7 +110,7 @@ class OitSample final : public app::ISample {
         view_.id = 1;
         syncViewSize(app::kWindowWidth, app::kWindowHeight);
         view_.setClearColor(oit::kClearColor);
-        view_.setDepthTest(true);
+        view_.setDepthConfig(scene::DepthConfig{true});
         view_.setItemIds({idGold, idBunny, idNear, idFar});
     }
 

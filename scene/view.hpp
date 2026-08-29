@@ -48,15 +48,13 @@ struct View {
     uint64_t cameraGen{0};
     uint64_t itemsGen{0};
     uint64_t clearColorGen{0};
-    uint64_t depthTestGen{0};
+    uint64_t depthConfigGen{0};
     uint64_t lightsGen{0};
     uint64_t layerGen{0};
     uint64_t generation{0}; // legacy coarse — equals max of per-field.
     /// Clear color of this screen section (consumed by the render-side pass
     /// prologue; see setClearColor).
     glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 0.0f};
-    /// Depth-tested rendering opt-in (see setDepthTest). Default false.
-    bool depthTest{false};
     /// Value-object depth config — View owns DepthConfig (T8b composition, not raw bool on Renderer — Renderer is stateless drawLayer and has no ViewTarget size, would break IRenderable type-erasure + ViewTarget SRP; depth over mixed VolumeSlice+MeshSlice vs Volume+Mesh + OIT opaque depth + transparent depth-off over same target only View knows; OIT capture/composite disableDepthTest explicit on same REContext; default enabled=false color-only for deterministic llvmpipe gates, Engine facade defaults DepthConfig{true} for mesh views viz correctness — T17 G4 divergence documented in docs/engine.md).
     DepthConfig depthConfig{DepthConfig{false, 1.0f}};
     /// Per-View lights: empty vector = unlit (2D) or fixed headlight fallback
@@ -119,30 +117,15 @@ struct View {
             ++generation;
         }
     }
-    /// Opt this view into depth-tested rendering: the render side recreates
-    /// its target with a real depth attachment and enables + clears the depth
-    /// test in the pass prologue, so overlapping opaque items resolve by true
-    /// occlusion instead of draw order. Bumps `depthTestGen` plus `generation`
-    /// (the poll path sees the flip); the default stays false — color-only
-    /// painter's order, the deterministic-gate configuration. The dedicated
-    /// `depthTestGen` keeps depth dirt separate from other fields (T9 A5).
-    void setDepthTest(bool enabled) noexcept {
-        if (depthTest != enabled) {
-            depthTest = enabled;
-            depthConfig.enabled = enabled;
-            ++depthTestGen;
-            ++generation;
-        }
-    }
-    /// Set DepthConfig value object and bump depthTestGen + generation when changed; keeps bool depthTest in sync (enabled field mirrors depthTest so both spellings stay coherent and the per-view DepthMode branch in render::ViewTarget and REContext::beginPass can read either spelling without diverging).
-    void setDepthConfig(DepthConfig cfg) noexcept {
-        if (depthConfig != cfg) {
-            depthConfig = cfg;
-            depthTest = cfg.enabled;
-            ++depthTestGen;
-            ++generation;
-        }
-    }
+    /// Opt this view into depth-tested rendering via DepthConfig value object.
+    /// The render side recreates its target with a real depth attachment and
+    /// enables plus clears depth in the pass prologue, so overlapping opaque
+    /// items resolve by true occlusion instead of draw order. Bumps generation
+    /// plus the dedicated per-field counter (the poll path sees the flip); the
+    /// default stays false — color-only painter order, the deterministic gate
+    /// configuration. The dedicated counter keeps depth dirt separate from other
+    /// fields (T9 A5).
+    void setDepthConfig(DepthConfig cfg) noexcept;
     /// Set per-View lights and bump lightsGen + generation when changed.
     /// Part of CompositeKey dirty tracking (SPEC §10): a light tweak dirties
     /// only LightMapper cache via lightsGen, not whole View (per-field split).

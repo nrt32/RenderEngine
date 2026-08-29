@@ -260,7 +260,7 @@ uint64_t ViewStore::addView(View view) {
     view.cameraGen = view.generation;
     view.itemsGen = view.generation;
     view.clearColorGen = view.generation;
-    view.depthTestGen = view.generation;
+    view.depthConfigGen = view.generation;
     views_.emplace(id, std::move(view));
     tracker_.incStoreGen();
     tracker_.recordDirty(FieldId::Rect);

@@ -179,7 +179,7 @@ class Engine {
         v.camera = desc.camera;
         v.setItemIds(desc.objectIds);
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
-        applyMeshDepthDefault(v);
+        v.setDepthConfig(::re::scene::DepthConfig{true});
         views_.clear();
         views_.push_back(std::move(v));
     }
@@ -231,7 +231,7 @@ class Engine {
         v.camera = camera;
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         v.setItemIds(ids);
-        applyMeshDepthDefault(v);
+        v.setDepthConfig(::re::scene::DepthConfig{true});
         return v;
     }
 
@@ -261,7 +261,7 @@ class Engine {
         v.camera = std::move(camera);
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         v.setItemIds(ids);
-        applyMeshDepthDefault(v);
+        v.setDepthConfig(::re::scene::DepthConfig{true});
         return v;
     }
 
@@ -283,7 +283,7 @@ class Engine {
         v.camera = std::move(camera);
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         v.setItemIds(ids);
-        applyMeshDepthDefault(v);
+        v.setDepthConfig(::re::scene::DepthConfig{true});
         return v;
     }
 
