@@ -92,7 +92,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 > **Consolidated 2026-08-28 (Iteration 1 spec-review, rev 2026-08-29 findings #1-#16, count fixed spec-review gate 2026-08-29, iteration 1 re-review 2026-08-29 #2 split T11):** Prior `V6 (T6.1..6.4)` + `V7 (T7.1..7.9)` + `V8 (T8.1..8.6)` presented as three independent backlogs with overlapping scope and out-of-order dependencies. This section is the single binding sequential backlog, dependency-ordered per `SPEC §13.7` (`scene/ → skeleton → broker → View → persistence → asset → RE-minimal`) — see ordering waiver below. `V6 T6.1/T6.2` retired — now `T5/T6` single `Version 1->2`. `T17 RHI` + `T18 evidence` are `(stretch)` per `SPEC §3/§6` — they execute last and do not gate hardening. Splits: `T3→T3a/T3b` (#2), `T8→T8a/T8b` (#3), `T14→T14a/T14b` (#4), `T15→T15a/T15b` + `T15a` lands `audit.rules` floors early (#5), `T11→T11a/T11b` (iteration 1 #2 sizing fix, each <150 lines, one domain). `T11a/T11b`/`T13` marked parallel-eligible after `T1`/`T6` (#6). Historical `T6.x`/`T7.x`/`T8.x` aliases archived in `COMPLETED_TASKS.md` (spec-review #11); active headings use clean `T1..T16` only + `T11a/b` split — traceability via git history. **Count:** `T1,T2,T3a,T3b,T4,T5,T6,T7,T8a,T8b,T9,T10,T11a,T11b,T12,T13,T14a,T14b,T15a,T15b,T16` = 21 active + `T17/T18` stretch = 23 total (header and DoD now agree).<br>**Ordering waiver (spec-review #5):** `T7` depends only on `T1` (FNV skeleton) and `T12` upgrades to SHA-256 after `T7` (iteration 1 #3 — no forward dependency; `T7` gate is FNV, `T12` gate is SHA-256, per reviewer #3 option B); `T11a/T11b`/`T13` are independent except `T1`/`T11` budgeting, so topologically they are parallel-eligible after `T1`/`T6` — the sequential gate still runs in listed order for review simplicity (runner is sequential, no parallel execution). No dependency violation: every `Depends on` is satisfied before its `T` runs; the slack is documented here.
 
-### T1: Store IO depollution — `loadMesh/loadVolume` out of `Store.hpp`
+## T1: Store IO depollution — `loadMesh/loadVolume` out of `Store.hpp`
 
 **D** — Delete `scene/store.hpp:218` `loadMesh/loadVolume` (2 decls) + `scene/store.cpp:1-10` `#include "io/mesh/obj_mesh_loader.hpp"`/`io/volume/nrrd_volume_loader.hpp` (header stays lean) + `scene/CMakeLists.txt:13` `PRIVATE re_io` edge. Keep `nlohmann/json.hpp` include in `scene/store.cpp` only (needed for `SceneStore::serialize()` `docs/spec/persistence.md:10.8` JSON wire — header stays lean via forward decl, `store.cpp` retains `#include <nlohmann/json.hpp>` for `serialize()/deserialize()`). Extract to `utils/asset_utils.hpp` `Result<SharedMesh> loadMeshAsset(path)` + `Result<SharedVolume> loadVolumeAsset(path)` (IO-only, header-only, `utils/` owns filesystem). Keep 4-step `load→shared_ptr→registerMeshAsset→addMeshObject` ceremony in `utils/`; `scene/store.hpp:215` doc retains `4 steps →1 call` note but points to `utils/`. `scene/builders.hpp` `Objects::mesh` stays value builder, not IO. `SceneStore` stays pure value lib `data+volume+glm` per `docs/spec/modules.md:21`. Single `Version` migration for layers lives in `T5/T6`, not here.
 
@@ -100,7 +100,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `disposition_scene` `scene|#include.*render/` still green, `scene` no `io` dep, no `json` include; `R15` env vars asserted (`AUDIT_SOURCE_DIRS` exact + `LOOP_BUILD_TEST_CMD` non-empty).
 
-### T2: Engine IO depollution — `Engine::addMesh/addVolume` out of facade
+## T2: Engine IO depollution — `Engine::addMesh/addVolume` out of facade
 
 **D** — Depends on `T1`. Remove `include/render_engine/engine.hpp:32-33` `#include "io/mesh/obj_mesh_loader.hpp"`/`io/volume/nrrd_volume_loader.hpp` + inline `87-165` `addMesh(path,transform,mat)`/`addVolume(path,transform,tf)` IO path (3+4 overloads). Keep only store-typed API `addMesh(AssetRef<Mesh>,transform,mat)→ObjectId` + `addVolume(AssetRef<Volume>,…)` delegating to `ctx_.store().add*Object`. Call sites `app/mesh_sample.cpp:32` + samples migrate to `utils::loadMeshAsset`→`registerMeshAsset`→`addMesh`. Delete `33` `io` transitive include from `re_engine` INTERFACE `CMakeLists.txt:210`.
 
@@ -108,7 +108,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `re_engine` no `re_io` linkage, `acl_app_render` still green.
 
-### T3a: Collapse `render()` dual API — Mesh/Slice/Plane (Ex1a)
+## T3a: Collapse `render()` dual API — Mesh/Slice/Plane (Ex1a)
 
 **D** — Depends on `T1`+`T2`. Delete `render()` from 3 non-volume renderers: `render/mesh_renderer.hpp:96` `MeshRenderer::render`, `render/slice_renderer.hpp:96` `SliceRenderer::render`, `render/plane_renderer.hpp:167` `PlaneRenderer::render` (each `grep -c "data::Result<void> render(" ==0` for those 3). Keep `drawInstances`/`clipInstances` as `drawLayer` impl; `render/i_renderable.hpp:45` retains. Volume/Contour `render()` stays for `T3b`. Direct tests for those 3 port via `render::View` + `REContext::current().beginPass` + `View::addItem`.
 
@@ -116,7 +116,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, 3 `render()` removed, OIT compositor not yet touched.
 
-### T3b: Collapse `render()` — Volume/VolumeSlice/Contour + single OIT (Ex1b)
+## T3b: Collapse `render()` — Volume/VolumeSlice/Contour + single OIT (Ex1b)
 
 **D** — Depends on `T3a`. Delete remaining `VolumeRenderer::render` `render/volume_renderer.hpp:148`, `VolumeSliceRenderer::render` `149`, `ContourRenderer::render` `100`. Delete `render/mesh_renderer.cpp:166-241` inline `anyTransparent ? begin/drawOpaque/drawTransparent/end` (now single `drawInstances` blend-off, OIT only via `broker/view_compositor.cpp:94` `captureTransparents` out-of-band). Remove `drawOpaque/drawTransparent` pair. Port volume/oit tests via `View` path; `Layer` param added in `T6`.
 
@@ -124,7 +124,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, no `render()` in `render/` (6/6), single OIT via compositor.
 
-### T4: Scope depth per-View (remove blind global) — keep `DepthConfig` on `View`
+## T4: Scope depth per-View (remove blind global) — keep `DepthConfig` on `View`
 
 **D** — Depends on `T3a`+`T3b` (iteration 5 #4 fix — after split `T3 → T3a/T3b` binding order is `T3a → T3b → T4`; bare `T3` is undefined per spec-review #11 forbids `V3.x` alias; active headings use `Tn` only). Align with `SPEC §3.1` + `docs/spec/guardrails.md:90` (depth opt-in per `View` via `DepthConfig`, not per-layer). Remove blind view-level duplicate: `scene/view.hpp:59-61` delete raw `bool depthTest` + `depthTestGen` duplicate, keep `DepthConfig depthConfig{false}` value object (`scene/depth_config.hpp`) + `setDepthConfig(DepthConfig)` bumping `depthConfigGen`/`generation` (renamed from `depthTestGen`, spec-review #10). `render/view.hpp:87-88` + `render/view_target.hpp:41` keep `DepthMode` per-`ViewTarget` (driven by `View::depthConfig()`), `core/re_context.cpp:166-185` `beginPass(depthConfig)` enables/clears depth once per `View::render` before `drawLayer` loop (OIT capture/composite explicitly `disableDepthTest`). Keep `include/render_engine/engine.hpp:354-355` `applyMeshDepthDefault{DepthConfig{true}}` single-site via `Engine::setView` (audit `engine_depth_default` `DepthConfig\{true` stays green); delete any second blind enable. Keep `scene/view.hpp:51-53` `depthTestGen` in `ViewCache` `broker/view_synchronizer.hpp:128` but rename to `depthConfigGen` for `T5` layer hash.
 
@@ -132,7 +132,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `engine_depth_default` still `require_grep DepthConfig\{true` in `include/`, no per-layer `DepthMode` map, no view-level raw `depthTest`; sizing per-file `wc -l` delta <150 per file, total <200 (iteration 6 #3 — `T4` `wc -l delta <200` waiver is sizing proof, not evidence, per-file <150).
 
-### T5: Dumb layers `LAYER_0..7` + per-object `priority` — scene side
+## T5: Dumb layers `LAYER_0..7` + per-object `priority` — scene side
 
 **D** — Depends on `T4`. `scene/layer.hpp` `enum Layer:uint16_t{LAYER_0=0..LAYER_7=7, COUNT=8}` no semantic names (`Volume`/`Mesh` etc.), no `LayerMask` type; lower numeric draws first, `64` is doc edit only (no `1u<<layer` UB, no array sized by `COUNT`). `scene/iscene_object.hpp` add `int32_t priority{0}` alongside `Layer layer` on `ObjectBase`/`ISceneObject` (`priority()`/`setPriority()` `++generation` like `setLayer`), new `FieldId::Priority=12` `scene/field_id.hpp`. All 6 concrete objects `scene/objects/*.hpp` `layer{LAYER_0}` single default + `priority{0}`. `scene/view.hpp` + `scene/view.cpp` delete `layerMask{0xFFu}` + `layerOverrides` map + 4 setters; keep `layerGen` only for debugging if needed else remove. `scene/store.hpp` serialize wire drops `LayerMask/LayerOverrides`, **single** `Version 1->2` migration (only here, not duplicated in `T6`).
 
@@ -140,7 +140,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, no `LayerMask`, no semantic names, `priority` present.
 
-### T6: Global `techniqueOrder` + scoped priority ordering (broker side)
+## T6: Global `techniqueOrder` + scoped priority ordering (broker side)
 
 **D** — Depends on `T5`. `broker/render_stack.hpp` add global `std::array<SceneKind,6> techniqueOrder{Volume,VolumeSlice,Plane,Mesh,MeshSlice,Contour}` explicit hardcoded renderer call order that governs cross-type order inside each `Layer` (BGFX `Sequential` / UE `AddPass` precedent). `broker/view_synchronizer.hpp` `ViewCache` drop `layerGen` tied to mask, keep `layerOrderHash`. `broker/view_synchronizer.cpp` delete `techniquePriorityFor()` + `mask cull 1u<<eff` + `itOv override` + `curGen ^= mask/overrides` `101-106` and `:293`. New order: `struct OrderEntry{oid,Layer,int orderIdx,int priority,size_t insertionIdx}` `orderIdx=indexIn(techniqueOrder,kind)` `priority=obj->priority()` `stable_sort by (uint16(layer) asc, orderIdx asc, priority asc, insertionIdx asc)` scoped priority inside same `layer+type` bucket so `VolumeSlice prio100` still before `Contour prio0` on same `LAYER_0`. `orderHash ^= layer+orderIdx+priority+oid`. `mapItemToLayer` unchanged. `render/i_renderable.hpp:45` add `Layer` param to `drawLayer` if needed for ordering debug (not for depth — depth stays per-View `DepthConfig` per `T4`/`SPEC §3.1`).
 
@@ -148,7 +148,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — suite green N>=3 `llvmpipe`, audit green, sample smoke still (before harness fix).
 
-### T7: Unify asset identity — delete triple store (`byObject_`/`legacyHandleCache`)
+## T7: Unify asset identity — delete triple store (`byObject_`/`legacyHandleCache`)
 
 **D** — Depends on `T1` (canonical `hashStableBytes` source — FNV-1a 64 skeleton at `T7`, SHA-256 truncated 64 prod via `T12` after, iteration 1 #3 fix — ordering inversion clarified: `T7` gate is FNV skeleton, `T12` upgrades to SHA-256 prod; `T7` no longer claims SHA-256 prod alone). Single identity `data/content_hash.hpp:31` `hashStableBytes` (FNV-1a 64 skeleton at `T7`, SHA-256 prod via `T12` — `T12` lands `data/content_hash.hpp:48-152` SHA-256 canonical; `T7` uses skeleton, `T12` upgrades, per iteration 1 #3) — keep `scene/store.hpp:284-286` `AssetRegistry<T>` as canonical. Delete `broker/asset_store.hpp` mesh-only store + `render/asset_registry.hpp:590-597` `byObject_` dual-key shim + `render/volume_renderer.hpp:204` `legacyHandleCache` + `render/volume_slice_renderer.hpp:194` + `render/plane_renderer.hpp:211` pointer caches. Keep only `byHash_` content-hash dedup; `register*Asset` → `resolve*` via `AssetHandle{index,generation,hash}` (also `VolumeTextureHandle`/`ImageTextureHandle` unify to `AssetHandle`). Update `broker/*_object_mapper.cpp` to use `scene::SceneStore` registry only.
 
@@ -156,7 +156,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `asset_indirection` `data::Mesh::positions` still `render/re_scene` check passes, no pointer-key maps, no `shared()` global mutable (or guarded).
 
-### T8a: Split `View` god → ViewState composition
+## T8a: Split `View` god → ViewState composition
 
 **D** — Depends on `T4`+`T5`+`T6`. Per `docs/spec/modules.md:20` `View` is `View{rect,clearColor,Camera,plane,lights,itemIds}` + 6 per-field gens — keep binding. Extract non-core state to `scene/view_state.hpp` `ViewState{clearColor,DepthConfig}` composition if needed, delete `mutateCamera` lambda `98-106` → `setCamera(Camera)` bumping `cameraGen` via `SceneStore::bump(FieldId)`. `View` retains 6 fields. `wc -l scene/view.hpp <90` is secondary cap; primary is `grep -c "rectGen\|clearColorGen\|cameraGen\|planeGen\|lightsGen\|itemsGen" scene/view.hpp ==6` (`#8` fix).
 
@@ -164,7 +164,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `View` SRP, no `mutateCamera`, 6 gens.
 
-### T8b: Split `ViewSynchronizer` god → Hasher/Orderer/Translator
+## T8b: Split `ViewSynchronizer` god → Hasher/Orderer/Translator
 
 **D** — Depends on `T8a`. Split `broker/view_synchronizer.cpp:86-340` `sync` 250-line god into `ViewHasher` (curGen `layerOrderHash+depthConfigGen`), `LayerOrderer` (`stable_sort OrderEntry`), `ItemTranslator` (`mapItemToLayer` via `Broker::getByKind`). Keep `ViewCompositor` OIT capture. `wc -l broker/view_synchronizer.cpp <220` is secondary drift guard via `tools/audit.sh` (not analytic, spec-review #8); primary is `grep -c "class ViewHasher\|class LayerOrderer" >=2`. `T9`/`T10` now depend on `T8a`+`T8b`.
 
@@ -172,7 +172,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `ViewSynchronizer` SRP, no god `sync`.
 
-### T9: Fix failing samples (bounded `300` frame harness)
+## T9: Fix failing samples (bounded `300` frame harness)
 
 **D** — Depends on `T5`+`T6`+`T8a`+`T8b` green (iteration 5 #2 fix — `T9/T10` now depend on `T8a`+`T8b` View split, `mutateCamera` deleted; `T9` diagnoses layer migration + techniqueOrder which assumes `T8` cache hashes stable; waiver `§ Consolidated Active Backlog` says `T9/T10 now depend on T8a+T8b`). Diagnose via `source tools/env.sh && eval "$LOOP_BUILD_TEST_CMD"` + headless sample runs `RE_SAMPLE_MAX_FRAMES=20 tools/build.sh && timeout ... build/app/re_sample_*`. Fix root cause (likely layer migration `LAYER_0` default or missing `techniqueOrder` entry for `Plane`/`Contour` or uninitialized `priority`). Keep harness bounded `kDefaultFrames=300` `app/sample_harness.hpp:175` `run(sampleMaxFrames)` discipline. No long-lived change here.
 
@@ -180,7 +180,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, samples run, `FR-app.1/2/3` `1/255` smoke per `FR → T` matrix.
 
-### T10: Long-lived samples (non-testing, opt-in `runInteractive` + camera `pan/rotate/zoom`)
+## T10: Long-lived samples (non-testing, opt-in `runInteractive` + camera `pan/rotate/zoom`)
 
 **D** — Depends on `T9` + `T8a`+`T8b` (uses `setCamera` after `mutateCamera` removal, iteration 6 #2 fix — `T8` ambiguous post-split; `T9` already gates `T8a+b` but `T10` directly needs `mutateCamera` deletion `T8a` and `ViewSynchronizer` SRP `T8b`). Create `app/*_interactive.cpp` or `--interactive` flag set that bypasses `sampleMaxFrames` and uses `SampleHarness::runInteractive()` `app/sample_harness.cpp:111` `until shouldClose()` with `pan+rotate+zoom` camera interaction via `scene::CameraController` `scene/camera_controller.hpp` + `app::GlfwCameraInteractor` `app/glfw_camera_interactor.hpp` (left drag rotate `dx*0.5deg`, right drag pan `dx*0.01`, scroll/middle drag zoom `exp(-dy*0.02)`). Each long-lived target mirrors its bounded peer (mesh/plane/volume/slice/oit/mpr) but `renderFrame` calls `interactor.update(view)` before `syncRenderPresent`, respects `WantCaptureMouse`, skips orthographic slice views per `V5 T9` guard, and mutates via `view.setCamera(newCam)` (not `mutateCamera` lambda — deleted in `T8`) so `viewGen`/`cameraGen` + `generation` bump via `SceneStore::bump(FieldId)` lets `broker` re-translate only dirty camera fields `1e-6` analytic. Guard `tools/test.sh` and `ctest` never use them (exclude from `CMake RE_BUILD_SAMPLES` long-lived targets via `EXCLUDE_FROM_ALL` or separate `re_samples_long` target). Docs `docs/samples.md` note `long-lived not for testing`. `examples/` still NOT in `AUDIT_SOURCE_DIRS` per `README.md:33` — document waiver for `no_secrets`.
 
@@ -188,7 +188,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — suite green, audit green, long samples excluded from default build/test.
 
-### T11a: Loader hardening — NRRD/Volume overflow & budgets (Caps tiled)
+## T11a: Loader hardening — NRRD/Volume overflow & budgets (Caps tiled)
 
 **D** — Depends on `T1` only (Caps probe — `SHA-256` prod from `T12` not needed for `T11a`; `T12` lands SHA-256 after `T7` per iteration 2 #6, `T11a` is parallel-eligible after `T1`/`T6` per ordering waiver §13.7 and executes in listed sequential order for review simplicity, iteration 2 #6 fix — `+ T12` removed from depends). Single domain NRRD/Volume only, <150 lines, one session (iteration 1 #2 split). `io/volume/nrrd_volume_loader.cpp:362-433` add `uint64_t` checked `voxelCount` (`__builtin_mul_overflow` or `checked_mul`), range-check `sizesValue[i] <= UINT32_MAX` before `static_cast<uint32_t>`, reject `size==0` with `VolumeIo::BudgetExceeded` (code 8) only when `core::Caps` probe also fails per `NFR §5` tiled streaming (product no cap via `core::Caps`, `BudgetExceeded` only on probe fail). `data/volume_dataset.hpp:44` + `volume_dataset.cpp:12` assert `voxels.size()==sx*sy*sz`, `sampleTrilinear:32` clamp guards `NaN` + `size==0` wrap. `volume/transfer_function.hpp:43` assert `points` non-empty sorted strictly increasing else typed error (prevent divide-by-0 `inf/NaN`). `kMaxFileBytes = 512^3*8+64KiB` pre-probe threshold per `NFR §5`. No OBJ/Image/Mesh here (those in `T11b`).
 
@@ -196,7 +196,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `no_secrets`/`no_legacy_api` still green, no `re_io` leak to `scene/`; per-file `wc -l` delta <150 (`nrrd_volume_loader.cpp`/`volume_dataset` each <150) — single focus NRRD/Volume overflow & BudgetExceeded guards.
 
-### T11b: Loader hardening — OBJ/Image/Mesh overflow & budgets + image pixel oracle
+## T11b: Loader hardening — OBJ/Image/Mesh overflow & budgets + image pixel oracle
 
 **D** — Independent except `T1` + `T11a` Caps pattern reference (parallel-eligible after `T1`/`T6`, sequential gate runs `T11a` then `T11b` — see ordering waiver, iteration 5 #1 fix — `T12` removed from parenthetical, `T12` is after `T11b` so not a prerequisite; `T11b` is parallel-eligible after `T1`/`T6` shared Caps pattern is read-only, `T12` SHA prod not needed per `T11a:D` iteration 2 #6). `io/mesh/obj_mesh_loader.cpp:21` remove `kMaxFaceVertices=64` cap — unbounded fan triangulation, accept negative relative indices (`-1` → last vertex) per OBJ spec, add `kMaxFileBytes` probe (like NRRD `512^3*8+64KiB`) before `positions.emplace_back`. `io/image/image_loader.cpp:36` add `file_size` pre-probe + `BudgetExceeded` (mirror NRRD), overflow check `size_t(width)*height` before `stbi_load`. `data/mesh.hpp:40` `fromTriangles` asserts `idx%3==0 && idx < positions.size()`. Add golden `data/fixtures/golden_rgba.png` `2×2` RGBA fixture (committed, SHA256 pinned in `T11b` gate) for `FR-io.3` pixel oracle — `utils::loadImageAsset` → dims `2×2` + corner/center RGBA within `1/255` (analytic, not `non-empty`). No NRRD/VolumeDataset here (those in `T11a`).
 
@@ -204,7 +204,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `no_secrets`/`no_legacy_api` still green, no `re_io` leak to `scene/`; per-file `wc -l` delta <150 (`obj_mesh_loader.cpp`/`image_loader.cpp`/`mesh.hpp` each <150) — single focus OBJ/Image/Mesh overflow & BudgetExceeded guards + golden `2×2` `1/255` pixel oracle.
 
-### T12: Canonical content-hash & spy depollution
+## T12: Canonical content-hash & spy depollution
 
 **D** — Depends on `T7` (single identity — upgrades `FNV-1a` skeleton from `T7` to SHA-256 prod, iteration 1 #3 — `T7` gate is FNV, `T12` gate is SHA-256; ordering inversion clarified, no dependency violation). `data/content_hash.hpp:48-152` make `hashStableBytes` canonical: `float`/`uint32_t`/`int32_t` → little-endian bytes via `memcpy` + `htole32` (not `reinterpret_cast` host bytes), **SHA-256 truncated 64** per `SPEC §10.1` (`data/content_hash.hpp:31` source of truth, FNV-1a skeleton at `T7` already, SHA-256 prod lands here — iteration 1 #3), NaN payload canonicalized (`-NaN` → `NaN`), document `SPEC §10.1` hierarchical `Version:LayoutId:Type:Hash` determinism across runs. Move `contentHashSpy atomic<uint64_t>` out of `data/` (`data/content_hash.hpp:32`) into `test_utils/content_hash_spy.hpp` (data stays pure math, headless-testable without global mutable). `render/asset_registry.cpp:229` + `broker/mesh_object_mapper.cpp:17` ensure `SceneStore::meshAssets_` `AssetId` handle minted at `loadMeshAsset` (via `utils/asset_utils.hpp` from T1) is reused — `mapCached` hit must not re-hash full vertex buffer on every `setTransform` (bump only `generation`). `broker/material_mapper.cpp:18` fix `phongValueHash` XOR weak → SHA-256 continuation same as `render/asset_registry.cpp:44` `materialContentHash`, consistent field set (`baseColor+specular+shininess+ambient+diffuse`, `doubleSided` dropped with typed warning).
 
@@ -212,7 +212,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `asset_indirection` still 0 hits, `data/` no `spdlog`/`atomic` pollution.
 
-### T13: Offscreen/EGL ownership & REContext per-context isolation
+## T13: Offscreen/EGL ownership & REContext per-context isolation
 
 **D** — Independent of `T5`..`T12` except `T11a`/`T11b` budgeting. `utils/offscreen_context.hpp:141-143` replace `void* eglDisplay_/eglContext_` + raw `GLFWwindow* window_` with RAII: `struct EglHandle{ EGLDisplay dpy; EGLContext ctx; EGLSurface surf; }` typed, `unique_ptr<GLFWwindow, GlfwDeleter>` or explicit `release()` with move-nulling. `utils/offscreen_context.cpp:313` fix `reinterpret_cast<void*>(&eglGetProcAddress)` UB → `reinterpret_cast<GlLoadProc>(eglGetProcAddress)`, guard `#include <EGL/egl.h>` with `#ifdef RE_HAS_EGL` (`utils/CMakeLists.txt:33` already probes `RE_EGL_LIBRARY`). `core/re_context.cpp:53` `thread_local REContext t_fallback` → **per-`EGLContext` map** (`unordered_map<EGLContext, REContextState>` mutex-guarded like `g_windowMap:49`, iteration 1 #11 pin — `invalidate()` on `release:129` alone is insufficient; map is binding) so second EGL context on same thread starts cold (no `viewport/clearColor` bleed). `utils/offscreen_context.cpp:199` save/restore `glfwWindowHint` globals (pollution to `core::Window`), after `loadCoreGl` verify `GL_MAJOR==4 && MINOR==6 && CORE_PROFILE` else typed error (SPEC §2 OpenGL 4.6 core). `core/re_context.cpp:191` document `REContext::current()` per-`EGLContext` map vs single-threaded contract (`nfr.md:24`) — keep mutex only for map, not `t_current`; `thread_local` fallback retained only for non-EGL fallback path.
 
@@ -220,7 +220,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `gpu_api_ownership` `core|` still green, `utils/` no raw `gl*`.
 
-### T14a: Generation/dirty — sync error & early-out
+## T14a: Generation/dirty — sync error & early-out
 
 **D** — Depends on `T6`+`T8b`. Fix `ViewSynchronizer::sync` `broker/view_synchronizer.cpp:86-340`: (1) `120-126` silent success without `ViewCompositor` → typed error code 10, `lastStoreGen` not advanced. (2) `86-113` `O(views*items)` `curGen` recompute every `sync()` → early-out on `storeGeneration==lastSceneStoreGen_` before hashing (`SPEC §10.4` hybrid poll). (3) `39-49` `techniquePriorityFor` closed → already deleted in `T6`; keep `mapItemToLayer:342` dispatch via `Broker::getByKind` (OCP) as secondary.
 
@@ -228,7 +228,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, no `Noop`.
 
-### T14b: Generation/dirty — StableKey + tombstone bound
+## T14b: Generation/dirty — StableKey + tombstone bound
 
 **D** — Depends on `T14a`. Fix `StableKey` alias `cache_[key.id]` `broker/camera_mapper.cpp:66` `layoutId=0` → carry `layoutId` from `StableKey` `broker/stable_key.hpp:24`; `curGen` hash `103-106` stable after `T5` map delete (`layerOrderHash`); `scene/detail/generation_tracker.hpp:55` `tombstoneGen_` prune on `serialize`/`pruneOlderThan` with `Version` bump bounded `O(#FieldIds)`; `ViewStore::addView:295` seed `lightsGen/layerGen` from `generation`. `mutateCamera:97` already deleted in `T8a`.
 
@@ -236,7 +236,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `broker_per_type` 1-file-per-mapper.
 
-### T15a: Broker/ownership — deps + ownership regex (early)
+## T15a: Broker/ownership — deps + ownership regex (early)
 
 **D** — Depends on `T8b`+`T14b` (View split, StableKey stable). Harden false-negative floors early (no new feature code): `tools/audit.rules:42` `deps_pinned` remains `require_grep FetchContent_Declare\([^)]*GIT_TAG` **single-line floor** (`[^)]*` valid PCRE) — the binding multiline hard floor is `tools/audit.sh:142` `DEPS_PZO_OK` `grep -PRzo "FetchContent_Declare[^)]*GIT_TAG"` (Pzo, multiline, `[^)]*` excludes `)` and includes newline — spec-review #3 fix, not `[^]*?`); keep `utils/CMakeLists.txt:52` as secondary only. `43` `deps_pinned_no_branch` add `stable|next|latest/trunk/dev/vNext/1.x|refs/heads|origin/` denylist + comment allowlist. `153-155` `ownership_raw_ptr_*` → `grep -E "(const[[:space:]]+)?[A-Za-z_][A-Za-z0-9_:]*[[:space:]]*\*[[:space:]]*[a-z_]"` covering `Type*`/`Type *`/`void*`/`auto*` (broad ERE lands at `T15a` — narrow `Type*` until then per iteration 1 #4 option B, iteration 10 #1 fix — `\s` is PCRE, not ERE; `audit.rules:152-155` and `TASKS.md:243` `T` use `[[:space:]]`; `utils/offscreen_context.hpp:125` `GLFWwindow* /*borrow*/ handle()` + `core/window.hpp:64` `/*borrow*/` + `@note lifetime:` already annotated at iteration 1 #4 for future, remaining `auto*`/`void*`/`Type *` sites plus `const char*` will be `/*borrow*/` annotated at `T15a`);
 
@@ -244,7 +244,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `comment_tag_context` PASS.
 
-### T15b: Broker/audit — gpu + mapper + sanitize regex (late)
+## T15b: Broker/audit — gpu + mapper + sanitize regex (late)
 
 **D** — Depends on `T15a`. Harden remaining 3 floors after early green (narrow `\bgl.*\(` until `T15b`, `GL_*` leak fix deferred to `T15b` with comment scrub of `scene/depth_config.hpp` `render/offscreen.cpp` `render/screen_quad.cpp` etc. per reviewer #5 option B, plus `// utils egl* allowed` if needed); `T15b` will tighten `gpu_api_ownership` to `forbid_outside core|\bgl...|GL_...` (`\bgl[A-Z].*\(|GL_[A-Z_]+`) and harden the remaining 3: `99` `broker_per_type` → `grep -c "class.*Mapper" broker/*_mapper.hpp ==1` per-file; `100` `isp_mapper_forbid` → `grep -l "mapCached" broker/*_mapper.*` allowlist `ICachedMapper` `i_mapper.hpp`; `181` `no_per_target_sanitize` → `forbid_grep -E "add_compile_options.*-fsanitize|target_compile_options.*-fsanitize|add_link_options.*-fsanitize"` allowlist `INTERFACE re_project_sanitizers`; `broker/broker.hpp:297` `sceneKindAliases_` → `weak_ptr` — `ownership` broad already landed at `T15a`, `T15b` verifies still green.
 
@@ -252,7 +252,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, 8-rule floor hardened, no `__never_matches` reintroduced.
 
-### T16: Build/export & audit defaults hardening
+## T16: Build/export & audit defaults hardening
 
 **D** — Independent of `T7`..`T15` except audit. Keep `tools/audit.sh:62` default as-is per `AGENTS.md:28` (`AUDIT_SOURCE_DIRS="io data volume scene core broker render app utils test_utils tests"` default passes even if forgotten — `TASKS.md R15` `T1` gate test is the fail-loud, spec-review #3). Add comment in `tools/audit.sh` noting `R15` is gate path. **Definitive** `CMakeLists.txt:58` **already deleted** `find_package(glfw3/glm/spdlog/json QUIET)` before `FetchContent` at spec-review #1 (no version-equality fallback — `FetchContent GIT_TAG` is sole source per `SPEC §2`); audit `deps_pinned_no_branch` + `deps_pinned_no_find_package` then has no bypass — `T16` verifies no reintroduction via `grep -c "find_package.*glfw" CMakeLists.txt ==0` and that `GIT_TAG` SHAs match `docs/spec/techstack.md` §2 canonical table (spec-review #16 DRY). `examples/CMakeLists.txt:104` delete `LINKER:--unresolved-symbols=ignore-all`, fix `app/CMakeLists.txt:28` `re_imgui PUBLIC glfw` → `PRIVATE` or `$<BUILD_INTERFACE:glfw>`, `core/CMakeLists.txt:45` already `PRIVATE glad` stays. `tools/env.sh:10-15` `LSAN_OPTIONS` cwd brittle `tools/lsan.supp` relative → `ROOT="$(cd "$(dirname "$BASH_SOURCE")"/.. && pwd)"` absolute. `utils/CMakeLists.txt:42` `AUDIT_SOURCE_DIRS` grey-zone doc → already in `tools/env.sh:6` keep. `examples/` intentionally NOT in `AUDIT_SOURCE_DIRS` per `README.md:33` but `no_secrets` still scans via built-in — document waiver comment in `tools/audit.rules`.
 
@@ -260,7 +260,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — suite green, audit green, `install(TARGETS re_core ...)` `RenderEngineConfig.cmake` `find_dependency` still green via `examples` probe.
 
-### T17: Harden GL ownership — `core/rhi/gl/` RHI anchor (stretch)
+## T17: Harden GL ownership — `core/rhi/gl/` RHI anchor (stretch)
 
 **D** — `(stretch)` — deferred per `SPEC §3/§6` `core/rhi/` still absent, `gpu_api_ownership core|` remains sole anchor. When activated, uncomment `tools/audit.rules:50` `rhi_ownership forbid_outside core/rhi/gl|\bgl[A-Z]` ; move `core/re_context.cpp:28` `#include <glad/gl.h>` + raw `gl*` bodies under `core/rhi/gl/` `IRHIContext{ITexture,IBuffer,IFramebuffer,IShader,blit,capabilities}` (Qt QRhi/O3DE/Adept per `docs/spec/modules.md:34`). `core/re_context.hpp` includes `core/rhi/irhi_context.hpp` not `<glad>`. Update `docs/spec/guardrails.md:13` transitional note to landed, keep `gpu_api_ownership` as `core/rhi/gl|` hard. Keep `render_no_glad` `forbid_inside render|#include.*glad` still green. Until activation, this task stays **red** and does not gate `T18`.
 
@@ -268,7 +268,7 @@ Deferred `FR` none — `T3a/T3b` + `T9` + `T11a/T11b` + `T13` own all 21 (io4+da
 
 **G** — audit green, `rhi_ownership` enforced, `render/` no `glad` — **not required for loop green; stretch**.
 
-### T18: Evidence & audit placeholder activation (stretch)
+## T18: Evidence & audit placeholder activation (stretch)
 
 **D** — `(stretch)` — `evidence_rule`/`regression_lock` remain **review-gated** per `SPEC §6` + `tools/audit.rules:158-165` — placeholders `__never_matches_*` are intentional (mechanical floor is per-task `grep -c "1/255"` / `"1e-6"` / `"152 MB"` / `"BudgetExceeded"` counts + review checklist, not a generic `require_grep 1/255|1e-6`). When activated, replace only `weak_assert_review_gated` false-negative with tighter per-task counts, **do not** replace review-gated `evidence_rule`/`regression_lock` with generic `require_grep`. Uncomment or delete `tools/audit.rules:88-89` `layer_count/layer_mask` correctly: `layer_mask` `using LayerMask = uint32_t` line stays **deleted** (dumb `LAYER_0..7` has no `LayerMask`), `layer_count` `Count[[:space:]]*=[[:space:]]*8` if re-added must match `COUNT=8` in `scene/layer.hpp`. Enforce `find_package` fallback pin already covered in `T16`; enforce `1/255` per `render/*` gate via review checklist, not bare audit `>0`.
 

@@ -57,8 +57,10 @@ mkdir -p "$LOGDIR"
 # Task headings must match `## T<N> <title>` (space, colon, or end-of-line
 # after the number). `^## T` alone would also match unrelated `## Testing` /
 # `## Tools` sections, so the number is required.
-MAX_TASK="$(grep -cE '^## T[0-9]+([ :]|$)' "$TASKS" 2>/dev/null || true)"
+MAX_TASK="$(grep -cE '^## T[0-9]+[a-z]?([ :]|$)' "$TASKS" 2>/dev/null || true)"
 MAX_TASK="${MAX_TASK:-0}"
+# For suffix tasks, MAX_TASK is count, but valid N are actual IDs like 3a, not just numbers
+TASKS_LIST=($(grep -oE '^## T[0-9]+[a-z]?' "$TASKS" 2>/dev/null | sed 's/^## T//' | tr -d ':' || true))
 
 # ---------------------------------------------------------------------------
 # Model governance: run_models.conf is read at every invocation so edits take
@@ -356,10 +358,13 @@ fi
 if [ "$#" -ne 1 ]; then usage; exit 2; fi
 N="$1"
 case "$N" in
-  *[!0-9]*) echo "error: task number must be numeric"; usage; exit 2 ;;
+  *[!0-9a-z]*) echo "error: task id must be numeric or numeric+suffix like 3a"; usage; exit 2 ;;
 esac
-if [ "$N" -lt 1 ] || [ "$N" -gt "$MAX_TASK" ]; then
-  echo "error: task number out of range (1..$MAX_TASK)"; usage; exit 2
+# Handle both numeric and suffix IDs like 3a — check against TASKS_LIST, fallback to numeric range for backwards compat
+if [[ ! " ${TASKS_LIST[*]} " =~ " $N " ]]; then
+  if [ "$N" -lt 1 ] || [ "$N" -gt "$MAX_TASK" ] 2>/dev/null; then
+    echo "error: task number out of range (1..$MAX_TASK) or unknown id '$N' (valid: ${TASKS_LIST[*]})"; usage; exit 2
+  fi
 fi
 
 FAILFILE="$LOGDIR/task_$N.last_failure"
@@ -429,10 +434,10 @@ fi
 # --- Assemble per-task prompts: project preamble + task block + generic rules ---
 HEADER="$(grep -m1 -E "^## T$N([ :]|$)" "$TASKS")"
 if [ -z "$HEADER" ]; then
-  echo "error: task heading '## T$N ...' not found in TASKS.md (headings must match '## T<N> <title>')." >&2
+  echo "error: task heading '## T$N ...' not found in TASKS.md (headings must match '## T<N> <title>' with optional a/b suffix)." >&2
   exit 2
 fi
-TITLE="$(sed -E 's/^## T[0-9]+[ :]+//' <<< "$HEADER")"
+TITLE="$(sed -E 's/^## T[0-9]+[a-z]?[ :]+//' <<< "$HEADER")"
 case "$TITLE" in '## T'*) TITLE="T$N" ;; esac
 ORIGIN="$(git remote get-url origin 2>/dev/null || true)"
 CORE="$(mktemp)"; IMPLPROMPT="$(mktemp)"; REVIEWPROMPT="$(mktemp)"
