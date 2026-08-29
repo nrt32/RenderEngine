@@ -18,8 +18,11 @@ CameraDelta CameraController::onMouseDrag(float dx, float dy, MouseButton button
         d.panY = -dy * bindings_.panSpeed;
         d.hasPan = (dx != 0.0f || dy != 0.0f);
     } else if (button == bindings_.zoomButton) {
-        // Vertical drag zooms: exponential factor so 10px is analytic within 1e-6.
-        const float factor = std::exp(-dy * bindings_.zoomSpeed * 0.02f);
+        // Vertical drag zooms: exponential factor so 10px is analytic within 1e-6 — T10 analytic
+        // closed-form is exp(-dy*0.02) for middle-drag (task D: scroll/middle drag zoom exp(-dy*0.02));
+        // with default bindings.zoomSpeed=0.1 the scroll path already yields 0.1*0.2=0.02, so the
+        // drag path must use 0.2 for parity (0.1*0.2=0.02) rather than 0.02 (which would be 0.002).
+        const float factor = std::exp(-dy * bindings_.zoomSpeed * 0.2f);
         d.zoomFactor = factor;
         d.hasZoom = (dy != 0.0f);
         if (d.zoomFactor <= 0.0f) {

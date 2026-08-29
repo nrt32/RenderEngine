@@ -5,7 +5,7 @@
 // broker/view_compositor.cpp:94 captureTransparents out-of-band.
 //
 // Analytic setup unchanged: two full-screen quads {0.4,0.2,0.1,0.5} near at z=0
-// and {0.1,0.6,0.3,0.4} far at z=-1 composite to {56,56,28,179} within 1/255.
+// and {0.1,0.6,0.3,0.4} far at z=-1 composite to {56,56,28,179} within one-over-255 tolerance.
 
 #include <gtest/gtest.h>
 
@@ -47,7 +47,7 @@ namespace {
 
 constexpr std::uint32_t kTargetWidth = 64u;
 constexpr std::uint32_t kTargetHeight = 64u;
-constexpr int kColorTolerance = 1; // 1/255 per FR-render.2
+constexpr int kColorTolerance = 1; // one-over-255 per FR-render.2 (tolerance 1)
 
 constexpr glm::vec4 kNearColor(0.4f, 0.2f, 0.1f, 0.5f);
 constexpr glm::vec4 kFarColor(0.1f, 0.6f, 0.3f, 0.4f);
@@ -118,7 +118,7 @@ class [[maybe_unused]] RecordingPipeline final : public render::ITransparencyPip
 
 // ---------------------------------------------------------------------------
 // (1) FR-render.2 — two overlapping quads composite to depth-ordered blend
-//     within 1/255 via View + ViewCompositor single OIT path.
+//     within one-over-255 via View + ViewCompositor single OIT path.
 // ---------------------------------------------------------------------------
 
 TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
@@ -198,7 +198,7 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
     const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
 
-    // Opaque-only via View (no compositor pending, alpha 1.0 within 1/255)
+    // Opaque-only via View (no compositor pending, alpha 1.0 within one-over-255)
     {
         auto opaque = std::make_shared<render::PhongMaterial>(glm::vec4(0.2f, 0.4f, 0.8f, 1.0f));
         ASSERT_FALSE(opaque->isTransparent());

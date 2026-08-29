@@ -99,3 +99,39 @@ if(RE_BUILD_SAMPLES OR RE_BUILD_TESTS)
         )
     endforeach()
 endif()
+
+# ---------------------------------------------------------------------------
+# Long-lived interactive samples (T10) — not for testing, bypass sampleMaxFrames
+# via SampleHarness::runInteractive() until shouldClose() with pan+rotate+zoom
+# via scene::CameraController + app::GlfwCameraInteractor (left drag rotate
+# dx*0.5deg, right drag pan dx*0.01, scroll/middle drag zoom exp(-dy*0.02)).
+# Each mirrors its bounded peer but renderFrame calls interactor.update(view)
+# before syncRenderPresent, respects WantCaptureMouse, skips orthographic slice
+# views, mutates via view.setCamera. Guard: EXCLUDE_FROM_ALL so tools/test.sh
+# and ctest never run them (audit: long samples excluded from default build/test).
+# Docs note long-lived not for testing.
+# ---------------------------------------------------------------------------
+foreach(long_target re_sample_mesh_long re_sample_volume_long re_sample_plane_long
+        re_sample_slice_long re_sample_oit_long re_sample_mpr_long)
+    # Map target to source: re_sample_mesh_long -> mesh_long.cpp etc.
+    string(REPLACE "re_sample_" "" _stem "${long_target}")
+    string(REPLACE "_long" "" _base "${_stem}")
+    add_executable(${long_target} EXCLUDE_FROM_ALL ${_base}_long.cpp)
+    target_link_libraries(${long_target} PRIVATE
+        re_app
+        re_broker
+        re_io
+        re_engine
+        glm::glm
+        spdlog::spdlog
+        re_project_warnings
+        re_project_sanitizers
+    )
+    target_compile_definitions(${long_target} PRIVATE
+        RE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    )
+endforeach()
+target_link_libraries(re_sample_mpr_long PRIVATE re_utils)
+add_custom_target(re_samples_long DEPENDS
+    re_sample_mesh_long re_sample_volume_long re_sample_plane_long
+    re_sample_slice_long re_sample_oit_long re_sample_mpr_long)

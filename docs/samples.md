@@ -184,10 +184,11 @@ pixel, `zoomSpeed` factor per scroll unit) and exposes `CameraBindings{ rotateBu
 modifiers, rotateSpeed, panSpeed, zoomSpeed }` as a plain POD so each view can override it without a new type. The
 adapter polls `glfwGetMouseButton`/`glfwGetCursorPos`/`glfwGetScroll` each frame before `renderFrame`, checks
 `!ImGui::GetIO().WantCaptureMouse` (the `TASKS.md:126` guard — when the overlay wants the mouse the camera does not move),
-forwards the delta into the controller, and then calls `View::mutateCamera([&](Camera& c){ c.rotate(...); })` so the
-per-field `viewGen` bump propagates to `View::generation` and the broker's `ViewSynchronizer` re-translates only the
-dirty camera fields per SPEC §10.4 (no full dump). Dragging 10 px with the default `rotateSpeed 0.5` yields a 5 deg
-yaw/pitch orbit; the gate asserts the resulting `viewMatrix` against the analytic `Camera::rotate(5,0)` within `1e-6`,
+forwards the delta into the controller, and then calls `View::setCamera(newCam)` (the `mutateCamera` lambda was deleted in
+`T8a` — `setCamera` bumps `cameraGen`/`viewGen` via `SceneStore::bump(FieldId)`) so the per-field `viewGen` bump
+propagates to `View::generation` and the broker's `ViewSynchronizer` re-translates only the dirty camera fields per
+SPEC §10.4 (no full dump). Dragging 10 px with the default `rotateSpeed 0.5` yields a 5 deg yaw/pitch orbit; the gate
+asserts the resulting `viewMatrix` against the analytic `Camera::rotate(5,0)` within `1e-6`,
 and the `WantCaptureMouse=true` guard leaves the matrix unchanged (`delta 0` within `1e-6`) versus `false` yielding the
 analytic orbit. The plane sample and the three MPR 2D orthographic slice views keep their fixed dataset-extent
 orthographic framing and are **not** orbited (the `Wired in mesh/slice/volume/oit/mpr-3D; plane + MPR 2D orthographic skip`
@@ -249,6 +250,23 @@ asserts:
 | Window-opened marker in log | contains `GL 4.6 core` | `core::Window::create` logs `window: 800x600 (framebuffer 800x600) GL 4.6 core` (requested size + live framebuffer size) only after `glfwCreateWindow` + glad loading + the `glGetIntegerv` 4.6 probe succeed (FR-app.1 "opens a window", SPEC §2/§8) |
 | Sanitizer signatures in log | none of `AddressSanitizer`, `UndefinedBehaviorSanitizer`, `runtime error:`, `LeakSanitizer` | FR-app.1 "no sanitizer reports"; address/UB detection stays active in the subprocess (the leak gate remains the unit-test suite on llvmpipe, SPEC §8 — the Xvfb windowing stack's fontconfig/pango allocations are third-party driver noise) |
 | Per-sample frame count | `20` | `RE_SAMPLE_MAX_FRAMES=20`: bounded run proving the loop iterated; exit 0 implies all 20 frames rendered |
+
+## Long-lived interactive samples (T10, not for testing)
+
+The bounded samples above exit after `RE_SAMPLE_MAX_FRAMES` (default 300) so the gate can run them headlessly. T10 adds **long-lived interactive** peers that bypass that bound and run until the window is closed:
+
+| Bounded (tested) | Long-lived (interactive, EXCLUDE_FROM_ALL) | Interaction |
+|---|---|---|
+| `re_sample_mesh` | `re_sample_mesh_long` | left-drag rotate `dx*0.5deg`, right-drag pan `dx*0.01`, scroll/middle-drag zoom `exp(-dy*0.02)` |
+| `re_sample_volume` | `re_sample_volume_long` | same |
+| `re_sample_plane` | `re_sample_plane_long` | interactor called per view but orthographic/PlaneDesc guard skips (plane + MPR 2D fixed framing) |
+| `re_sample_slice` | `re_sample_slice_long` | interactor called but PlaneDesc guard vetoes (perspective clip view stays fixed per plane guard; 2D orthographic skip via plane guard) |
+| `re_sample_oit` | `re_sample_oit_long` | same (depth-tested, `DepthConfig{true}` preserved) |
+| `re_sample_mpr` | `re_sample_mpr_long` | only the 3D perspective view is orbited; three 2D orthographic slice views keep fixed framing |
+
+Each long-lived target mirrors its bounded peer's scene setup but its `renderFrame` calls `interactor.update(view)` (or `interactor.update(builder.view())` / `interactor.update(views_[3])` for MPR) **before** `syncRenderPresent`, respects `ImGui::GetIO().WantCaptureMouse` (no camera change when the overlay wants the mouse) and skips orthographic/PlaneDesc views per V5 T9 guard, and mutates via `view.setCamera(newCam)` (not the deleted `mutateCamera` lambda) so `viewGen`/`cameraGen` + `generation` bump via `SceneStore::bump(FieldId)` lets the broker re-translate only dirty camera fields within the analytic tolerance. They are built via `cmake --build build --target re_samples_long` (or per-target `re_sample_*_long`) and run as `./build/app/re_sample_mesh_long --help` (shows help) or without args until window close via `SampleHarness::runInteractive()` (`app/sample_harness.cpp:111` `until shouldClose()`). They are **EXCLUDE_FROM_ALL** and never invoked by `tools/test.sh` or `ctest` — `ctest` suite count remains two (`re_tests` + `re_tests_death`) and the `re_samples_long` target is separate.
+
+Waiver: `examples/` is intentionally not in `AUDIT_SOURCE_DIRS` per `README.md:33` (sample copies for documentation, not audited production code); `no_secrets` still scans it via the built-in whole-tree scan in `tools/audit.sh:148`, so the waiver is documented here and does not bypass the secret scan.
 
 ## Guardrails observed
 

@@ -29,9 +29,11 @@ void scrollCallback(GLFWwindow* /*borrow*/ /*win*/, double /*xoff*/, double yoff
 } // namespace
 
 void GlfwCameraInteractor::update(scene::View& view) noexcept {
-    // Orthographic skip — plane + MPR 2D views keep fixed dataset-extent framing per task's skip rule, so the
-    // camera is not orbited even when the overlay does not capture the mouse.
-    if (view.camera.isOrthographic()) {
+    // Orthographic / plane guard — plane + MPR 2D views keep fixed dataset-extent framing per task's skip rule
+    // (T10 gate asserts no rotate when view has PlaneDesc; plane-present views are orthographic per mapper
+    // validation, but the test constructs a perspective camera with a PlaneDesc to verify the guard, so we
+    // check both the camera mode and the PlaneDesc presence). When either is set the camera is not orbited.
+    if (view.camera.isOrthographic() || view.plane.has_value()) {
         return;
     }
     /// @note lifetime: win is borrowed from the windowing system's current context, not owned by this adapter.
@@ -129,7 +131,7 @@ void GlfwCameraInteractor::update(scene::View& view) noexcept {
 
 void GlfwCameraInteractor::updateForTest(scene::View& view, bool wantCaptureMouse, float dx, float dy,
                                          scene::MouseButton button, int mods) noexcept {
-    if (view.camera.isOrthographic()) {
+    if (view.camera.isOrthographic() || view.plane.has_value()) {
         return;
     }
     if (wantCaptureMouse) {

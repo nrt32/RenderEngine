@@ -72,8 +72,8 @@ class CameraController {
     /// the stored bindings; a mismatch returns an empty delta (all has* false) so the caller can skip the
     /// View::setCamera bump. For the rotate button, yaw = dx * rotateSpeed and pitch = -dy * rotateSpeed
     /// (drag right yaws right, drag up pitches up); pan maps similarly via panSpeed; zoom via middle-button
-    /// vertical drag maps to an exponential factor exp(-dy * zoomSpeed * 0.02) so a 10-pixel drag yields a
-    /// deterministic factor within 1e-6.
+    /// vertical drag maps to an exponential factor exp(-dy * zoomSpeed * 0.2) so a 10-pixel drag yields a
+    /// deterministic factor within 1e-6 (with default zoomSpeed 0.1 the exponent is -dy*0.02, T10 analytic).
     CameraDelta onMouseDrag(float dx, float dy, MouseButton button, int modifiers) const noexcept;
 
     /// Translate a vertical scroll delta (positive away from user) into a zoom delta. The factor is
