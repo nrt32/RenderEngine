@@ -196,7 +196,7 @@ std::vector<std::uint8_t> renderAndReadPixel(const render::PlaneScene& scene,
     rt.width = kTargetWidth;
     rt.height = kTargetHeight;
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-    auto result = renderer.render(scene, camera, rt);
+    auto result = renderer.renderForTest(scene, camera, rt);
     EXPECT_TRUE(result.ok()) << result.error().message;
 
     std::vector<std::uint8_t> pixels;

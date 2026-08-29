@@ -328,7 +328,7 @@ TEST(T18Depth, LinkedListOitCompositeUnchangedThroughDepthEnabledTarget) {
 
     auto pipeline = std::make_shared<render::LinkedListOIT>();
     render::MeshRenderer renderer(registry, pipeline);
-    auto result = renderer.render(scene, makeCamera(), rt);
+    auto result = renderer.renderForTest(scene, makeCamera(), rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
 

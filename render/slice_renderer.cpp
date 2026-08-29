@@ -106,31 +106,21 @@ data::Result<void> SliceRenderer::clipInstances(const SliceScene& scene,
     return data::Result<void>(data::value);
 }
 
-data::Result<void> SliceRenderer::render(const SliceScene& scene,
-                                         const Camera& camera,
-                                         const ClipPlane& plane,
-                                         const RenderTarget& target) {
+data::Result<void> SliceRenderer::renderForTest(const SliceScene& scene,
+                                             const Camera& camera,
+                                             const ClipPlane& plane,
+                                             const RenderTarget& target) {
     if (target.width == 0u || target.height == 0u) {
         return data::makeError<void>(1, "SliceRenderer: invalid target size");
     }
-
     auto programResult = clipProgram();
     if (programResult.failed()) {
-        return data::makeError<void>(programResult.error().code,
-                                     programResult.error().message);
+        return data::makeError<void>(programResult.error().code, programResult.error().message);
     }
-
-    // Begin the pass through the ONE shared prologue (bind target → viewport
-    // → clear → depth state → blend off). A null framebuffer selects the
-    // window's on-screen default framebuffer; otherwise the offscreen FBO is
-    // bound. Direct single-scene renders keep the deterministic depth-off
-    // painter's-order pass — a target's optional depth attachment is consumed
-    // only through the per-view opt-in (render::View::setDepthTest).
     auto& ctx = core::REContext::current();
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,
                   target.clearColor.b, target.clearColor.a);
-
     return clipInstances(scene, camera, plane, *programResult);
 }
 

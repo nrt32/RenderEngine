@@ -878,7 +878,7 @@ TEST(T15Mpr, ThreeDViewDrawsMesh) {
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     render::MeshRenderer renderer(registry, nullptr);
-    auto result = renderer.render(scene, camera, rt);
+    auto result = renderer.renderForTest(scene, camera, rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
 

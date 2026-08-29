@@ -261,7 +261,7 @@ TEST(T3Broker, ForwardingRenderStillGreen) {
     target.clearColor = glm::vec4(0, 0, 0, 0);
 
     render::MeshRenderer renderer(registry, nullptr);
-    auto rr = renderer.render(scene, cam, target);
+    auto rr = renderer.renderForTest(scene, cam, target);
     ASSERT_TRUE(rr.ok()) << "MeshRenderer::render via Broker handle must succeed: " << rr.error().message;
 
     std::vector<std::uint8_t> pixels;

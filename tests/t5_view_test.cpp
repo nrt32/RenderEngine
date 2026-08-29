@@ -276,23 +276,16 @@ TEST(T5View, ClipPlaneDiscriminates2Dvs3D) {
 // ---------------------------------------------------------------------------
 TEST(T5View, RendererDrawLayerAssumesBoundCleared) {
     TwoViewReViewFixture f;
-    // Direct single-item render() keeps clear for tests: renders mesh gold quad.
-    render::ViewTarget target;
-    {
-        auto t = render::ViewTarget::create(64, 64);
-        ASSERT_TRUE(t.ok()) << t.error().message;
-        target = std::move(*t);
-    }
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer();
-    rt.width = 64;
-    rt.height = 64;
-    rt.clearColor = glm::vec4(0, 0, 0, 0);
-    auto r = f.meshRenderer->render(f.sceneA, f.camera, rt);
+    // T3a: direct render() deleted — single-item via View keeps clear for tests: renders mesh gold quad via View path.
+    render::View directView(render::ViewRect{0, 0, 64, 64}, glm::vec4(0, 0, 0, 0));
+    directView.setCamera(f.camera);
+    directView.addItem(f.sceneA, f.meshRenderer);
+    ASSERT_TRUE(directView.ensureTarget().ok());
+    auto r = directView.render();
     ASSERT_TRUE(r.ok()) << r.error().message;
     // Center pixel must be {51,102,204} within 1/255 (FR-render.1 analytic).
     {
-        auto pix = readPixel(target.framebuffer(), 32, 32);
+        auto pix = readPixel(directView.target()->framebuffer(), 32, 32);
         EXPECT_NEAR(pix[0], kExpectedAR, kColorTolerance);
         EXPECT_NEAR(pix[1], kExpectedAG, kColorTolerance);
         EXPECT_NEAR(pix[2], kExpectedAB, kColorTolerance);

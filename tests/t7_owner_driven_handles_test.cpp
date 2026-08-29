@@ -119,7 +119,7 @@ TEST(T7OwnerDrivenHandles, HashSpyZeroAcross60Frames) {
     data::resetContentHashCallCount();
     auto r1 = volRenderer.render(vScene, camV, rt);
     ASSERT_TRUE(r1.ok()) << r1.error().message;
-    auto r2 = planeRenderer.render(pScene, camP, rt);
+    auto r2 = planeRenderer.renderForTest(pScene, camP, rt);
     ASSERT_TRUE(r2.ok()) << r2.error().message;
     // After warm-up, reset spy to measure steady-state
     data::resetContentHashCallCount();
@@ -163,7 +163,7 @@ TEST(T7OwnerDrivenHandles, SlotCountConstantAcross1000DistinctImages) {
     ASSERT_TRUE(h0.ok());
     render::PlaneInstance inst0{geom, *h0, img0, glm::mat4(1.0f)};
     render::PlaneScene scene0; scene0.planes.push_back(inst0);
-    auto r0 = renderer.render(scene0, cam, rt);
+    auto r0 = renderer.renderForTest(scene0, cam, rt);
     ASSERT_TRUE(r0.ok());
     size_t countAfterWarm = registry->imageSlotCount();
     EXPECT_EQ(countAfterWarm, 1u) << "one distinct image → one slot (explainable)";

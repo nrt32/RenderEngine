@@ -47,6 +47,7 @@
 #include "render/mesh_renderer.hpp"
 #include "render/phong_material.hpp"
 #include "render/slice_renderer.hpp"
+#include "render/view.hpp"
 #include "tests/offscreen_fixture.hpp"
 #include "tests/test_helpers.hpp"
 
@@ -220,26 +221,29 @@ TEST(T11RenderSlice, ClippedMeshRendersCorrectly) {
     plane.normal = kPlaneNormal;
     plane.point = kPlanePoint;
 
-    render::SliceRenderer renderer(registry);
+    // T3a: SliceRenderer::render deleted — port via render::View +
+    // REContext::current().beginPass + View::addItem (View owns beginPass).
+    auto renderer = std::make_shared<render::SliceRenderer>(registry);
     render::Camera camera = makeCamera();
-
-    RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
-    auto result = renderer.render(scene, camera, plane, rt);
+    // View path: put plane into scene's plane field for drawLayer without explicit plane param
+    render::SliceScene viewScene = scene;
+    viewScene.plane = plane;
+    render::View view(render::ViewRect{0, 0, static_cast<int>(kTargetWidth), static_cast<int>(kTargetHeight)},
+                      glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+    view.setCamera(camera);
+    view.addItem(viewScene, renderer);
+    ASSERT_TRUE(view.ensureTarget().ok());
+    auto result = view.render();
     ASSERT_TRUE(result.ok()) << result.error().message;
 
-    // Read back the center pixel from the still-bound target framebuffer.
+    // Read back the center pixel from the View's target.
+    view.target()->framebuffer().bind();
     std::vector<std::uint8_t> pixels;
     re::utils::PixelReader reader;
     auto read = reader.read(kCenterX, kCenterY, 1u, 1u, pixels);
     ASSERT_TRUE(read.ok()) << read.error().message;
     ASSERT_EQ(pixels.size(), 4u);
+    view.target()->framebuffer().unbind();
 
     // The kept z=+1 face's normal is +Z, so the deterministic v1 flat lighting
     // shades it to exactly the base color: {51, 102, 204}.

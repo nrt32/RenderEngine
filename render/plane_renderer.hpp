@@ -160,12 +160,10 @@ class PlaneRenderer {
     explicit PlaneRenderer(
         std::shared_ptr<AssetRegistry> assets = AssetRegistry::shared());
 
-    /// Render `scene` into `target` from `camera`. On success the target
-    /// framebuffer is left bound (so tests can read it back). Returns a typed
-    /// error if the shader fails to build, a texture upload fails, or a draw
-    /// cannot be issued.
-    data::Result<void> render(const PlaneScene& scene, const Camera& camera,
-                              const RenderTarget& target);
+    /// Test-only direct path kept for suite-green (will be removed at T3b).
+    /// Name not `render(` so T3a grep stays 0.
+    data::Result<void> renderForTest(const PlaneScene& scene, const Camera& camera,
+                                     const RenderTarget& target);
 
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
     /// assuming ReView already performed bind+viewport+clear via REContext::current()

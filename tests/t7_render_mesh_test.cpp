@@ -38,6 +38,7 @@
 #include "render/imaterial.hpp"
 #include "render/mesh_renderer.hpp"
 #include "render/phong_material.hpp"
+#include "render/view.hpp"
 #include "tests/offscreen_fixture.hpp"
 #include "tests/test_helpers.hpp"
 
@@ -121,20 +122,6 @@ class SpyTransparencyPipeline final : public render::ITransparencyPipeline {
 // ---------------------------------------------------------------------------
 
 TEST(T7RenderMesh, OpaqueQuadCenterPixelMatchesBaseColor) {
-    // Offscreen RGBA8 color target (64x64).
-    auto targetColor = core::Texture2D::create();
-    auto targetFramebuffer = core::Framebuffer::create();
-    ASSERT_TRUE(targetColor.ok()) << targetColor.error().message;
-    ASSERT_TRUE(targetFramebuffer.ok()) << targetFramebuffer.error().message;
-    std::vector<std::uint8_t> zeros(kTargetWidth * kTargetHeight * 4u, 0u);
-    targetColor->bind(0u);
-    targetColor->upload(kTargetWidth, kTargetHeight, zeros.data());
-    targetColor->unbind(0u);
-    targetFramebuffer->bind();
-    targetFramebuffer->attachColor(*targetColor);
-    ASSERT_TRUE(targetFramebuffer->isComplete());
-    targetFramebuffer->unbind();
-
     auto material =
         std::make_shared<render::PhongMaterial>(kBaseColor);
     ASSERT_FALSE(material->isTransparent());
@@ -151,25 +138,27 @@ TEST(T7RenderMesh, OpaqueQuadCenterPixelMatchesBaseColor) {
         render::MeshInstance{*handle, material, glm::mat4(1.0f)});
 
     render::Camera camera = makeCamera();
-    render::RenderTarget rt;
-    rt.framebuffer = &*targetFramebuffer;
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-    // No transparency pipeline injected: an opaque-only scene must render via
-    // the plain forward pass.
-    render::MeshRenderer renderer(registry, nullptr);
-    auto result = renderer.render(scene, camera, rt);
+    // T3a: direct renderer.render deleted — port via render::View +
+    // REContext::current().beginPass + View::addItem (View owns beginPass).
+    auto renderer = std::make_shared<render::MeshRenderer>(registry, nullptr);
+    render::View view(render::ViewRect{0, 0, static_cast<int>(kTargetWidth), static_cast<int>(kTargetHeight)},
+                      glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+    view.setCamera(camera);
+    view.addItem(scene, renderer);
+    ASSERT_TRUE(view.ensureTarget().ok());
+    auto result = view.render();
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
 
-    // Read back the center pixel from the still-bound target framebuffer.
+    // Read back the center pixel from the View's target.
+    view.target()->framebuffer().bind();
     std::vector<std::uint8_t> pixels;
     re::utils::PixelReader reader;
     auto read = reader.read(kCenterX, kCenterY, 1u, 1u, pixels);
     ASSERT_TRUE(read.ok()) << read.error().message;
     ASSERT_EQ(pixels.size(), 4u);
+    view.target()->framebuffer().unbind();
 
     EXPECT_NEAR(pixels[0], kExpectedR, kColorTolerance) << "R channel";
     EXPECT_NEAR(pixels[1], kExpectedG, kColorTolerance) << "G channel";
@@ -185,19 +174,6 @@ TEST(T7RenderMesh, OpaqueQuadCenterPixelMatchesBaseColor) {
 TEST(T7RenderMesh, OpaqueSceneAlphaIsOneAndPipelineStaysOff) {
     auto spy = std::make_shared<SpyTransparencyPipeline>();
 
-    auto targetColor = core::Texture2D::create();
-    auto targetFramebuffer = core::Framebuffer::create();
-    ASSERT_TRUE(targetColor.ok()) << targetColor.error().message;
-    ASSERT_TRUE(targetFramebuffer.ok()) << targetFramebuffer.error().message;
-    std::vector<std::uint8_t> zeros(kTargetWidth * kTargetHeight * 4u, 0u);
-    targetColor->bind(0u);
-    targetColor->upload(kTargetWidth, kTargetHeight, zeros.data());
-    targetColor->unbind(0u);
-    targetFramebuffer->bind();
-    targetFramebuffer->attachColor(*targetColor);
-    ASSERT_TRUE(targetFramebuffer->isComplete());
-    targetFramebuffer->unbind();
-
     auto material =
         std::make_shared<render::PhongMaterial>(kBaseColor);
     ASSERT_FALSE(material->isTransparent());
@@ -211,23 +187,26 @@ TEST(T7RenderMesh, OpaqueSceneAlphaIsOneAndPipelineStaysOff) {
         render::MeshInstance{*handle, material, glm::mat4(1.0f)});
 
     render::Camera camera = makeCamera();
-    render::RenderTarget rt;
-    rt.framebuffer = &*targetFramebuffer;
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     // Inject the spy. The opaque-only scene must NOT engage it (FR-render.3).
-    render::MeshRenderer renderer(registry, spy);
-    auto result = renderer.render(scene, camera, rt);
+    // T3a: port via View — drawLayer never engages pipeline, spy stays 0.
+    auto renderer = std::make_shared<render::MeshRenderer>(registry, spy);
+    render::View view(render::ViewRect{0, 0, static_cast<int>(kTargetWidth), static_cast<int>(kTargetHeight)},
+                      glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+    view.setCamera(camera);
+    view.addItem(scene, renderer);
+    ASSERT_TRUE(view.ensureTarget().ok());
+    auto result = view.render();
     ASSERT_TRUE(result.ok()) << result.error().message;
 
     // Center-pixel alpha must be exactly 1.0 (opaque; no transparency engaged).
+    view.target()->framebuffer().bind();
     std::vector<std::uint8_t> pixels;
     re::utils::PixelReader reader;
     auto read = reader.read(kCenterX, kCenterY, 1u, 1u, pixels);
     ASSERT_TRUE(read.ok()) << read.error().message;
     ASSERT_EQ(pixels.size(), 4u);
+    view.target()->framebuffer().unbind();
     EXPECT_EQ(pixels[3], kExpectedA) << "alpha channel (== 255 / 1.0)";
 
     // The spy must confirm the pipeline was never engaged.

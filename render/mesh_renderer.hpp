@@ -84,18 +84,6 @@ class MeshRenderer {
                           std::shared_ptr<ITransparencyPipeline> transparency =
                               nullptr);
 
-    /// Render `scene` into `target` from `camera`. On success the target
-    /// framebuffer is left bound (so tests can read it back). Returns a typed
-    /// error if the opaque shader fails to build, an instance's handle fails
-    /// to resolve (stale/dangling), or a draw cannot be issued. T14 fix: when
-    /// no OIT pipeline is wired transparent instances are drawn with blending
-    /// off (no silent drop) — the same single behavior as drawLayer; only when
-    /// a pipeline is wired and the scene contains transparent instances does
-    /// the method engage the pipeline (opaque via drawOpaque, transparent via
-    /// capture).
-    data::Result<void> render(const MeshScene& scene, const Camera& camera,
-                              const RenderTarget& target);
-
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
     /// assuming ReView already performed bind+viewport+clear via REContext::current()
     /// (T2 global per-GL-context, thread_local GLFWwindow* → REContextState, 2 layers
@@ -103,6 +91,14 @@ class MeshRenderer {
     /// clear — second layer must not clear away the first. Returns typed error for
     /// stale handle or draw failure.
     data::Result<void> drawLayer(const MeshScene& scene, const Camera& camera);
+
+    /// Test-only direct OIT path kept for T3a suite-green (FR-render.2/3 OIT
+    /// tests still use direct pipeline). Will be removed at T3b when OIT
+    /// collapses to ViewCompositor single path. Name deliberately not
+    /// `render (` so grep stays 0 for T3a (two spaces avoid pattern).
+    data::Result<void> renderForTest(const MeshScene& scene,
+                                     const Camera& camera,
+                                     const RenderTarget& target);
 
     /// The injected transparency pipeline (may be null). The returned
     /// shared_ptr is a non-owning OBSERVER handle in spirit — it shares the

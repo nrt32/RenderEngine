@@ -182,7 +182,7 @@ TEST(T5Collapse, SphereGeometryKindPixelParityWithin1_255) {
         targetFb->bind(); targetFb->attachColor(*targetColor); EXPECT_TRUE(targetFb->isComplete()); targetFb->unbind();
         render::RenderTarget target{&*targetFb, kW, kH, glm::vec4(0,0,0,0)};
         render::MeshRenderer renderer(registry, nullptr);
-        auto rr = renderer.render(scene, cam, target);
+        auto rr = renderer.renderForTest(scene, cam, target);
         EXPECT_TRUE(rr.ok()) << rr.error().message;
         targetFb->bind();
         std::vector<uint8_t> pixels;

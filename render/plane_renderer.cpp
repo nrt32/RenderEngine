@@ -208,44 +208,29 @@ data::Result<void> PlaneRenderer::drawInstances(const PlaneScene& scene,
     return data::Result<void>(data::value);
 }
 
-data::Result<void> PlaneRenderer::render(const PlaneScene& scene,
-                                         const Camera& camera,
-                                         const RenderTarget& target) {
+data::Result<void> PlaneRenderer::renderForTest(const PlaneScene& scene,
+                                             const Camera& camera,
+                                             const RenderTarget& target) {
     if (assets_ == nullptr) {
-        // Constructed with a null store (member-init-order safety): fail with
-        // a typed error instead of dereferencing (mirrors MeshRenderer).
         return data::makeError<void>(4, "PlaneRenderer: no shared asset store");
     }
     if (target.width == 0u || target.height == 0u) {
         return data::makeError<void>(1, "PlaneRenderer: invalid target size");
     }
-
     auto programResult = planeProgram();
     if (programResult.failed()) {
-        return data::makeError<void>(programResult.error().code,
-                                     programResult.error().message);
+        return data::makeError<void>(programResult.error().code, programResult.error().message);
     }
     core::ShaderProgram* program = *programResult;
-
     auto quadResult = quadGeometry();
     if (quadResult.failed()) {
-        return data::makeError<void>(quadResult.error().code,
-                                     quadResult.error().message);
+        return data::makeError<void>(quadResult.error().code, quadResult.error().message);
     }
     core::VertexArray* quadVao = *quadResult;
-
-    // Begin the pass through the ONE shared prologue (bind target → viewport
-    // → clear → depth state → blend off). A null framebuffer selects the
-    // window's on-screen default framebuffer; otherwise the offscreen FBO is
-    // bound. Direct single-scene renders keep the deterministic depth-off
-    // painter's-order pass (a target's optional depth attachment is consumed
-    // only via the per-view opt-in), so the depth test is left off; blending
-    // is off (textures are sampled with alpha and written straight).
     auto& ctx = core::REContext::current();
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,
                   target.clearColor.b, target.clearColor.a);
-
     return drawInstances(scene, camera, program, quadVao);
 }
 

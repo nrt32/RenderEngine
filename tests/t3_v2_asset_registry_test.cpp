@@ -236,7 +236,7 @@ TEST(T3V2AssetRegistry, MeshAndSliceRenderersShareOneGpuObject) {
         rt.height = kTargetHeight;
         rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-        const auto result = meshRenderer.render(meshScene, makeCamera(), rt);
+        const auto result = meshRenderer.renderForTest(meshScene, makeCamera(), rt);
         ASSERT_TRUE(result.ok()) << result.error().message;
         expectBaseColor(readPixel(kCenterX, kCenterY),
                         "mesh path center (32, 32)");
@@ -254,7 +254,7 @@ TEST(T3V2AssetRegistry, MeshAndSliceRenderersShareOneGpuObject) {
         rt.height = kTargetHeight;
         rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-        const auto result = sliceRenderer.render(sliceScene, makeCamera(),
+        const auto result = sliceRenderer.renderForTest(sliceScene, makeCamera(),
                                                  sliceScene.plane, rt);
         ASSERT_TRUE(result.ok()) << result.error().message;
         expectBaseColor(readPixel(kCenterX, kCenterY),
@@ -419,7 +419,7 @@ TEST(T3V2AssetRegistry, RendererPropagatesStaleHandleError) {
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     render::MeshRenderer renderer(registry);
-    const auto result = renderer.render(scene, makeCamera(), rt);
+    const auto result = renderer.renderForTest(scene, makeCamera(), rt);
     EXPECT_TRUE(result.failed());
     EXPECT_NE(result.error().message.find("stale"), std::string::npos);
     EXPECT_FALSE(core::hasPendingGlError());

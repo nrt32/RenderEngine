@@ -480,7 +480,7 @@ TEST(T19OitSample, PipelineSpyEngagesExactlyForTransparentSet) {
 
         auto spy = std::make_shared<RecordingPipeline>();
         render::MeshRenderer renderer(registry, spy);
-        auto result = renderer.render(rig.opaqueScene(), camera, rt);
+        auto result = renderer.renderForTest(rig.opaqueScene(), camera, rt);
         ASSERT_TRUE(result.ok()) << result.error().message;
 
         EXPECT_EQ(spy->beginCount(), 0) << "opaque-only scene never begins";
@@ -511,7 +511,7 @@ TEST(T19OitSample, PipelineSpyEngagesExactlyForTransparentSet) {
 
         auto spy = std::make_shared<RecordingPipeline>();
         render::MeshRenderer renderer(registry, spy);
-        auto result = renderer.render(rig.fullScene(), camera, rt);
+        auto result = renderer.renderForTest(rig.fullScene(), camera, rt);
         ASSERT_TRUE(result.ok()) << result.error().message;
 
         EXPECT_EQ(spy->beginCount(), 1) << "pipeline engaged for the frame";

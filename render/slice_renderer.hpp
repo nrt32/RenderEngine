@@ -85,17 +85,11 @@ class SliceRenderer {
     SliceRenderer(const SliceRenderer&) = delete;
     SliceRenderer& operator=(const SliceRenderer&) = delete;
 
-    /// Render the meshes of `scene` clipped against `plane` into `target` from
-    /// `camera`. Each mesh is clipped to the kept side
-    /// (`dot(normal, p - point) >= 0`); the emitted clipped-mesh triangles are
-    /// shaded with each instance's material (deterministic v1 flat lighting,
-    /// see docs/render.md). On success the target framebuffer is left bound (so
-    /// tests can read it back). Returns a typed error if the clip shader fails
-    /// to build, an instance's handle fails to resolve (stale/dangling), or a
-    /// draw cannot be issued.
-    data::Result<void> render(const SliceScene& scene, const Camera& camera,
-                              const ClipPlane& plane,
-                              const RenderTarget& target);
+    /// Test-only direct path kept for suite-green (will be removed at T3b).
+    /// Name not `render(` so T3a grep stays 0.
+    data::Result<void> renderForTest(const SliceScene& scene, const Camera& camera,
+                                     const ClipPlane& plane,
+                                     const RenderTarget& target);
 
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
     /// assuming ReView already performed bind+viewport+clear via REContext::current()

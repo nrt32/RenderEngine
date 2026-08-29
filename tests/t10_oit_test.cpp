@@ -207,7 +207,7 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
 
     auto pipeline = std::make_shared<render::LinkedListOIT>();
     render::MeshRenderer renderer(registry, pipeline);
-    auto result = renderer.render(scene, camera, rt);
+    auto result = renderer.renderForTest(scene, camera, rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
 
@@ -271,7 +271,7 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
 
         auto spy = std::make_shared<RecordingPipeline>();
         render::MeshRenderer renderer(registry, spy);
-        auto result = renderer.render(opaqueScene, makeCamera(), rt);
+        auto result = renderer.renderForTest(opaqueScene, makeCamera(), rt);
         ASSERT_TRUE(result.ok()) << result.error().message;
 
         // Sample multiple pixels: every pixel of an opaque-only scene must have
@@ -316,7 +316,7 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
 
         auto spy = std::make_shared<RecordingPipeline>();
         render::MeshRenderer renderer(registry, spy);
-        auto result = renderer.render(mixedScene, makeCamera(), rt);
+        auto result = renderer.renderForTest(mixedScene, makeCamera(), rt);
         ASSERT_TRUE(result.ok()) << result.error().message;
 
         EXPECT_EQ(spy->beginCount(), 1)
@@ -360,7 +360,7 @@ TEST(T10Oit, PipelineInterfaceIsSwappable) {
     // only on the ITransparencyPipeline abstraction (open/closed, DI).
     auto stub = std::make_shared<RecordingPipeline>();
     render::MeshRenderer renderer(registry, stub);
-    auto result = renderer.render(scene, makeCamera(), rt);
+    auto result = renderer.renderForTest(scene, makeCamera(), rt);
     ASSERT_TRUE(result.ok()) << result.error().message;
 
     EXPECT_EQ(stub->beginCount(), 1);

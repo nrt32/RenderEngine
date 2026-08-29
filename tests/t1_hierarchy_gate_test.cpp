@@ -207,7 +207,7 @@ TEST(T1Hierarchy, TeapotRendersThroughBridgeCenterPixelAnalytic) {
     targetFb->bind(); targetFb->attachColor(*targetColor); ASSERT_TRUE(targetFb->isComplete()); targetFb->unbind();
     render::RenderTarget target{&*targetFb, kW, kH, glm::vec4(0,0,0,0)};
     render::MeshRenderer renderer(registry, nullptr);
-    auto rr = renderer.render(scene, cam, target);
+    auto rr = renderer.renderForTest(scene, cam, target);
     ASSERT_TRUE(rr.ok()) << rr.error().message;
     targetFb->bind();
     std::vector<uint8_t> pixels;

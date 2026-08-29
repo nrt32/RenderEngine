@@ -58,6 +58,7 @@
 #include "data/image.hpp"
 #include "render/plane_renderer.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
+#include "render/view.hpp"
 #include "tests/offscreen_fixture.hpp"
 #include "tests/test_helpers.hpp"
 
@@ -85,7 +86,8 @@ constexpr int kColorTolerance = 1;
 /// The default camera: eye at (0,0,5) looking down -Z at the origin, with an
 /// orthographic projection mapping NDC [-1,1]^2 onto the full viewport.
 /// Build a render target (color-only FBO of `w` x `h`) bound for readback.
-struct RenderedTarget {
+/// Kept for documentation / potential direct-target tests; View path now owns target via ensureTarget().
+struct [[maybe_unused]] RenderedTarget {
     core::Texture2D color;
     core::Framebuffer framebuffer;
 
@@ -93,7 +95,7 @@ struct RenderedTarget {
         : color(std::move(color)), framebuffer(std::move(framebuffer)) {}
 };
 
-RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
+[[maybe_unused]] RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
     auto color = core::Texture2D::create();
     auto framebuffer = core::Framebuffer::create();
     EXPECT_TRUE(color.ok()) << color.error().message;
@@ -111,25 +113,28 @@ RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
 
 /// Render `scene` to the target and read back the single pixel at (x, y).
 /// `x`/`y` are readback coordinates (y = 0 is the bottom scanline).
+/// T3a: direct renderer.render deleted — port via render::View + REContext::current().beginPass + View::addItem.
+/// @note lifetime: `renderer` is co-owned by the View's IRenderable for the duration of the call.
 std::vector<std::uint8_t> renderAndReadPixel(const render::PlaneScene& scene,
-                                             render::PlaneRenderer& renderer,
-                                             RenderedTarget& target,
+                                             const std::shared_ptr<render::PlaneRenderer>& renderer,
                                              std::uint32_t x, std::uint32_t y) {
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
     render::Camera camera = makeCamera();
-    auto result = renderer.render(scene, camera, rt);
+    render::View view(render::ViewRect{0, 0, static_cast<int>(kTargetWidth), static_cast<int>(kTargetHeight)},
+                      glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+    view.setCamera(camera);
+    view.addItem(scene, renderer);
+    auto ensured = view.ensureTarget();
+    EXPECT_TRUE(ensured.ok()) << ensured.error().message;
+    auto result = view.render();
     EXPECT_TRUE(result.ok()) << result.error().message;
 
+    view.target()->framebuffer().bind();
     std::vector<std::uint8_t> pixels;
     re::utils::PixelReader reader;
     auto read = reader.read(x, y, 1u, 1u, pixels);
     EXPECT_TRUE(read.ok()) << read.error().message;
     EXPECT_EQ(pixels.size(), 4u);
+    view.target()->framebuffer().unbind();
     return pixels;
 }
 
@@ -190,10 +195,9 @@ TEST(T8RenderPlane, CenterPixelMatchesSolidTextureSample) {
     scene.planes.push_back(
         render::PlaneInstance{geometry, image, glm::mat4(1.0f)});
 
-    RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-    render::PlaneRenderer renderer;
+    auto renderer = std::make_shared<render::PlaneRenderer>();
     const std::vector<std::uint8_t> pixel = renderAndReadPixel(
-        scene, renderer, target, kTargetWidth / 2u, kTargetHeight / 2u);
+        scene, renderer, kTargetWidth / 2u, kTargetHeight / 2u);
 
     EXPECT_NEAR(pixel[0], kR, kColorTolerance) << "R channel";
     EXPECT_NEAR(pixel[1], kG, kColorTolerance) << "G channel";
@@ -225,32 +229,31 @@ TEST(T8RenderPlane, CornerPixelsMatchGradientTextureSamples) {
     scene.planes.push_back(
         render::PlaneInstance{geometry, image, glm::mat4(1.0f)});
 
-    RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-    render::PlaneRenderer renderer;
+    auto renderer = std::make_shared<render::PlaneRenderer>();
 
     const std::vector<std::uint8_t> bottomLeft =
-        renderAndReadPixel(scene, renderer, target, 0u, 0u);
+        renderAndReadPixel(scene, renderer, 0u, 0u);
     EXPECT_NEAR(bottomLeft[0], 0u, kColorTolerance);
     EXPECT_NEAR(bottomLeft[1], 252u, kColorTolerance);
     EXPECT_NEAR(bottomLeft[2], kBlue128, kColorTolerance);
     EXPECT_NEAR(bottomLeft[3], kAlpha255, kColorTolerance);
 
     const std::vector<std::uint8_t> bottomRight =
-        renderAndReadPixel(scene, renderer, target, kTargetWidth - 1u, 0u);
+        renderAndReadPixel(scene, renderer, kTargetWidth - 1u, 0u);
     EXPECT_NEAR(bottomRight[0], 252u, kColorTolerance);
     EXPECT_NEAR(bottomRight[1], 252u, kColorTolerance);
     EXPECT_NEAR(bottomRight[2], kBlue128, kColorTolerance);
     EXPECT_NEAR(bottomRight[3], kAlpha255, kColorTolerance);
 
     const std::vector<std::uint8_t> topLeft =
-        renderAndReadPixel(scene, renderer, target, 0u, kTargetHeight - 1u);
+        renderAndReadPixel(scene, renderer, 0u, kTargetHeight - 1u);
     EXPECT_NEAR(topLeft[0], 0u, kColorTolerance);
     EXPECT_NEAR(topLeft[1], 0u, kColorTolerance);
     EXPECT_NEAR(topLeft[2], kBlue128, kColorTolerance);
     EXPECT_NEAR(topLeft[3], kAlpha255, kColorTolerance);
 
     const std::vector<std::uint8_t> topRight = renderAndReadPixel(
-        scene, renderer, target, kTargetWidth - 1u, kTargetHeight - 1u);
+        scene, renderer, kTargetWidth - 1u, kTargetHeight - 1u);
     EXPECT_NEAR(topRight[0], 252u, kColorTolerance);
     EXPECT_NEAR(topRight[1], 0u, kColorTolerance);
     EXPECT_NEAR(topRight[2], kBlue128, kColorTolerance);
@@ -278,10 +281,9 @@ TEST(T8RenderPlane, CenterPixelMatchesGradientWithRowFlip) {
     scene.planes.push_back(
         render::PlaneInstance{geometry, image, glm::mat4(1.0f)});
 
-    RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-    render::PlaneRenderer renderer;
+    auto renderer = std::make_shared<render::PlaneRenderer>();
     const std::vector<std::uint8_t> pixel = renderAndReadPixel(
-        scene, renderer, target, kTargetWidth / 2u, kTargetHeight / 2u);
+        scene, renderer, kTargetWidth / 2u, kTargetHeight / 2u);
 
     EXPECT_NEAR(pixel[0], kR, kColorTolerance) << "R channel";
     EXPECT_NEAR(pixel[1], kG, kColorTolerance) << "G channel";
@@ -343,10 +345,9 @@ TEST(T8RenderPlane, RotatedPlaneMapsTextureAnalytically) {
     render::PlaneScene scene;
     scene.planes.push_back(render::PlaneInstance{geometry, image, model});
 
-    RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-    render::PlaneRenderer renderer;
+    auto renderer = std::make_shared<render::PlaneRenderer>();
     const std::vector<std::uint8_t> bottomLeft =
-        renderAndReadPixel(scene, renderer, target, 0u, 0u);
+        renderAndReadPixel(scene, renderer, 0u, 0u);
 
     // After the 90-degree rotation the bottom-left pixel samples the image's
     // top-left texel (0,0): R=0, G=0.

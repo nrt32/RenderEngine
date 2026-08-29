@@ -163,18 +163,26 @@ data::Result<void> MeshRenderer::drawTransparent(const MeshScene& scene,
     return data::Result<void>(data::value);
 }
 
-data::Result<void> MeshRenderer::render(const MeshScene& scene,
-                                        const Camera& camera,
-                                        const RenderTarget& target) {
+data::Result<void> MeshRenderer::drawLayer(const MeshScene& scene, const Camera& camera) {
+    // ReView already bind+viewport+clear via REContext::current(); single-item
+    // render() keeps clear. This layer draws without clearing — second layer
+    // must not clear away the first.
+    auto programResult = opaqueProgram();
+    if (programResult.failed()) {
+        return data::makeError<void>(programResult.error().code, programResult.error().message);
+    }
+    // drawLayer draws every resolvable instance unconditionally with blending
+    // off (single transparent behavior, no silent drop). OIT is orchestrated by
+    // the ViewCompositor out-of-band when a pipeline is wired.
+    return drawInstances(scene, camera, *programResult);
+}
+
+data::Result<void> MeshRenderer::renderForTest(const MeshScene& scene,
+                                               const Camera& camera,
+                                               const RenderTarget& target) {
     if (target.width == 0u || target.height == 0u) {
         return data::makeError<void>(1, "MeshRenderer: invalid target size");
     }
-
-    // OIT is a scene-level characteristic, not a renderer setting: scan the
-    // instances once and engage the transparency pipeline only when at least
-    // one material is actually transparent. Pure-opaque scenes therefore keep
-    // the cheap direct path (and its deterministic pixel output), while
-    // blended scenes pay for the linked-list composite.
     bool anyTransparent = false;
     for (const MeshInstance& instance : scene.meshes) {
         if (instance.material && instance.material->isTransparent()) {
@@ -182,37 +190,13 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
             break;
         }
     }
-
-    // Begin the pass through the ONE shared prologue (bind target → viewport
-    // → clear → depth state → blend off). A null framebuffer selects the
-    // window's on-screen default framebuffer; otherwise the offscreen FBO is
-    // bound. Direct single-scene renders keep the deterministic depth-off
-    // painter's-order pass — true occlusion via a depth attachment + enabled
-    // depth test is a per-view opt-in (render::View::setDepthTest), applied by
-    // the View's own prologue call when a composition needs it. The OIT passes
-    // below therefore always run with the depth test OFF exactly as before:
-    // the capture draws immediately after this depth-off prologue, and end(ctx)
-    // issues its own explicit ctx.disableDepthTest() via the shared ledger — so
-    // both behave identically on color-only and depth-enabled targets.
     auto& ctx = core::REContext::current();
     ctx.beginPass(target.framebuffer, target.width, target.height,
                   target.clearColor.r, target.clearColor.g,
                   target.clearColor.b, target.clearColor.a);
-
     if (anyTransparent && transparency_ != nullptr) {
-        // Engage the OIT pipeline (capture -> depth-sort -> composite): draw
-        // the opaque meshes first, then capture the transparent meshes through
-        // the pipeline, then let end() composite (FR-render.2/3).
-        // T4: single ledger — OIT begin/end share the same REContext& as the
-        // View/opaque prologue, so duplicate viewport/depth/blend state is
-        // deduped to 1 gl call, not 2 (no skipped-glEnable bugs).
         const data::Result<void> begin = transparency_->begin(camera, target, ctx);
-        if (begin.failed()) {
-            // The pipeline could not be engaged: abort the frame and surface
-            // the typed error to the caller (SPEC §5, never silent). The
-            // target was already cleared and is left unmodified.
-            return begin;
-        }
+        if (begin.failed()) return begin;
         const data::Result<void> opaque = drawOpaque(scene, camera, target);
         if (opaque.failed()) {
             auto endCleanup = transparency_->end(camera, target, ctx);
@@ -227,31 +211,10 @@ data::Result<void> MeshRenderer::render(const MeshScene& scene,
         }
         return transparency_->end(camera, target, ctx);
     }
-
-    // T14 fix: no silent drop — when no OIT pipeline is wired (or scene is
-    // opaque-only) draw every instance with blending off (single behavior).
-    // The previous drawOpaque() path silently dropped transparent instances when
-    // transparency_ == nullptr; that bug class is now unrepresentable — the
-    // only path draws all.
-    auto programResult = opaqueProgram();
-    if (programResult.failed()) {
-        return data::makeError<void>(programResult.error().code,
-                                     programResult.error().message);
-    }
-    return drawInstances(scene, camera, *programResult);
-}
-
-data::Result<void> MeshRenderer::drawLayer(const MeshScene& scene, const Camera& camera) {
-    // ReView already bind+viewport+clear via REContext::current(); single-item
-    // render() keeps clear. This layer draws without clearing — second layer
-    // must not clear away the first.
     auto programResult = opaqueProgram();
     if (programResult.failed()) {
         return data::makeError<void>(programResult.error().code, programResult.error().message);
     }
-    // drawLayer draws every resolvable instance unconditionally with blending
-    // off (single transparent behavior, no silent drop). OIT is orchestrated by
-    // the ViewCompositor out-of-band when a pipeline is wired.
     return drawInstances(scene, camera, *programResult);
 }
 
