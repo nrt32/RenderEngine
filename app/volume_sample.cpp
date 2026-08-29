@@ -106,11 +106,11 @@ class VolumeSample final : public app::ISample {
         return app::syncRenderPresent(ctx_, views_);
     }
 
-    const char* title() const override {
+    const char* /*borrow*/ title() const override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Volume sample: ray-cast CT chest (128x128x70)";
     }
 
-    const char* instructions() const noexcept override {
+    const char* /*borrow*/ instructions() const noexcept override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Capability: basic ray-cast volume rendering (SPEC FR-render.6).\n"
                "The CT chest is sampled along each view ray and composited "
                "front-to-back: the scene VolumeObject translates through "

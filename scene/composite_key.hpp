@@ -72,7 +72,7 @@ struct CompositeKey {
     /// @param data Pointer to stable bytes (must be canonical, e.g. little-endian normalized).
     /// @param size Number of bytes.
     /// @return 64-bit hash (SHA-256 truncated to 64, LE interpretation of first 8 digest bytes).
-    static uint64_t hashStableBytes(const void* data, std::size_t size) noexcept {
+    static uint64_t hashStableBytes(const void* /*borrow*/ data, std::size_t size) noexcept { // @note lifetime: borrowed — owned by caller, valid for duration of call
         return ::re::data::hashStableBytes(data, size);
     }
 

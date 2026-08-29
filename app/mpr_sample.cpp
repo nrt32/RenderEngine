@@ -285,7 +285,7 @@ class MPRView final : public app::ISample {
         // core/ readback anchor; no raw readback call lives in app/).
         if (!frameDumped_) {
             frameDumped_ = true;
-            const char* dumpPath = std::getenv("RE_SAMPLE_DUMP_FRAME");
+            const char* /*borrow*/ dumpPath = std::getenv("RE_SAMPLE_DUMP_FRAME"); // @note lifetime: borrowed — owned by environment, valid until next getenv/setenv
             if (dumpPath != nullptr && dumpPath[0] != '\0') {
                 auto dumped = dumpWindowFramePpm(
                     dumpPath, static_cast<std::uint32_t>(width),
@@ -303,11 +303,11 @@ class MPRView final : public app::ISample {
         return data::Result<void>(data::value);
     }
 
-    const char* title() const override {
+    const char* /*borrow*/ title() const override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "MPR sample: 2x2 viewport grid (GPU slices + contours + 3D)";
     }
 
-    const char* instructions() const noexcept override {
+    const char* /*borrow*/ instructions() const noexcept override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Capability: Multi-Planar Reconstruction (interactive "
                "scrolling).\n"
                "The window opens at 1280x960 with four equal viewports in a "

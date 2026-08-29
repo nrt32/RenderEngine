@@ -66,11 +66,11 @@ class OitLongSample final : public app::ISample {
         return app::syncRenderPresent(ctx_, views_);
     }
 
-    const char* title() const override {
+    const char* /*borrow*/ title() const override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "OIT long-lived: opaque+glass interactive (runInteractive)";
     }
 
-    const char* instructions() const noexcept override {
+    const char* /*borrow*/ instructions() const noexcept override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Long-lived OIT — runInteractive, orbit/pan/zoom via CameraController, WantCaptureMouse guard, view.setCamera bump.";
     }
 

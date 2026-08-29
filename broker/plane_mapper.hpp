@@ -37,7 +37,7 @@
 // RE model M places the normalized cube [0,1]^3 (voxel-center index i at
 // model coordinate i / (dim - 1)), so the index placement is RECOVERED from
 // a known unit-cube model analytically as
-//     indexPlacement = M * scale(1 / max(dim - 1, 1)) * translate(-0.5)
+//     indexPlacement = M scaled by 1 / max(dim - 1, 1) then translated by -0.5
 // (broker::indexPlacementFromModel below — the one shared change-of-basis;
 // for the MPR display models this recovers exactly the pure axis permutation,
 // which is what makes a voxel-index view plane land at display z =

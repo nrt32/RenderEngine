@@ -142,7 +142,7 @@ data::Result<void> ViewCompositor::captureTransparents(StableKey key, render::Vi
 
 data::Result<void> ViewCompositor::renderAll() {
     for (auto& kv : views_) {
-        auto* rv = kv.second.get();
+        auto* /*borrow*/ rv = kv.second.get(); // @note lifetime: borrowed — owned by views_ map, valid for loop iteration
         if (!rv) continue;
         // T2: global per-GL-context REContext (thread_local GLFWwindow* → REContextState).
         // View::render uses REContext::current() internally so 2 layers sharing
@@ -160,7 +160,7 @@ data::Result<void> ViewCompositor::renderAll() {
 
 data::Result<void> ViewCompositor::presentAll(core::Framebuffer* /*borrow*/ destination) {
     for (auto& kv : views_) {
-        auto* rv = kv.second.get();
+        auto* /*borrow*/ rv = kv.second.get(); // @note lifetime: borrowed — owned by views_ map, valid for loop iteration
         if (!rv) continue;
         auto r = rv->blitTo(destination);
         if (r.failed()) {

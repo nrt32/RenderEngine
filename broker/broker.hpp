@@ -261,7 +261,7 @@ class Broker {
      /// Returns nullptr when kind not registered or ReT mismatched.
      template <typename AppT, typename ReT>
      IMapper<AppT, ReT>* getByKindTyped(scene::SceneKind kind) const noexcept {
-         auto* base = getByKind(kind);
+         auto* /*borrow*/ base = getByKind(kind); // @note lifetime: borrowed — owned by Broker sceneKindAliases_, valid while Broker lives
          return base ? static_cast<IMapper<AppT, ReT>*>(base) : nullptr;
      }
 

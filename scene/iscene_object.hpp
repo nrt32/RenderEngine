@@ -131,7 +131,7 @@ class ISceneObject {
 
     /// Access mutable header for store assignment of id/generation on insertion
     /// — the store is the sole writer of id, so this is used only inside
-    /// SceneStore::add* methods.
+    /// SceneStore add-methods (addMeshObject etc.).
     virtual void setId(ObjectId v) noexcept = 0;
     virtual void setGeneration(uint64_t g) noexcept = 0;
 
@@ -182,7 +182,7 @@ class ObjectBase : public ISceneObject {
     SceneKind kind() const noexcept override { return Derived::Kind; }
 
     void setTransform(glm::mat4 m) noexcept override {
-        auto* d = static_cast<Derived*>(this);
+        auto* /*borrow*/ d = static_cast<Derived*>(this); // @note lifetime: borrowed — points to `*this` (CRTP derived), valid for duration of call
         d->transform = std::move(m);
         ++d->generation;
     }
@@ -195,7 +195,7 @@ class ObjectBase : public ISceneObject {
         return static_cast<const Derived*>(this)->layer;
     }
     void setLayer(Layer l) noexcept override {
-        auto* d = static_cast<Derived*>(this);
+        auto* /*borrow*/ d = static_cast<Derived*>(this); // @note lifetime: borrowed — points to `*this` (CRTP derived), valid for duration of call
         if (d->layer != l) {
             d->layer = l;
             ++d->generation;
@@ -206,7 +206,7 @@ class ObjectBase : public ISceneObject {
         return static_cast<const Derived*>(this)->priority;
     }
     void setPriority(int32_t p) noexcept override {
-        auto* d = static_cast<Derived*>(this);
+        auto* /*borrow*/ d = static_cast<Derived*>(this); // @note lifetime: borrowed — points to `*this` (CRTP derived), valid for duration of call
         if (d->priority != p) {
             d->priority = p;
             ++d->generation;

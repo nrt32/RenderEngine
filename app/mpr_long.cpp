@@ -114,11 +114,11 @@ class MprLongSample final : public app::ISample {
         return app::syncRenderPresent(ctx_, frame_);
     }
 
-    const char* title() const override {
+    const char* /*borrow*/ title() const override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "MPR long-lived: 2x2 grid interactive 3D only (runInteractive)";
     }
 
-    const char* instructions() const noexcept override {
+    const char* /*borrow*/ instructions() const noexcept override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Long-lived MPR — runInteractive until close, 3D view orbit/pan/zoom via interactor, 2D orthographic skip.";
     }
 

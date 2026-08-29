@@ -79,11 +79,11 @@ class VolumeLongSample final : public app::ISample {
         return app::syncRenderPresent(ctx_, views_);
     }
 
-    const char* title() const override {
+    const char* /*borrow*/ title() const override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Volume long-lived: ray-cast CT chest interactive (runInteractive)";
     }
 
-    const char* instructions() const noexcept override {
+    const char* /*borrow*/ instructions() const noexcept override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Long-lived volume — runInteractive until close, left rotate dx*0.5deg, right pan dx*0.01, zoom exp(-dy*0.02), WantCaptureMouse guard, view.setCamera bump.";
     }
 

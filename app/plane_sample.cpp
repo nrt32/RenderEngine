@@ -175,11 +175,11 @@ class PlaneSample final : public app::ISample {
         return app::syncRenderPresent(ctx_, frame_);
     }
 
-    const char* title() const override {
+    const char* /*borrow*/ title() const override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Plane sample: GPU-extracted CT planes (axial + oblique)";
     }
 
-    const char* instructions() const noexcept override {
+    const char* /*borrow*/ instructions() const noexcept override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Capability: volume-plane extraction on the GPU.\n"
                "Left: the axial plane (constant Z, middle voxel layer) "
                "extracted from data/volumes/sample_ct.nrrd by sampling the "

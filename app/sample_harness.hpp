@@ -67,7 +67,8 @@ class ISample {
     virtual data::Result<void> renderFrame(int width, int height) = 0;
 
     /// A short one-line description shown in the ImGui overlay.
-    virtual const char* title() const = 0;
+    /// @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
+    virtual const char* /*borrow*/ title() const = 0;
 
     /// Optional resize notification: the harness calls this exactly when one
     /// or more framebuffer-size events arrived since the previous frame,
@@ -83,7 +84,8 @@ class ISample {
     /// as help text in the ImGui overlay (T13, FR-app.1 "per-sample
     /// instructions"). May be multiple lines separated by '\n', or empty when
     /// the sample has nothing to say.
-    virtual const char* instructions() const noexcept {
+    /// @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
+    virtual const char* /*borrow*/ instructions() const noexcept {
         return "";
     }
 };
@@ -194,7 +196,7 @@ data::Result<void> syncRenderPresent(broker::AppContext& ctx,
 /// the bounded run loop. Returns the process exit code (0 on clean stop).
 /// The factory must return nullptr on failure (and log via spdlog); the helper
 /// then returns 1 without opening a window.
-int runSample(const char* windowTitle, int width, int height,
+int runSample(const char* /*borrow*/ windowTitle, int width, int height, // @note lifetime: borrowed — owned by caller, valid for duration of call
               int defaultFrames,
               std::function<std::unique_ptr<ISample>()> factory);
 

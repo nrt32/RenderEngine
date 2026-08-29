@@ -71,7 +71,7 @@ struct AssetIdHash {
 /// Thin forwarder to the single definition in data/content_hash.hpp (see the
 /// file-header hash-provenance note): one algorithm, shared by scene and
 /// render asset identity.
-inline uint64_t hashStableBytes(const void* data, std::size_t size) noexcept {
+inline uint64_t hashStableBytes(const void* /*borrow*/ data, std::size_t size) noexcept { // @note lifetime: borrowed — owned by caller, valid for duration of call
     return data::hashStableBytes(data, size);
 }
 

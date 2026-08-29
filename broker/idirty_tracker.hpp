@@ -60,13 +60,13 @@ class IDirtyTracker {
 class IJobExecutor {
    public:
     virtual ~IJobExecutor() = default;
-    virtual void execute(void (*fn)(void*), void* ctx) = 0;
+    virtual void execute(void (* /*borrow*/ fn)(void*), void* /*borrow*/ ctx) = 0; // @note lifetime: borrowed — ctx owned by caller, fn is function pointer, valid for duration of call
 };
 
 /// Inline synchronous fallback (zero threads, deterministic).
 class InlineJobExecutor final : public IJobExecutor {
    public:
-    void execute(void (*fn)(void*), void* ctx) override { fn(ctx); }
+    void execute(void (* /*borrow*/ fn)(void*), void* /*borrow*/ ctx) override { fn(ctx); } // @note lifetime: borrowed — ctx owned by caller, valid for duration of call
 };
 
 /// Adapter: SceneStore as IDirtyTracker (DIP — broker depends on abstraction, store is detail).

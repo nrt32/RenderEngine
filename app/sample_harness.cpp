@@ -159,7 +159,7 @@ float aspectFromDims(int width, int height) noexcept {
 }
 
 int sampleMaxFrames(int defaultFrames) noexcept {
-    const char* env = std::getenv("RE_SAMPLE_MAX_FRAMES");
+    const char* /*borrow*/ env = std::getenv("RE_SAMPLE_MAX_FRAMES"); // @note lifetime: borrowed — owned by environment, valid until next getenv/setenv
     if (env == nullptr || env[0] == '\0') {
         return defaultFrames;
     }
@@ -179,7 +179,7 @@ data::Result<void> syncRenderPresent(broker::AppContext& ctx,
     return renderViews(views, ctx, nullptr);
 }
 
-int runSample(const char* windowTitle, int width, int height,
+int runSample(const char* /*borrow*/ windowTitle, int width, int height, // @note lifetime: borrowed — owned by caller, valid for duration of call
               int defaultFrames,
               std::function<std::unique_ptr<ISample>()> factory) {
     // The ONE site for the `load → window → harness → run` mains that were

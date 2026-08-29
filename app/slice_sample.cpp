@@ -126,11 +126,11 @@ class SliceSample final : public app::ISample {
         return app::syncRenderPresent(ctx_, views_);
     }
 
-    const char* title() const override {
+    const char* /*borrow*/ title() const override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Slice sample: teapot clipped by a horizontal plane";
     }
 
-    const char* instructions() const noexcept override {
+    const char* /*borrow*/ instructions() const noexcept override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Capability: mesh slice rendering / plane clip (SPEC "
                "FR-render.4).\n"
                "The teapot is clipped by a horizontal plane at its vertical "

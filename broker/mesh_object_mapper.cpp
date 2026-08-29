@@ -47,7 +47,7 @@ data::Result<render::MeshInstance> MeshObjectMapper::mapCached(
     const bool meshSame = (it != cache_.end() && mit != meshPtrCache_.end() && mit->second == app.mesh.get() && app.mesh != nullptr);
     if (meshSame) {
         // Check material still same via direct value compare (avoids re-hash when only transform changed).
-        const auto* cachedMat = dynamic_cast<const render::PhongMaterial*>(it->second.instance.material.get());
+        const auto* /*borrow*/ cachedMat = dynamic_cast<const render::PhongMaterial*>(it->second.instance.material.get()); // @note lifetime: borrowed — owned by cache entry material, valid for cache lookup
         bool matSame = false;
         if (cachedMat) {
             const auto& cur = app.presentation.phong;

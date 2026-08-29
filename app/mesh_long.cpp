@@ -92,11 +92,11 @@ class MeshLongSample final : public app::ISample {
         return app::syncRenderPresent(ctx_, views_);
     }
 
-    const char* title() const override {
+    const char* /*borrow*/ title() const override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Mesh long-lived: bunny interactive orbit/pan/zoom (runInteractive)";
     }
 
-    const char* instructions() const noexcept override {
+    const char* /*borrow*/ instructions() const noexcept override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Long-lived mesh sample — bypasses sampleMaxFrames, runs until window close.\n"
                "Left-drag rotates (dx*0.5deg), right-drag pans (dx*0.01), scroll/middle-drag zooms exp(-dy*0.02)\n"
                "via scene::CameraController + app::GlfwCameraInteractor with WantCaptureMouse guard;\n"

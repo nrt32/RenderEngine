@@ -106,11 +106,11 @@ class PlaneLongSample final : public app::ISample {
         return app::syncRenderPresent(ctx_, frame_);
     }
 
-    const char* title() const override {
+    const char* /*borrow*/ title() const override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Plane long-lived: GPU-extracted CT planes interactive (plane guard skip)";
     }
 
-    const char* instructions() const noexcept override {
+    const char* /*borrow*/ instructions() const noexcept override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Long-lived plane — runInteractive until close, interactor per view with WantCaptureMouse + orthographic plane skip, view.setCamera bump.";
     }
 

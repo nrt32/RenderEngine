@@ -126,11 +126,11 @@ class OitSample final : public app::ISample {
         return app::syncRenderPresent(ctx_, views_);
     }
 
-    const char* title() const override {
+    const char* /*borrow*/ title() const override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "OIT sample: opaque meshes under two glass boxes (linked-list)";
     }
 
-    const char* instructions() const noexcept override {
+    const char* /*borrow*/ instructions() const noexcept override { // @note lifetime: borrowed — points to static string literal owned by sample, valid for program lifetime
         return "Capability: order-independent transparency (FR-render.2/3).\n"
                "Two OPAQUE meshes (golden box + Stanford bunny at different "
                "depths) render first with true depth occlusion into a "

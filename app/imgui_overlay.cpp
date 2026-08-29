@@ -107,7 +107,7 @@ void ImGuiOverlay::drawSampleOverlay(const ISample& sample, int frame, int maxFr
     } else {
         ImGui::Text("Frame %d", frame + 1);
     }
-    const char* instructions = sample.instructions();
+    const char* /*borrow*/ instructions = sample.instructions(); // @note lifetime: borrowed — owned by sample, valid for duration of call
     if (instructions != nullptr && instructions[0] != '\0') {
         ImGui::Separator();
         ImGui::TextWrapped("How to drive this capability:");

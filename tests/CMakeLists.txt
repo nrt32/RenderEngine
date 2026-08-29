@@ -78,6 +78,7 @@ add_executable(${RE_TEST_TARGET}
     t13_offscreen_ownership_test.cpp
     t14a_generation_sync_test.cpp
     t14b_stable_key_tombstone_test.cpp
+    t15a_deps_ownership.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}
