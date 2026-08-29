@@ -1,14 +1,16 @@
 #pragma once
 
-// scene/composite_key.hpp — CompositeKey skeleton for persistence (SPEC §10.1, V3.2a T2).
+// scene/composite_key.hpp — CompositeKey for persistence (SPEC §10.1, V3.2a T2, T12 SHA-256 prod).
 //
 // Content-addressed persistence key: persistence is by CompositeKey{Version,LayoutId,Id,Gen,Hash},
 // not by id alone or size. Version prevents aliasing across schema evolution: bump it whenever
 // the persisted field inventory or hash layout changes, and every key minted under the old
 // schema stops matching (old cache entries become unreachable instead of mis-decoded).
-// Hash is SHA-256-of-stable-bytes truncated to 64-bit (FNV-1a canonicalization here as
-// skeleton; stable bytes, not pointer). Two identical byte arrays produce identical hash
-// regardless of allocation address — hash of stable bytes, not pointer.
+// Hash is SHA-256-of-canonical-stable-bytes truncated to 64-bit (FNV-1a skeleton at T7, SHA-256
+// prod at T12 via data/content_hash.hpp:31 source of truth, hierarchical
+// Version:LayoutId:Type:Hash determinism across runs). Two identical byte arrays produce
+// identical hash regardless of allocation address — hash of stable bytes, not pointer, LE via
+// memcpy+htole32 with NaN canonicalized (-NaN→NaN).
 //
 // Pure value type, header-only, GL-free, RE-free. Links only to standard library.
 // No behavior change yet — unblocks T3(broker) / T5(View/ReView) / T6(persistence full).
@@ -16,6 +18,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+
+#include "data/content_hash.hpp"
 
 namespace re::scene {
 
@@ -39,7 +43,7 @@ struct CompositeKey {
     uint64_t id{0};
     /// Per-field generation at time of caching.
     uint64_t gen{0};
-    /// Content hash of canonical stable bytes (FNV-1a 64-bit of canonicalized field bytes).
+    /// Content hash of canonical stable bytes (SHA-256 truncated 64 of canonical LE field bytes).
     uint64_t hash{0};
     /// Stable type hash (std::type_index hash; 0 = "unspecified", the value
     /// early skeleton users wrote before the field existed — keeping 0 valid
@@ -57,21 +61,19 @@ struct CompositeKey {
     }
     bool operator!=(const CompositeKey& o) const noexcept { return !(*this == o); }
 
-    /// Hash stable bytes via FNV-1a 64-bit (deterministic, pointer-independent).
+    /// Hash stable bytes via SHA-256 truncated 64 (deterministic, pointer-independent).
     ///
-    /// FNV-1a 64-bit basis/prime per spec (canonicalization: normalize bytes before hash;
-    /// pointer address never enters the hash — only stable field bytes).
+    /// SHA-256 of canonical little-endian bytes per SPEC §10.1 (FNV skeleton
+    /// at T7, SHA-256 prod at T12). Delegates to the single source of truth
+    /// data::hashStableBytes (data/content_hash.hpp:31) — hierarchical
+    /// Version:LayoutId:Type:Hash determinism across runs. Pointer address
+    /// never enters the hash — only stable field bytes, canonical LE via
+    /// memcpy+htole32 and NaN payload canonicalized (-NaN→NaN).
     /// @param data Pointer to stable bytes (must be canonical, e.g. little-endian normalized).
     /// @param size Number of bytes.
-    /// @return 64-bit hash (truncate of SHA-256 in spec; FNV here as deterministic skeleton).
+    /// @return 64-bit hash (SHA-256 truncated to 64, LE interpretation of first 8 digest bytes).
     static uint64_t hashStableBytes(const void* data, std::size_t size) noexcept {
-        const uint8_t* bytes = static_cast<const uint8_t*>(data);
-        uint64_t h = 1469598103934665603ULL; // FNV offset basis
-        for (std::size_t i = 0; i < size; ++i) {
-            h ^= static_cast<uint64_t>(bytes[i]);
-            h *= 1099511628211ULL; // FNV prime
-        }
-        return h;
+        return ::re::data::hashStableBytes(data, size);
     }
 
     /// Convenience: hash a typed trivially-copyable value's canonical bytes.

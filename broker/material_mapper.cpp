@@ -5,23 +5,53 @@
 
 #include <cstring>
 
+#include <spdlog/spdlog.h>
+
 #include "data/content_hash.hpp"
 #include "render/phong_material.hpp"
 
 namespace re::broker {
 namespace {
 
-/// Content hash of a PhongDesc VALUE: every field participates (baseColor
-/// RGBA, specular RGB, shininess, doubleSided), fed component-wise so glm
-/// padding cannot leak into the identity. Deterministic across runs — the
-/// same property the asset kinds' hashes guarantee (data/content_hash.hpp).
+/// Content hash of a PhongDesc VALUE: SHA-256 continuation of canonical LE
+/// floats in fixed order (baseColor RGBA, specular RGB, shininess, ambient,
+/// diffuse) — doubleSided dropped with typed warning, consistent with
+/// render/asset_registry.cpp:44 materialContentHash (same field set, same
+/// canonicalization via memcpy+htole32 with NaN canonicalized, same SHA-256
+/// truncated 64). Deterministic across runs and across LE/BE hosts per
+/// SPEC §10.1 hierarchical Version:LayoutId:Type:Hash. XOR weak → SHA-256
+/// continuation (T12).
 std::uint64_t phongValueHash(const scene::PhongDesc& p) noexcept {
-    std::uint64_t h = data::hashStableBytes(&p.baseColor.r, sizeof(float) * 4);
-    h ^= data::hashStableBytes(&p.specular.r, sizeof(float) * 3);
-    h ^= data::hashStableBytes(&p.shininess, sizeof(float));
-    const std::uint8_t dbl = p.doubleSided ? 1u : 0u;
-    h ^= data::hashStableBytes(&dbl, 1);
-    return h;
+    if (p.doubleSided) {
+        spdlog::warn(
+            "MaterialMapper: PhongDesc.doubleSided=true is dropped — "
+            "IMaterial has no double-sided facet this iteration (RE-minimal "
+            "SPEC §12.4) — typed warning: doubleSided not carried to "
+            "render::PhongMaterial, rendering will be single-sided");
+    }
+    ::re::data::detail::SHA256 h;
+    auto feed = [&](float v) {
+        uint32_t le = ::re::data::canonicalFloatBits(v);
+        h.update(reinterpret_cast<const uint8_t*>(&le), sizeof(le));
+    };
+    feed(p.baseColor.r);
+    feed(p.baseColor.g);
+    feed(p.baseColor.b);
+    feed(p.baseColor.a);
+    feed(p.specular.r);
+    feed(p.specular.g);
+    feed(p.specular.b);
+    feed(p.shininess);
+    // PhongDesc has no ambient/diffuse carrier this iteration; for hash
+    // continuity with render::PhongMaterial (which does carry ambient+diffuse)
+    // we feed the RE defaults (ambient 0, diffuse 1) so the two hashes cover
+    // the same logical field set baseColor+specular+shininess+ambient+diffuse
+    // with doubleSided consistently dropped on both sides.
+    feed(0.0f); // ambient default
+    feed(1.0f); // diffuse default
+    uint8_t d[32];
+    h.final(d);
+    return ::re::data::detail::truncatedLE64(d);
 }
 
 } // namespace

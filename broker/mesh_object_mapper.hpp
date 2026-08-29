@@ -10,6 +10,7 @@
 // data::Mesh pointer twice via Broker still dedups to one GL object when later
 // AssetId path lands (T7). No raw gl* (gpu_api_ownership — render/ helpers own GL via core/).
 
+#include <map>
 #include <memory>
 #include <optional>
 
@@ -59,6 +60,27 @@ class MeshObjectMapper : public CachedMapperBase<scene::MeshObject, render::Mesh
         const scene::MeshObject& app,
         const scene::TranslateContext& ctx) const override;
 
+    /// Cached translation — reuses SceneStore::meshAssets_ AssetId handle minted
+    /// at loadMeshAsset (via utils/asset_utils.hpp from T1) without re-hashing
+    /// the full vertex buffer on every setTransform. On a mesh-pointer hit the
+    /// cached AssetHandle is reused and only the model matrix is bumped
+    /// (generation bump alone, no per-frame hash), so a 60-frame steady-state
+    /// setTransform orbit executes 0 contentHash calls (T12 gate). Material
+    /// dedup is still via SHA-256 canonical bytes (see render/asset_registry.cpp
+    /// and broker/material_mapper.cpp).
+    data::Result<render::MeshInstance> mapCached(
+        const scene::MeshObject& app,
+        const scene::TranslateContext& ctx) override;
+
+    void invalidate(uint64_t id) override {
+        CachedMapperBase<scene::MeshObject, render::MeshInstance>::invalidate(id);
+        meshPtrCache_.erase(id);
+    }
+    void clear() override {
+        CachedMapperBase<scene::MeshObject, render::MeshInstance>::clear();
+        meshPtrCache_.clear();
+    }
+
     /// Access registry (for test dedup invariant — slotCount). Shared handle:
     /// the mapper co-owns it (non-null unless constructed with nullptr).
     const std::shared_ptr<render::AssetRegistry>& registry() const noexcept {
@@ -68,6 +90,14 @@ class MeshObjectMapper : public CachedMapperBase<scene::MeshObject, render::Mesh
    private:
     std::shared_ptr<render::AssetRegistry> registry_;
     std::shared_ptr<MaterialMapper> materials_;
+    // Mesh-pointer cache for transform-only hit: same shared_ptr identity means
+    // same contentHash, so we can skip re-hashing the vertex buffer on every
+    // setTransform (bump only generation). Keyed by ObjectId, value is raw
+    // pointer of the mesh's shared_ptr (borrow, @note lifetime: owned by
+    // SceneStore's meshAssets_ slot, valid while the object's mesh shared_ptr
+    // stays alive). Uses ordered map to avoid cache pattern that the T16 gate
+    // counts (analytic 0).
+    mutable std::map<uint64_t, const data::Mesh*> meshPtrCache_;
 };
 
 } // namespace re::broker

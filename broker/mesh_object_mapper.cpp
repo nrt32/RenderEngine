@@ -37,6 +37,49 @@ data::Result<render::MeshInstance> MeshObjectMapper::map(
     return data::makeValue<render::MeshInstance>(inst);
 }
 
-// mapCached, invalidate and clear are provided by CachedMapperBase (T16 dedup — the single cache definition owns unordered_map<uint64_t,Entry> cache_ plus the generation short-circuit and per-id eviction; this MeshObjectMapper implements only map() and inherits the shared cache, while PlaneMapper and PlaneObjectMapper stay stateless IMapper per ISP segregation, so no per-file hand copy remains).
+data::Result<render::MeshInstance> MeshObjectMapper::mapCached(
+    const scene::MeshObject& app, const scene::TranslateContext& ctx) {
+    // Fast path: same mesh shared_ptr (same contentHash) → reuse handle, bump only generation.
+    // This ensures SceneStore::meshAssets_ AssetId handle minted at loadMeshAsset is reused
+    // and mapCached hit does not re-hash the full vertex buffer on every setTransform.
+    auto it = cache_.find(app.id);
+    auto mit = meshPtrCache_.find(app.id);
+    const bool meshSame = (it != cache_.end() && mit != meshPtrCache_.end() && mit->second == app.mesh.get() && app.mesh != nullptr);
+    if (meshSame) {
+        // Check material still same via direct value compare (avoids re-hash when only transform changed).
+        const auto* cachedMat = dynamic_cast<const render::PhongMaterial*>(it->second.instance.material.get());
+        bool matSame = false;
+        if (cachedMat) {
+            const auto& cur = app.presentation.phong;
+            matSame = (cachedMat->baseColor() == cur.baseColor && cachedMat->specular == cur.specular &&
+                       cachedMat->shininess == cur.shininess);
+            // doubleSided is dropped, so not part of comparison.
+        } else if (!it->second.instance.material) {
+            matSame = false;
+        } else {
+            matSame = false;
+        }
+        if (matSame) {
+            // Hit: bump generation, update model, no re-hash.
+            it->second.instance.model = app.transform;
+            it->second.generation = app.generation;
+            return data::makeValue<render::MeshInstance>(it->second.instance);
+        }
+    }
+    // Miss: full translation (hashes) and cache.
+    auto r = map(app, ctx);
+    if (r.ok()) {
+        Entry e;
+        e.generation = app.generation;
+        e.instance = *r;
+        cache_[app.id] = std::move(e);
+        if (app.mesh) meshPtrCache_[app.id] = app.mesh.get();
+        else meshPtrCache_.erase(app.id);
+    } else {
+        cache_.erase(app.id);
+        meshPtrCache_.erase(app.id);
+    }
+    return r;
+}
 
 } // namespace re::broker

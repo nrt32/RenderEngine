@@ -33,35 +33,37 @@ constexpr int kNullAssetCode = 4;
 // material kind's hash stays local — it is defined on the RE-side
 // PhongMaterial VALUE and deliberately has no scene/ counterpart.
 
-// FNV-1a hash of a PhongMaterial's VALUE — every shading-relevant field in a
-// fixed order (baseColor xyzw, specular rgb, shininess, ambient, diffuse, as
-// raw float32 bit patterns). This is the material kind's content identity:
-// two distinct PhongMaterial allocations with identical field values produce
-// identical hashes, while any differing value (including the alpha that
-// drives isTransparent, FR-render.3) produces a different hash. There is no
-// scene/ counterpart by design: identity is defined on the RE-side material
-// VALUE — exactly what crosses into the render layer (RE-minimal, §12.4).
+// SHA-256 truncated 64 of a PhongMaterial's VALUE — every shading-relevant
+// field in fixed order (baseColor xyzw, specular rgb, shininess, ambient,
+// diffuse, as canonical LE float32 bit patterns via memcpy+htole32 with NaN
+// canonicalized). This is the material kind's content identity: two distinct
+// PhongMaterial allocations with identical field values produce identical
+// hashes, while any differing value (including the alpha that drives
+// isTransparent, FR-render.3) produces a different hash. There is no scene/
+// counterpart by design: identity is defined on the RE-side material VALUE —
+// exactly what crosses into the render layer (RE-minimal, §12.4). SHA-256
+// continuation (not XOR) per T12, consistent with broker/material_mapper.cpp
+// phongValueHash — same field set, same order, same canonicalization.
 uint64_t materialContentHash(const PhongMaterial& m) noexcept {
-    uint64_t h = 1469598103934665603ULL;
-    auto feedF32 = [&](float v) {
-        const uint8_t* b = reinterpret_cast<const uint8_t*>(&v);
-        for (std::size_t i = 0; i < sizeof(float); ++i) {
-            h ^= static_cast<uint64_t>(b[i]);
-            h *= 1099511628211ULL;
-        }
+    ::re::data::detail::SHA256 h;
+    auto feed = [&](float v) {
+        uint32_t le = ::re::data::canonicalFloatBits(v);
+        h.update(reinterpret_cast<const uint8_t*>(&le), sizeof(le));
     };
     const glm::vec4 base = m.baseColor();
-    feedF32(base.x);
-    feedF32(base.y);
-    feedF32(base.z);
-    feedF32(base.w);
-    feedF32(m.specular.r);
-    feedF32(m.specular.g);
-    feedF32(m.specular.b);
-    feedF32(m.shininess);
-    feedF32(m.ambient);
-    feedF32(m.diffuse);
-    return h;
+    feed(base.x);
+    feed(base.y);
+    feed(base.z);
+    feed(base.w);
+    feed(m.specular.r);
+    feed(m.specular.g);
+    feed(m.specular.b);
+    feed(m.shininess);
+    feed(m.ambient);
+    feed(m.diffuse);
+    uint8_t d[32];
+    h.final(d);
+    return ::re::data::detail::truncatedLE64(d);
 }
 
 // ---------------------------------------------------------------------------

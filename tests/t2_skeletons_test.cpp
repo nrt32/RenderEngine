@@ -69,10 +69,10 @@ TEST(T2CompositeKey, EqualityAndHashStable) {
     uint64_t h3 = scene::CompositeKey::hashStableBytes(&p3, sizeof(p3));
     EXPECT_NE(h1, h3) << "different stable bytes must produce different hash (explainable: 0xAA vs 0xFF)";
 
-    // FNV-1a known constant: hash of empty bytes is offset basis.
+    // SHA-256 truncated 64 known constant: hash of empty bytes is SHA-256("") first 8 bytes LE.
     uint64_t hEmpty = scene::CompositeKey::hashStableBytes(nullptr, 0);
-    EXPECT_EQ(hEmpty, 1469598103934665603ULL)
-        << "empty hash must equal FNV offset basis 1469598103934665603 (explainable constant)";
+    EXPECT_EQ(hEmpty, 0x141cfc9842c4b0e3ULL)
+        << "empty hash must equal SHA-256 empty truncated LE 0x141cfc9842c4b0e3 (1449310910991872227, explainable constant: SHA256(\"\") = e3b0c442...)";
 }
 
 TEST(T2CompositeKey, HashStableBytesIgnoresPointer) {

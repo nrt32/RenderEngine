@@ -63,7 +63,7 @@ class CachedMapperBase : public ICachedMapper<AppT, ReT> {
     void invalidate(uint64_t id) override { cache_.erase(id); }
 
     /// Clear entire cache (used by tests and synchronizer resets).
-    void clear() { cache_.clear(); }
+    virtual void clear() { cache_.clear(); }
 
     /// Number of cached entries (test spy for eviction proof).
     std::size_t cacheSize() const noexcept { return cache_.size(); }
