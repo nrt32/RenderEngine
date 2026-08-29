@@ -13,6 +13,7 @@
 // Audit: no_sample_bloat keeps this file at 42 lines (not ≤80 cap) via wc;
 // 1/255 layer ordering/mask already in T8, this guard only prevents bloat.
 #include "render_engine/engine.hpp"
+#include "app/sample_harness.hpp"
 #include "core/window.hpp"
 #include "scene/camera.hpp"
 #include "utils/asset_utils.hpp"
@@ -35,8 +36,7 @@ int main() {
     re::scene::Camera cam(glm::vec3(0,0,3),glm::vec3(0,0,0),glm::vec3(0,1,0));
     cam.setPerspective(60,800.f/600.f,0.1f,10.f);
     e.setView({{0,0,800,600},cam,{id}});
-    const char* env = std::getenv("RE_SAMPLE_MAX_FRAMES");
-    int maxF = env ? std::atoi(env) : 300;
+    int maxF = re::app::sampleMaxFrames(re::app::kDefaultFrames);
     for (int i=0;i<maxF && !w.shouldClose();++i) { w.pollEvents(); (void)e.render(); w.swapBuffers(); }
     return 0;
 }

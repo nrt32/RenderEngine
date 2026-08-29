@@ -70,6 +70,7 @@ add_executable(${RE_TEST_TARGET}
     t5_dumb_layers_test.cpp
     t6_technique_order_test.cpp
     t7_unified_dedup_test.cpp
+    t9_samples_bounded_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

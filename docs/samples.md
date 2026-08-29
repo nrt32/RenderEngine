@@ -129,9 +129,13 @@ re-splits over new dims.
 ## Samples (T12 + T13)
 
 Each sample is a small executable (`app/re_sample_*`) that loads its data,
-builds a scene, and hands an `ISample` to a `SampleHarness`. All five exit
-cleanly (code 0) after `RE_SAMPLE_MAX_FRAMES` frames (default 300) so the gate
-can run them under Xvfb within a timeout (FR-app.1). Build them with
+builds a scene, and hands an `ISample` to a `SampleHarness` (mesh uses
+`re::viz::Engine` + `app::sampleMaxFrames(app::kDefaultFrames)`). All six exit
+cleanly (code 0) after `RE_SAMPLE_MAX_FRAMES` frames (default `app::kDefaultFrames = 300`) so the gate
+can run them headlessly under Xvfb within a timeout (FR-app.1, T9 bounded
+discipline). The harness's `run(maxFrames)` is the sole bounded contract and
+`runInteractive()` is opt-in only — a forgotten `RE_SAMPLE_MAX_FRAMES` never
+hangs CI because `sampleMaxFrames(kDefaultFrames)` defaults to `300`. Build them with
 `RE_BUILD_SAMPLES=ON` (default; also forced on whenever `RE_BUILD_TESTS` is on,
 because the T12/T13 gate spawns them).
 
@@ -142,6 +146,7 @@ because the T12/T13 gate spawns them).
 | Volume | `re_sample_volume` | ray-cast volume (front-to-back compositing) | `data/volumes/sample_ct.nrrd` + CT window/level transfer function |
 | Slice | `re_sample_slice` | geometry-shader plane clip of a mesh | `data/meshes/teapot.obj` (SPEC §7), clipped by a horizontal midplane |
 | OIT | `re_sample_oit` | order-independent transparency over depth-tested opaque meshes (linked-list) | `data/meshes/bunny.obj` (SPEC §7) + procedural boxes (golden opaque box, two alpha-0.5 glass shells) |
+| MPR | `re_sample_mpr` | Multi-Planar Reconstruction 2×2 grid (T/C/S + 3D) with scrolling + crosshair | `data/volumes/sample_ct.nrrd` + CT transfer function + golden box `kGoldenBoxMin/Max` |
 
 The mesh sample frames the bunny with a perspective camera computed from its
 AABB (eye pulled back along +Z by `radius / tan(fov/2)`); the plane sample
