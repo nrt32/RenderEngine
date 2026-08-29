@@ -18,7 +18,7 @@
 // are byte-identical within 1/255 (one LSB, the evidence anchor).
 //
 // The facade creates a hidden context, builds a `w*h` destination `Framebuffer`
-// (color-only `GL_COLOR_ATTACHMENT0` via `core::Texture2D` + `core::Framebuffer`),
+// (color-only color attachment 0 via `core::Texture2D` + `core::Framebuffer`),
 // drives the broker (`Broker` + `RenderStack` + `ViewBridge`) with the full
 // default mapper inventory (`CameraMapper`, `MeshObjectMapper` + `MaterialMapper`,
 // `MeshSliceObjectMapper`, `VolumeObjectMapper`, `VolumeSliceObjectMapper`,

@@ -37,8 +37,8 @@ data::Result<ScreenQuad> ScreenQuad::create() {
 
     constexpr std::size_t kStrideBytes = 2u * sizeof(float);
 
-    // The VAO captures both the GL_ARRAY_BUFFER (via setAttribute) and the
-    // GL_ELEMENT_ARRAY_BUFFER (via EBO bind) bindings, so both must be bound
+    // The VAO captures both the array buffer (via setAttribute) and the
+    // element array buffer (via EBO bind) bindings, so both must be bound
     // while the VAO is bound. The buffers outlive this scope inside the
     // returned ScreenQuad because the VAO references them by name.
     vao->bind();

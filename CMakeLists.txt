@@ -44,35 +44,23 @@ include(CMakePackageConfigHelpers)
 # ---------------------------------------------------------------------------
 # Third-party dependencies — pinned via FetchContent GIT_TAG (SPEC §2/§6).
 # Every GIT_TAG is a release tag or commit SHA (never a branch name).
-# For consumers via find_package, system packages are tried first via
-# find_package fallback so FetchContent is not forced in the installed
-# config (T2: FetchContent deps become find_package fallbacks). The
-# installed RenderEngineConfig.cmake then calls find_dependency for the
-# same packages.
+# Sole source is FetchContent GIT_TAG — no find_package fallback (spec-review #1):
+# system libglfw3-dev / libglm-dev / libspdlog-dev must not satisfy the build
+# and bypass the pinned SHAs. See docs/spec/techstack.md §2 for canonical pins.
 # ---------------------------------------------------------------------------
 include(FetchContent)
-
-# Try system packages first for deps that have proper CMake configs;
-# glad/imgui/stb have no standard find_package, so they stay FetchContent-only.
-# Each fallback is QUIET — when not found, the pinned FetchContent path is used.
-find_package(glfw3 QUIET)
-find_package(glm QUIET)
-find_package(spdlog QUIET)
-find_package(nlohmann_json QUIET)
 
 # GLFW 3.4 — windowing / context creation.
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
-if(NOT glfw3_FOUND)
-    FetchContent_Declare(
-        glfw
-        GIT_REPOSITORY https://github.com/glfw/glfw.git
-        GIT_TAG 3.4
-        GIT_SHALLOW TRUE
-    )
-endif()
+FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.4
+    GIT_SHALLOW TRUE
+)
 
 # glad2 v2.0.8 — GL loader generator (glad_add_library). Pinned to the v2.0.8
 # release commit (SPEC §2: commit 73db193).
@@ -86,14 +74,12 @@ FetchContent_Declare(
 # GLM 1.0.1 — header-only GLSL-compatible math.
 set(GLM_ENABLE_CXX_20 ON CACHE BOOL "" FORCE)
 set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-if(NOT glm_FOUND)
-    FetchContent_Declare(
-        glm
-        GIT_REPOSITORY https://github.com/g-truc/glm.git
-        GIT_TAG 1.0.1
-        GIT_SHALLOW TRUE
-    )
-endif()
+FetchContent_Declare(
+    glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG 1.0.1
+    GIT_SHALLOW TRUE
+)
 
 # Dear ImGui v1.92.9 — immediate-mode GUI.
 FetchContent_Declare(
@@ -116,14 +102,12 @@ FetchContent_Declare(
 set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "" FORCE)
-if(NOT spdlog_FOUND)
-    FetchContent_Declare(
-        spdlog
-        GIT_REPOSITORY https://github.com/gabime/spdlog.git
-        GIT_TAG v1.14.1
-        GIT_SHALLOW TRUE
-    )
-endif()
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.14.1
+    GIT_SHALLOW TRUE
+)
 
 # stb — single-header image loading (stb_image), pinned commit.
 FetchContent_Declare(
@@ -134,31 +118,14 @@ FetchContent_Declare(
 )
 
 # nlohmann/json 3.11.x — JSON for SceneStore::serialize() (SPEC §7 Q47), pinned SHA.
-if(NOT nlohmann_json_FOUND)
-    FetchContent_Declare(
-        nlohmann_json
-        GIT_REPOSITORY https://github.com/nlohmann/json.git
-        GIT_TAG v3.11.3
-        GIT_SHALLOW TRUE
-    )
-endif()
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE
+)
 
-# Collect the subset that needs fetching (system-found deps are skipped).
-set(_re_fetch_deps "")
-if(NOT glfw3_FOUND)
-    list(APPEND _re_fetch_deps glfw)
-endif()
-if(NOT glm_FOUND)
-    list(APPEND _re_fetch_deps glm)
-endif()
-if(NOT spdlog_FOUND)
-    list(APPEND _re_fetch_deps spdlog)
-endif()
-if(NOT nlohmann_json_FOUND)
-    list(APPEND _re_fetch_deps nlohmann_json)
-endif()
-list(APPEND _re_fetch_deps imgui stb googletest)
-FetchContent_MakeAvailable(${_re_fetch_deps})
+FetchContent_MakeAvailable(glfw glm spdlog nlohmann_json imgui stb googletest)
 
 # stb is a header-only repo with no CMakeLists.txt of its own, so
 # FetchContent_MakeAvailable cannot create a target for it. Expose the
@@ -218,10 +185,10 @@ endif()
 # Install / export — make RE a real library (T2, SPEC §8).
 # Consumers use `find_package(RenderEngine 0.1 REQUIRED)` after `cmake --install`.
 # ---------------------------------------------------------------------------
-# write_basic_package_version_file pins the semver 0.1 per T2:D (analytic pin).
+# write_basic_package_version_file pins the semver 0.1.0 per T2:D (analytic pin — project VERSION 0.1.0, package VERSION 0.1.0 via SameMajorVersion, spec-review #14).
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/RenderEngineConfigVersion.cmake"
-    VERSION 0.1
+    VERSION 0.1.0
     COMPATIBILITY SameMajorVersion
 )
 

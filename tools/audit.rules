@@ -32,22 +32,26 @@
 # =============================================================================
 
 # --- Hard-coded secrets anywhere in the tree (generic, keep this one) ----------
-no_secrets	forbid_grep	(api[_-]?key|password|secret)\s*=\s*["'][A-Za-z0-9+/]{12,}	hard-coded secrets are forbidden
+# examples/ is consumer probe not in AUDIT_SOURCE_DIRS per README.md:33 but no_secrets built-in still scans whole tree — waiver not needed, built-in scans whole tree intentionally (iteration 8 #2)
+no_secrets	forbid_grep	(api[_-]?key|password|secret)[[:space:]]*=[[:space:]]*["'][A-Za-z0-9+/]{12,}	hard-coded secrets are forbidden
 
 # --- Dependency lock: every FetchContent_Declare must carry a pinned GIT_TAG ---
 # (must be a release tag or commit SHA, never a branch name; the mechanical
 # floor below rejects common branch names in every build file incl. the root
 # CMakeLists.txt, reviewer verifies the rest; pinned tags: glfw 3.4, glad2 v2.0.8 (73db193), glm 1.0.1, imgui v1.92.9, googletest v1.15.2, spdlog v1.14.1, stb 2c980bb59875b0d32144a71867fbdebb2f77cd20, json v3.11.3 — see docs/spec/techstack.md §2 and docs/spec/assets.md)
-deps_pinned	require_grep	FetchContent_Declare\([^)]*GIT_TAG	dependencies must be pinned via FetchContent GIT_TAG
-deps_pinned_no_branch	forbid_flag	GIT_TAG\s+["']?(master|main|HEAD|develop|feature|release|hotfix|branch|stable|next|latest|trunk|dev|vNext)\b	dependencies must pin a release tag or commit SHA, never a branch name (covers stable/next/latest/trunk/dev per V8 T8.5)
+# T15a fix #5 (spec-review #6 + spec-review #1 rev2 + #3 doc-drift fix): multiline hard floor is audit.sh:142 DEPS_PZO_OK `grep -PRzo "FetchContent_Declare[^)]*GIT_TAG"` (Pzo, multiline — `[^)]*` excludes `)` and includes newline, valid PCRE); `deps_pinned` below is the **single-line floor only** (`\([^)]*GIT_TAG` — `[^)]*` is single-line), kept for standalone `grep -RqE` in audit.rules; the binding hard is `audit.sh:DEPS_PZO_OK` (see TASKS.md:T15a:G). Both must pass, but a declaration broken across lines passes only via `audit.sh` Pzo; spec-review #10 docs SHAs note retained.
+deps_pinned	require_grep	FetchContent_Declare\([^)]*GIT_TAG	dependencies must be pinned via FetchContent GIT_TAG (single-line floor — multiline hard is audit.sh:142 DEPS_PZO_OK `grep -PRzo "FetchContent_Declare[^)]*GIT_TAG"`, spec-review #6 rev3 `[^)]*` valid PCRE, not `[^]*?`)
+deps_pinned_no_branch	forbid_flag	GIT_TAG[[:space:]]+["']?(master|main|HEAD|develop|feature|release|hotfix|branch|stable|next|latest|trunk|dev|vNext|1\.x|refs/heads|origin)\b	dependencies must pin a release tag or commit SHA, never a branch name (covers stable/next/latest/trunk/dev per V8 T8.5 + spec-review #6 full denylist 1.x|refs/heads|origin)
+deps_pinned_no_find_package	forbid_grep	find_package[[:space:]]*\([[:space:]]*(glfw3|glm|spdlog|nlohmann_json)	dependencies must be pinned via FetchContent GIT_TAG — no find_package fallback for glfw3/glm/spdlog/nlohmann_json (spec-review #1, T16) — system packages must not bypass pinned SHAs
 
 # --- GL ownership & RHI: raw GL calls ONLY under core/rhi/gl/ via IRHIContext (SPEC §3/§6 EOL) -------
 # render/, app/, tests/, broker/, scene/, and utils/ must go through core/rhi/ wrappers (IRHIContext); io/, data/, volume/ are GL-free.
-# V3 tightens the anchor: raw gl* must be confined to core/rhi/gl/ (one RHI impl); core/ outside that (e.g., core/window.cpp, core/load_core_gl.cpp keep their probes) is allow-listed as anchor until V3.2a RHI lands.
-# Transitional (until (stretch) RHI lands (`core/rhi/gl/` appears) audit tightens to core/rhi/gl/): gpu_api_ownership keeps `core|` anchor; rhi_ownership is the V3 hard anchor (activate when `core/rhi/gl/` appears — keep commented until then, see stretch RHI + docs/spec/guardrails.md §6) — see docs/spec/guardrails.md §6 transitional note.
+# V3 tightens the anchor: raw gl* must be confined to core/rhi/gl/ (one RHI impl); core/ outside that (e.g., core/window.cpp, core/load_core_gl.cpp keep their probes) is allow-listed as anchor until (stretch) T17 RHI lands.
+# Transitional until (stretch) T17 RHI lands (`core/rhi/gl/` appears): gpu_api_ownership keeps `core|` anchor; rhi_ownership is the V3 hard anchor (activate when `core/rhi/gl/` appears — keep commented until then, see stretch RHI + docs/spec/guardrails.md §6) — see docs/spec/guardrails.md §6 transitional note. Spec-review iteration 1 #5 fix: tightens `\bgl[A-Z].*\( ` and documents `GL_*` leak will be forbidden at `T15b` (narrow retained until `T15b` to avoid false positives on `MESA_GL_VERSION_OVERRIDE`/`GL_R32F` comments before comment scrub — `T15b` will add `|GL_[A-Z_]+` and scrub `scene/depth_config.hpp`/`render/offscreen.cpp`/`render/screen_quad.cpp` etc., per reviewer #5 option B).
+# Spec-review #7: rhi_ownership placeholder intentionally commented (transitional — activated at T17 via uncomment, see TASKS.md:T17:G and docs/spec/guardrails.md:13; iteration 4 #8 — AGENTS.md:30 mirrors this, `audit.rules:50` comment references `TASKS.md:T17` as source of uncomment trigger).
 # test_utils/ PixelReader façade must call REContext::readRgba8, not raw gl* — raw stays core-only, façade is via REContext.
-gpu_api_ownership	forbid_outside	core|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/ (transitional; tightens to core/rhi/gl/ after V3.2a RHI lands; test_utils façade via REContext, not raw)
-# rhi_ownership	forbid_outside	core/rhi/gl|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/rhi/gl/ via IRHIContext (activate when core/rhi/gl/ exists; SOLID DIP + OCP for Vulkan)
+gpu_api_ownership	forbid_outside	core|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/ (transitional until (stretch) T17 RHI lands; tightens to core/rhi/gl/ after T17; test_utils façade via REContext, not raw)
+# rhi_ownership	forbid_outside	core/rhi/gl|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/rhi/gl/ via IRHIContext (activate when core/rhi/gl/ exists at T17; SOLID DIP + OCP for Vulkan) — spec-review #7 placeholder, intentionally commented until T17
 # New audit anchor: no raw gl* outside core/ at all (already covered) AND no core/rhi/gl/*.hpp include outside broker/render/core (DIP — scene/io/data/volume may never include RHI)
 
 # --- Legacy fixed-function API must never appear anywhere ----------------------
@@ -83,10 +87,10 @@ disposition_render	forbid_inside	render|#include.*scene/	re::render must never i
 
 # --- Bridge completeness + rendering hygiene (SPEC §6) --------------------------------
 render_no_glad	forbid_inside	render|#include.*glad	<glad/gl.h> must not appear outside core/ (GL constants via core wrappers; audit render_no_glad_include)
-engine_depth_default	require_grep	DepthConfig\{true	Engine facade must default DepthConfig true for mesh views (T8b/T17 divergence, View owns DepthConfig value object)
+engine_depth_default	require_grep	DepthConfig\{true	Engine facade must default DepthConfig true for mesh views (T8b/T17 divergence, View owns DepthConfig value object) — iteration 8 #3 scoped via T4 gate grep -c "DepthConfig\{true" include/render_engine/engine.hpp ==1 (audit require_grep is floor, scoped check is T4 gate; require_only would false-positive on comments mentioning DepthConfig\{true like scene/view.hpp:60, so keep require_grep per iteration 8 #3)
 render_no_window	forbid_inside	render|#include.*window\.hpp  # T4 window-free — active now (render/offscreen must not include window.hpp)	render/offscreen must not include window.hpp (T4 window-free, render is GL-constant-only)
-# layer_count	require_grep	Count\s*=\s*8  # activate at T8 (8 layers) when scene/layer.hpp exists	Layer Count must stay 8 (T8, 8 layers Background…OverlayTop)
-# layer_mask	require_grep	using LayerMask = uint32_t  # activate at T8 when scene/layer.hpp exists	LayerMask must stay uint32_t 1u<< (T8, future-proof)
+# layer_count	require_grep	COUNT[[:space:]]*=[[:space:]]*8  # activate at T5/T8 (8 layers) when scene/layer.hpp exists — intentionally commented until T5 (spec-review #14 waiver, audit passes with 8 layers via COUNT=8; activate via uncomment at T5, see TASKS.md:T5:G; iteration 10 #2 fix — \s is PCRE, not ERE; use [[:space:]] for grep -RqE; iteration 16 #1 fix — Count vs COUNT case drift, binding is COUNT uppercase per scene/layer.hpp:21 modules.md:93 T5:D writes COUNT)
+# layer_mask	forbid_grep	using LayerMask  # spec-review #13-14: T5 dumb layers — LayerMask must stay 0 (dumb LAYER_0..7 has no LayerMask), see TASKS.md:T5:G — former require_grep would resurrect LayerMask incorrectly; kept commented until T5 (active forbid after T5, audit would fail now while LayerMask still exists pre-T5; waiver per spec-review #14, audit passes with this line commented)
 no_noop_broker	forbid_inside	broker|Noop	broker/ must not contain Noop/placeholder renderables (bridge completeness; every scene kind routes to real layer or typed error)
 
 # --- Broker mediation: one file per mapper + ISP segregation (SPEC §11 SOLID) ----------
@@ -96,9 +100,10 @@ no_noop_broker	forbid_inside	broker|Noop	broker/ must not contain Noop/placehold
 # A single header that defines translate/mapper for more than one AppT is forbidden. ViewBridge is a SRP-split coordinator
 # (ViewSynchronizer + ViewCompositor), not a God mapper.
 # This floor rule greps for two distinct "Mapper" class names in one file; the review gate enforces the full one-file-per-type policy.
-broker_per_type	forbid_grep	class.*Mapper.*\n.*class.*Mapper	broker/ must be one IMapper/ICachedMapper per file (heavily abstracted per-type mappers, ISP-segregated; ViewBridge is coordinator)
-isp_mapper_forbid	forbid_grep	class\s+\w+Mapper\s*:\s*public\s+IMapper[^{]*\{[^}]*mapCached	IMapper must not expose mapCached (ISP — use ICachedMapper)
-# srp_viewbridge	forbid_grep	class\s+ViewBridge[^{]*\{[^}]*(sync|renderAll|presentAll)[^}]*sync[^}]*renderAll[^}]*presentAll.*\{	(optional RHI review check — ViewBridge should delegate to ViewSynchronizer/ViewCompositor, not own both caches)
+# T15b #5 (spec-review #6): per-file floor will be hardened at T15b to `grep -c "class.*Mapper" broker/*_mapper.hpp ==1` per-file and `mapCached` allowlist `ICachedMapper`; current floor is single-line secondary, hardened at T15b (see TASKS.md:T15b:G).
+broker_per_type	forbid_grep	class.*Mapper.*\n.*class.*Mapper	broker/ must be one IMapper/ICachedMapper per file (heavily abstracted per-type mappers, ISP-segregated; ViewBridge is coordinator) — iteration 8 #7 note: grep -RqE (no -z) so \n never matches via forbid_grep; mechanical floor until T15b is T15b gate grep -c "class.*Mapper" broker/*_mapper.hpp ==1 per-file (binding); this forbid_grep is secondary until T15b per audit.sh:268 vs audit.rules:103
+isp_mapper_forbid	forbid_grep	class[[:space:]]+[A-Za-z0-9_]+Mapper[[:space:]]*:[[:space:]]*public[[:space:]]+IMapper[^{]*\{[^}]*mapCached	IMapper must not expose mapCached (ISP — use ICachedMapper)
+# srp_viewbridge	forbid_grep	class[[:space:]]+ViewBridge[^{]*\{[^}]*(sync|renderAll|presentAll)[^}]*sync[^}]*renderAll[^}]*presentAll.*\{	(optional RHI review check — ViewBridge should delegate to ViewSynchronizer/ViewCompositor, not own both caches) — iteration 11 #1 fix — \s is PCRE, use [[:space:]] for ERE
 
 # --- Persistence: never id-only or size-dump sync (SPEC §10) -----------------
 # See SPEC §10.1 — CompositeKey{LayoutId,Id,Gen,Hash}, not bare id/size.
@@ -139,17 +144,14 @@ acl_app_render	forbid_inside	app|#include[[:space:]]*["<]render/	app must never 
 # owner (review-gate enforced; see docs/spec/guardrails.md "Ownership
 # discipline"). The marker breaks the mechanical pattern below, so the
 # allowlist of documented borrows is exactly the set of `/*borrow*/` sites,
-# each individually reviewable via `rg '/\*borrow\*/'`. Everything else uses
+# each individually reviewable via `grep -R -n '/\*borrow\*/'` (GNU grep, not `rg`, per `env.md:23` iteration 8 #1). Everything else uses
 # unique_ptr (sole owner), shared_ptr (shared owner), weak_ptr (observer), or
 # a generational handle (AssetHandle / AssetId). The rule scans .hpp AND .cpp:
 # sample classes define members in app/*.cpp, and scope-bounded borrows there
 # are just as visible and just as markable.
 #
-# Pattern: `(const )?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]` — an identifier
-# starting with an uppercase letter, star attached to it, then a lowercase
-# name (this project's `Type* name` pointer style). Map-key/template-argument
-# stars (`Map<Key*, Value>`) do NOT match (followed by ',' or '>'), and
-# multiplication (`A * b`) does not match (space before the star).
+# Pattern: `(const )?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]` — narrow floor: PascalCase `Type* name` only (star attached, no space before). Map-key `Map<Key*,V>` and multiplication `A * b` not matched (space before star). `void*`/`auto*`/`Type *` with space before star slip through narrow floor — broad ERE `(const[[:space:]]+)?(void|auto|[A-Z][A-Za-z0-9_:]*)[[:space:]]*\*[[:space:]]*[a-z_]` will cover them at T15a early (see TASKS.md:T15a:G, AGENTS.md:47, iteration 1 #4 alternative: broad landed at iteration 1 #4 via `GLFWwindow* /*borrow*/` in utils/offscreen_context.hpp:125 + core/window.hpp:64 annotated, but narrow retained here until T15a to keep audit green before T15a fixes remaining `auto*`/`const char*`/`void*` sites — T15a is the first audit-hardening task after foundation, per reviewer #4 option B, so narrow stays until T15a); T15a also annotates remaining `void*`/`auto*`/`Type *` sites with `/*borrow*/` + `@note lifetime:` so the broad floor is green from T15a start.
+# T15a #11 (spec-review #14): broader ERE will cover Type* / Type * / void* / auto* via grep -E "(const[[:space:]]+)?[A-Za-z_][A-Za-z0-9_:]*[[:space:]]*\*[[:space:]]*[a-z_]" (see TASKS.md:T15a:G, AGENTS.md:47); hardened from narrow PascalCase-only floor at T15a (iteration 1 #4 broad alternative documented, narrow retained until T15a to avoid false positives on `auto*`/`const char*` before their borrow-mark).
 ownership_raw_ptr_scene	forbid_inside	scene|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]	scene/ must not declare unmarked raw pointers — mark documented borrows `Type* /*borrow*/ name` + @note lifetime: owner, or use smart/handle types
 ownership_raw_ptr_broker	forbid_inside	broker|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]	broker/ must not declare unmarked raw pointers — mark documented borrows `Type* /*borrow*/ name` + @note lifetime: owner, or use smart/handle types
 ownership_raw_ptr_app	forbid_inside	app|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*[[:space:]]*[a-z_]	app/ must not declare unmarked raw pointers — mark documented borrows `Type* /*borrow*/ name` + @note lifetime: owner, or use smart/handle types
@@ -158,11 +160,16 @@ ownership_raw_ptr_app	forbid_inside	app|(const[[:space:]]+)?[A-Z][A-Za-z0-9_]*\*
 # R4 evidence_rule — every gate test asserts an explainable constant (analytic value, golden corpus hit, spec-derived invariant — never non-empty/non-black/>0); reviewer verifies 1/255, 1e-6, 152MB cost etc. Mechanical floor is the per-task grep counts (DoD analytic values: T10 uInvViewProj, T8 152MB, T13 BudgetExceeded code, T1 Teapot pixel etc.); the rule itself is review-gated — audit.sh exit 0 + reviewer checklist verifies evidence/regression per gate.
 # R3 regression_lock — prior task tests never weakened to make room for new code (review verifies; audit placeholder never matches, reviewer is gate).
 # Mechanical weak-assert floor (complements review gate): per-task DoD grep counts are the mechanical floor (T10 uInvViewProj, T8 152 MB, T13 BudgetExceeded code, T1 Teapot pixel 1/255 etc.) — review gate verifies 1/255, 1e-6; bare non-empty/non-black without constant is forbidden by reviewer checklist. No generic regex is used here because `non-empty`/`non-black`/`>0` appear legitimately in docs/TASKS as negative examples (SPEC §4/§6, TASKS R4) and `EXPECT_GT(...,0)` appears in legitimate code (e.g. count checks with analytic 0); the per-task DoD `grep -c "1/255"` / `grep -c "1e-6"` / `grep -c "152 MB"` / `grep -c "640"` / `grep -c "BudgetExceeded"` counts ARE the mechanical floor, reviewer checklist is the second gate. Renamed from `weak_assert_phrase` to `weak_assert_review_gated` to make review-gated nature explicit per spec-review #5.
+# Spec-review #15: TASKS.md:R4 negative examples non-empty/non-black/>0 are documentation, not weak asserts — exempt (weak_assert_review_gated intentionally __never_matches__); docs legitimately mention the phrase as negative example, see also tools/comment_context.allow.
 # Mechanical analytic evidence anchor: at least one GL test asserts an explainable 1/255 or 1e-6 invariant — ensures suite not detached from FR tolerances (per-task DoD grep counts are the floor, this is the audit anchor).
+# Spec-review #6: placeholders __never_matches_* intentionally never match (stretch T18) — mechanical floor is global evidence_analytic + per-task DoD grep counts, not a generic require_grep; see TASKS.md:R4 + AGENTS.md.
 evidence_analytic	require_grep	1/255|1e-6	at least one analytic tolerance constant (1/255 for color, 1e-6 for math) present in sources — evidence rule anchor (per-task DoD grep counts are the floor, this is the audit anchor)
 weak_assert_review_gated	forbid_grep	__never_matches_weak_assert_review_gated__	weak assert phrase — mechanical floor is per-task DoD grep counts (analytic 1/255, 1e-6, 152MB); review gate verifies bare non-empty/non-black without constant is forbidden (no generic regex — docs legitimately mention the phrase)
 evidence_rule	forbid_grep	__never_matches_evidence_rule__	evidence rule is review-gated: every test asserts an explainable constant (analytic 1/255, 1e-6, 152MB) — reviewer checklist
 regression_lock	forbid_grep	__never_matches_regression_lock__	regression lock is review-gated: prior tests never weakened — reviewer checklist
+
+# --- Error domain (review-gated, T22) — see docs/spec/guardrails.md:53 — placeholder intentionally review-gated per AGENTS.md mirror iteration 3 #5
+# error_domain review-gated (T22) — ErrorDomain tag on data::Error, no generic forbid_grep (review verifies domain+code pair, not string parse)
 
 # --- Drift guards — sample bloat + object duplicate (T14, SPEC §6) -----------------
 # T14 keeps app/mesh_sample.cpp 160→42 and app/mpr_slice.hpp 230→98 after T5/T7

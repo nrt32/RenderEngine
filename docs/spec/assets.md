@@ -18,11 +18,12 @@ small raw NRRD for commit.
 
 | Asset | Source (pinned URL) | License | Target path | Notes |
 |---|---|---|---|---|
-| Stanford bunny (OBJ) | `https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/stanford-bunny.obj` (SHA256 `1eb35d1e21ce99e5ce911353b6be278990713448dd9e8f5c9387f9de39b32205`) | Public domain | `data/meshes/bunny.obj` | sample mesh rendering; 2.4 MB |
-| Utah teapot (OBJ) | `https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/teapot.obj` (SHA256 `1b5396fedd74b577e32cef41146582c2f2e1a050d5b4915193c0ac1ad4187ed4`) | Public domain | `data/meshes/teapot.obj` | sample mesh/slice rendering |
+| Stanford bunny (OBJ) | `https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/8a4f8642acaf43f9cd7b67858a1502e1055ef202/data/stanford-bunny.obj` (commit `8a4f8642acaf43f9cd7b67858a1502e1055ef202` — `master` HEAD at `git ls-remote` 2026-08-29, SHA256 `1eb35d1e21ce99e5ce911353b6be278990713448dd9e8f5c9387f9de39b32205`) | Public domain | `data/meshes/bunny.obj` | sample mesh rendering; 2.4 MB |
+| Utah teapot (OBJ) | `https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/8a4f8642acaf43f9cd7b67858a1502e1055ef202/data/teapot.obj` (commit `8a4f8642acaf43f9cd7b67858a1502e1055ef202` — `master` HEAD at `git ls-remote` 2026-08-29, SHA256 `1b5396fedd74b577e32cef41146582c2f2e1a050d5b4915193c0ac1ad4187ed4`) | Public domain | `data/meshes/teapot.obj` | sample mesh/slice rendering |
 | CT chest sample volume | `https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e` (published SHA256 `4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e`, file `CT-chest.nrrd`) | CC-BY-SA 4.0 (Medical Decathlon) | `data/volumes/sample_ct.nrrd` | downsample ≤128³ → raw NRRD; used by volume/MPR samples + tests |
 | Golden fixtures | Hand-authored small meshes/volumes/images | Project-owned | `data/fixtures/` | committed, tiny, used by io/data tests (hand-counted acceptance constants) |
-| Font atlas golden (T3) | Generated via `SampleHarness` headless FBO capture (`expectPixel` probe) | Project-owned | `data/fixtures/font_atlas_golden.rgba` | committed, tiny, SHA256 pinned via `sha256sum data/fixtures/font_atlas_golden.rgba` (or allow `tools/comment_context.allow` waiver until T3) |
+| Golden 2×2 RGBA (T11b) | Hand-authored 2×2 RGBA (`red` `green` `blue` `white`, iteration 3 #2) — `sha256sum 9ccfc2abaa3984dc34c93aee16be0afa8a5e1395f25492b3df67897e6d00df10` | Project-owned | `data/fixtures/golden_rgba.png` | `T11b` `FR-io.3` pixel oracle `1/255` via `PlaneRenderer` — hand-authored, committed, no `curl`, verified SHA in `T11b` gate (iteration 3 #2/4) |
+| Font atlas golden (T3a) | **Generated in-repo at `T3a`, not fetched at setup** — via `tools/generate_font_atlas.sh` `RE_SAMPLE_MAX_FRAMES=1 ./build/tests/re_tests --gtest_filter=*FontAtlas*` then `sha256sum data/fixtures/font_atlas_golden.rgba` — Project-owned, deterministic, byte-identical on re-run (spec-review #9 fixed circular fetch, iteration 1 #14 adds `tools/generate_font_atlas.sh` script, iteration 5 #3 pre-generated dummy `64×64` `16384 B` `sha256sum 74bc1f394723a260d6a8501fc2c499bc515588a915205c8ef01cfb5349d72f22` interim) | Project-owned | `data/fixtures/font_atlas_golden.rgba` | **T3a deliverable:** file appears at `T3a` via `tools/generate_font_atlas.sh` (dummy `64×64` pre-pin `sha256sum 74bc1f394723a260d6a8501fc2c499bc515588a915205c8ef01cfb5349d72f22` interim at `spec_review`, real FBO capture overwrites at `T3a` and re-pins) — **no setup fetch** — `T2` Verified SHA256s table now lists `74bc1f394723a260d6a8501fc2c499bc515588a915205c8ef01cfb5349d72f22` interim (overwritten at `T3a`); deterministic generation, no `comment_context.allow` waiver |
 | Procedural geometry | Generated in code at runtime | n/a | n/a | deterministic tests; no file dependency |
 | LICENSE (meshes) | In-repo (per-dataset-dir) | CC0 / Public domain (bunny+teapot) | `data/meshes/LICENSE` | per-dataset-dir LICENSE beside every dataset (audit `audit.sh` built-in `assets licensed per-dir` + T2 gate `test -f data/meshes/LICENSE`) |
 | LICENSE (volumes) | In-repo (per-dataset-dir) | CC-BY-SA 4.0 (CT chest) | `data/volumes/LICENSE` | per-dataset-dir LICENSE beside every dataset (audit built-in + T2 gate `test -f data/volumes/LICENSE`) |
@@ -38,35 +39,38 @@ deliverable. Re-running setup is therefore idempotent and never touches git
 state. Explicit fetch (idempotent):
 
 ```bash
-curl -L --fail https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/stanford-bunny.obj -o /tmp/bunny.obj
+curl -L --fail https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/8a4f8642acaf43f9cd7b67858a1502e1055ef202/data/stanford-bunny.obj -o /tmp/bunny.obj
 echo "1eb35d1e21ce99e5ce911353b6be278990713448dd9e8f5c9387f9de39b32205  /tmp/bunny.obj" | sha256sum -c
-curl -L --fail https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/teapot.obj -o /tmp/teapot.obj
+curl -L --fail https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/8a4f8642acaf43f9cd7b67858a1502e1055ef202/data/teapot.obj -o /tmp/teapot.obj
 echo "1b5396fedd74b577e32cef41146582c2f2e1a050d5b4915193c0ac1ad4187ed4  /tmp/teapot.obj" | sha256sum -c
 curl -L --fail https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e -o /tmp/CT-chest.nrrd
 echo "4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e  /tmp/CT-chest.nrrd" | sha256sum -c
 python3 tools/convert_nrrd.py /tmp/CT-chest.nrrd data/volumes/sample_ct.nrrd  # downsample ≤128³, raw NRRD, python3 >=3.10 stdlib only
 ```
 
-**Reproducibility:** `tools/convert_nrrd.py` is pinned to the repo commit (in-repo, stdlib-only, `python3 >=3.10`; no pip deps, no external hash) — verification is `python3 --version` and stdlib-only check plus `sha256sum tools/convert_nrrd.py` pin (reproducibility gate: re-running `python3 tools/convert_nrrd.py /tmp/CT-chest.nrrd` yields byte-identical `data/volumes/sample_ct.nrrd` SHA `816375cdcbb3a00abb87fcbd14075f78287aaf7e05eb751082b5c900f2df7865` — deterministic downsample, no numpy randomness); the derived `data/volumes/sample_ct.nrrd` SHA `816375cdcbb3a00abb87fcbd14075f78287aaf7e05eb751082b5c900f2df7865` is the binding artifact. `data/README.md` (sources, URLs, licenses, checksums) is also a T2 deliverable (see T2 doc-map).
+**Reproducibility:** `tools/convert_nrrd.py` is pinned to the repo commit (in-repo, stdlib-only, `python3 >=3.10`; no pip deps, no external hash) — verification is `python3 --version` and stdlib-only check plus `sha256sum tools/convert_nrrd.py` pin `cec7d6356631cbeaff1139f6ebcdbbad52b1d349dec2a74ad8b55c62b7668b56` (spec-review #2 fix) (reproducibility gate: re-running `python3 tools/convert_nrrd.py /tmp/CT-chest.nrrd` yields byte-identical `data/volumes/sample_ct.nrrd` SHA `816375cdcbb3a00abb87fcbd14075f78287aaf7e05eb751082b5c900f2df7865` — deterministic downsample, no numpy randomness); the derived `data/volumes/sample_ct.nrrd` SHA `816375cdcbb3a00abb87fcbd14075f78287aaf7e05eb751082b5c900f2df7865` is the binding artifact. `data/README.md` (sources, URLs, licenses, checksums) is also a T2 deliverable (see T2 doc-map).
 
 **Verified SHA256s of the committed files (T2):**
+- `tools/convert_nrrd.py` — `cec7d6356631cbeaff1139f6ebcdbbad52b1d349dec2a74ad8b55c62b7668b56` (in-repo, stdlib-only, spec-review #2 fix)
 - `data/meshes/bunny.obj` — `1eb35d1e21ce99e5ce911353b6be278990713448dd9e8f5c9387f9de39b32205` (matches source)
 - `data/meshes/teapot.obj` — `1b5396fedd74b577e32cef41146582c2f2e1a050d5b4915193c0ac1ad4187ed4` (matches source)
 - `data/volumes/sample_ct.nrrd` — `816375cdcbb3a00abb87fcbd14075f78287aaf7e05eb751082b5c900f2df7865` (downsampled 128×128×70; source SHA256 `4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e`)
+- `data/fixtures/golden_rgba.png` — `9ccfc2abaa3984dc34c93aee16be0afa8a5e1395f25492b3df67897e6d00df10` (hand-authored `2×2` RGBA `red/green/blue/white`, iteration 3 #2 `T11b` `FR-io.3` pixel oracle — `sha256sum` pinned, `PlanerRenderer` `1/255`)
+- `data/fixtures/font_atlas_golden.rgba` — `74bc1f394723a260d6a8501fc2c499bc515588a915205c8ef01cfb5349d72f22` (iteration 1 #14 + iteration 3 #3 + iteration 5 #3 pre-generated dummy `64×64` RGBA `16384 B` deterministic `sha256sum` pinned at `spec_review` — `tools/generate_font_atlas.sh` will overwrite with real `RE_SAMPLE_MAX_FRAMES=1` FBO capture at `T3a` and `T3a` gate will `sha256sum` re-pin; byte-identical on re-run, no setup fetch — interim `TBD_T3a` replaced at iteration 5 #3 with dummy `64×64` pre-pin to make `spec_review.pass` reproducible pre-`T3a`; real atlas overwrites at `T3a`; pre-setup gate `sha256sum -c <<<"74bc1f394723a260d6a8501fc2c499bc515588a915205c8ef01cfb5349d72f22  data/fixtures/font_atlas_golden.rgba" && test $(wc -c < data/fixtures/font_atlas_golden.rgba) -eq 16384` verifies dummy before loop start, iteration 6 #6; after `T3a`: `sha256sum data/fixtures/font_atlas_golden.rgba` must be updated in `assets.md:60` and `T3a:T` — interim gate `74bc1f...` waived post-`T3a`, per iteration 8 #6)
 
 These are asserted by the T2 gate (SHA256 of each committed file, plus the NRRD
 dims ≤128³ and the bunny.obj hand-counted vertex count).
 
-**Dependency pins (FetchContent `GIT_TAG`, verified SHAs — SPEC §2/§6 `deps_pinned`):**
-- `glfw 3.4` — `https://github.com/glfw/glfw` — tag `3.4` — `zlib` — `GIT_TAG 3.4` (verified `CMakeLists.txt:55`)
-- `glad2 v2.0.8` — `https://github.com/Dav1dde/glad` — tag `v2.0.8` (commit `73db193`) — MIT — `GIT_TAG v2.0.8` (verified `CMakeLists.txt:64`)
-- `glm 1.0.1` — `https://github.com/g-truc/glm` — tag `1.0.1` — MIT — `GIT_TAG 1.0.1` (verified `CMakeLists.txt:74`)
-- `imgui v1.92.9` — `https://github.com/ocornut/imgui` — tag `v1.92.9` — MIT — `GIT_TAG v1.92.9` (verified `CMakeLists.txt:82`)
-- `googletest v1.15.2` — `https://github.com/google/googletest` — tag `v1.15.2` (commit `b514bdc898e2951020cbdca1304b75f5950d1f59`) — BSD-3 — `GIT_TAG v1.15.2` (verified `CMakeLists.txt:91`)
-- `spdlog v1.14.1` — `https://github.com/gabime/spdlog` — tag `v1.14.1` — MIT — `GIT_TAG v1.14.1` (verified `CMakeLists.txt:102`)
-- `stb_image` — `https://github.com/nothings/stb` — commit `2c980bb59875b0d32144a71867fbdebb2f77cd20` — Public Domain — `GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20` (verified `CMakeLists.txt:106`)
-- `nlohmann/json 3.11.3` — `https://github.com/nlohmann/json` — tag `v3.11.3` (commit `9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03`) — MIT — `GIT_TAG v3.11.3` (verified `CMakeLists.txt:114`)
-- Fetch method: `FetchContent` `GIT_TAG` + `GIT_SHALLOW TRUE` (deps_pinned, deps_pinned_no_branch); system `libglm-dev`/`nlohmann-json3-dev` not used — see `docs/spec/techstack.md` §2 and `CMakeLists.txt:48-120`.
+**Dependency pins (FetchContent `GIT_TAG`, verified SHAs — canonical table is `docs/spec/techstack.md` §2, spec-review #16 DRY):** this section mirrors `techstack.md` §2; `techstack.md` is the canonical pin table — `T16` gate verifies `grep -c "GIT_TAG" CMakeLists.txt` SHAs match `techstack.md` SHAs (spec-review #16, prevents drift). Pins:
+- `glfw 3.4` — `https://github.com/glfw/glfw` — tag `3.4` (commit `7b6aead9fb88b3623e3b3725ebb42670cbe4c579`) — `zlib` — `GIT_TAG 3.4` (verified `CMakeLists.txt:72`, `git ls-remote` SHA `7b6aead`) — see `techstack.md:15`
+- `glad2 v2.0.8` — `https://github.com/Dav1dde/glad` — tag `v2.0.8` (commit `73db193f853e2ee079bf3ca8a64aa2eaf6459043` full 40-char, short `73db193` — iteration 1 #6 pins full SHA, `GIT_TAG v2.0.8` verified `CMakeLists.txt:82` + `git ls-remote https://github.com/Dav1dde/glad v2.0.8` `73db193f853e2ee079bf3ca8a64aa2eaf6459043`) — MIT — see `techstack.md:14`
+- `glm 1.0.1` — `https://github.com/g-truc/glm` — tag `1.0.1` (commit `0af55ccecd98d4e5a8d1fad7de25ba429d60e863`) — MIT — `GIT_TAG 1.0.1` (verified `CMakeLists.txt:93`, `git ls-remote` SHA `0af55cc`) — see `techstack.md:16`
+- `imgui v1.92.9` — `https://github.com/ocornut/imgui` — tag `v1.92.9` (commit `01380c579715e62fb9a8d6ec0502c4ea83bfde6e`) — MIT — `GIT_TAG v1.92.9` (verified `CMakeLists.txt:102`) — see `techstack.md:17`
+- `googletest v1.15.2` — `https://github.com/google/googletest` — tag `v1.15.2` (commit `b514bdc898e2951020cbdca1304b75f5950d1f59`) — BSD-3 — `GIT_TAG v1.15.2` (verified `CMakeLists.txt:111`) — see `techstack.md:18`
+- `spdlog v1.14.1` — `https://github.com/gabime/spdlog` — tag `v1.14.1` (commit `27cb4c76708608465c413f6d0e6b8d99a4d84302` via `git ls-remote --tags https://github.com/gabime/spdlog v1.14.1` — iteration 4 #1) — MIT — `GIT_TAG v1.14.1` (verified `CMakeLists.txt:123`) — see `techstack.md:19`
+- `stb_image` — `https://github.com/nothings/stb` — commit `2c980bb59875b0d32144a71867fbdebb2f77cd20` — Public Domain — `GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20` (verified `CMakeLists.txt:132`) — see `techstack.md:20`
+- `nlohmann/json 3.11.3` — `https://github.com/nlohmann/json` — tag `v3.11.3` (commit `9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03`) — MIT — `GIT_TAG v3.11.3` (verified `CMakeLists.txt:141`) — see `techstack.md:21`
+- Fetch method: `FetchContent` `GIT_TAG` + `GIT_SHALLOW TRUE` (deps_pinned, deps_pinned_no_branch); system `libglm-dev`/`nlohmann-json3-dev` not used — canonical pins in `docs/spec/techstack.md` §2, `CMakeLists.txt:48-120`.
 
 ### Asset persistence (V3 research — robust/cleaner/extensible)
 
@@ -137,9 +141,8 @@ the same `AssetId` (same `contentHash` → same `index+generation`). Hashed **at
 
 `render::AssetRegistry` keeps `Slot{MeshGeometry}` generational `AssetHandle`
 but keys by stable `contentHash` (`byHash_`) from `SceneStore` — not by
-`byObject_` pointer `render/asset_registry.hpp:137` alone. V3.6 dual-key shim
-`byObject_ + byHash_` (shim removed V4) avoids big-bang migration while still
-fixing hot-reload identity (Q3/Q28/Q35). Stale `AssetId{gen+1}` → typed
+`byObject_` pointer `render/asset_registry.hpp:137` alone. The dual-key shim
+`byObject_ + byHash_` is **deleted at `T7`** per the consolidated backlog binding (`TASKS.md:T7` `grep -c "byObject_" render/ ==0` — `byHash_` only, `V3.6` shim retired at `T7` not `V4`, spec-review #3 fix); `byHash_` content-hash IS identity. Stale `AssetId{gen+1}` → typed
 `Error{code=2}` (never crash) — `AssetRegistry<T>::resolve` checks
 `generation != slot.generation` → code 2 (`StaleHandle`) per SPEC §5.
 
@@ -159,12 +162,9 @@ over every byte per instance per frame (`render/asset_registry.cpp:404,459` befo
 are deleted (keep explicit `registerVolume`→`resolveVolume` / `registerImage`→`resolveImage` only);
 the contract-violating comment about store-pinned `refs==0` lazy slots is removed.
 This also closes R8a/R8b: pinned refs==0 lazy slots can no longer appear and the
-`byObject_` pointer-key shim remains only for the mesh-kind diagnostic dual-key
-(V3.6 shim removed V4) — content-hash IS identity for volumes/images. Direct-renderer
+`byObject_` pointer-key shim is **deleted at `T7`** (`grep -c "byObject_" render/ ==0`, spec-review #3) — content-hash IS identity for volumes/images. Direct-renderer
 tests register explicitly in fixtures (or via the shared test helper
-`registerVolume`/`registerImage`); the renderer's fallback `legacyHandleCache_`
-keeps old dataset-only fixtures green by hashing once at first use and then O(1) hits,
-but new code and the T7 gate use explicit handles. Gate asserts (explainable):
+`registerVolume`/`registerImage`); no `legacyHandleCache_` fallback remains (`grep -c "legacyHandleCache" render/ ==0` per `TASKS.md:T7` binding — fallback deleted, explicit handle path is required). Gate asserts (explainable):
 spy counter proves `hashStableBytes`/FNV executes zero times during a steady-state
 60-frame loop after warm-up (volume + plane); registry slot count constant across
 1000 distinct-image frames (no pinned-slot growth); same `VolumeDataset` registered
@@ -180,7 +180,7 @@ RE-minimal unchanged: `render/re_scene/` never copies `data::Mesh::positions`
 
 ### Volumes
 - `data/volumes/sample_ct.nrrd` — a small freely-licensed CT sample,
-  downsampled to ≤128³ at setup for the *committed sample* (example `128×128×70`), but product loader has **no `≤128³` cap** — any dims via `core::Caps` tiled streaming (per Q4, `T11` `core::Caps`); `BudgetExceeded` only on probe fail, not on `>128³` alone.
+  downsampled to ≤128³ at setup for the *committed sample* (example `128×128×70`), but product loader has **no `≤128³` cap** — any dims via `core::Caps` tiled streaming (per Q4, `T11a` `core::Caps`); `BudgetExceeded` only on probe fail, not on `>128³` alone.
 - Tests use procedural synthetic volumes (analytic voxel fields) so expected
   values are closed-form.
 

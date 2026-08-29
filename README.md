@@ -12,12 +12,12 @@ All third-party dependencies are pinned and fetched at configure time via CMake
 | Dependency | Version / pin |
 |---|---|
 | GLFW | `3.4` |
-| glad2 | `v2.0.8` (commit `73db193`) |
+| glad2 | `v2.0.8` (commit `73db193f853e2ee079bf3ca8a64aa2eaf6459043` full 40-char, short `73db193` — iteration 3 #10) |
 | GLM | `1.0.1` |
 | Dear ImGui | `v1.92.9` |
 | GoogleTest | `v1.15.2` |
 | spdlog | `v1.14.1` |
-| stb | commit `2c980bb5` |
+| stb | commit `2c980bb59875b0d32144a71867fbdebb2f77cd20` (full 40-char, short `2c980bb5` — iteration 2 #4) |
 
 ## Launch prerequisite (IMPORTANT)
 

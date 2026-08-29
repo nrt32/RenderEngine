@@ -122,7 +122,8 @@ class OffscreenContext {
 
     /// Access underlying GLFW window handle (for REContext switching tests).
     /// Null when backend is not Glfw.
-    GLFWwindow* glfwHandle() const noexcept { return window_; }
+    /// @note lifetime: borrowed — owned by `OffscreenContext::window_` (RAII via `release()`), valid while `*this` lives.
+    GLFWwindow* /*borrow*/ glfwHandle() const noexcept { return window_; }
 
    private:
     explicit OffscreenContext(ContextBackend backend) noexcept;

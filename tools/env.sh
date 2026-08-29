@@ -12,8 +12,9 @@ export GALLIUM_DRIVER=llvmpipe
 # Sanitizer suppressions for llvmpipe/d3d12 false positives (SPEC §5, docs/spec/nfr.md:16-19, docs/spec/env.md:30).
 # `ASAN_OPTIONS`/`LSAN_OPTIONS` mirror `docs/spec/env.md` + `tools/lsan.supp` when present; kept here so manual `source tools/env.sh` matches gate env.
 export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:detect_invalid_pointer_pairs=1"
-if [ -f "tools/lsan.supp" ]; then
-  export LSAN_OPTIONS="suppressions=$(pwd)/tools/lsan.supp:print_suppressions=0"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -f "$ROOT/tools/lsan.supp" ]; then
+  export LSAN_OPTIONS="suppressions=$ROOT/tools/lsan.supp:print_suppressions=0"
 else
   export LSAN_OPTIONS="print_suppressions=0"
 fi

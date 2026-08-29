@@ -13,7 +13,7 @@ project.
 ## 2. File & module naming
 - Headers `snake_case.hpp`, sources `snake_case.cpp`; one primary class per
   file, named after the class (`phong_material.hpp` → `PhongMaterial`).
-- Module directories (lowercase): `io/ data/ volume/ scene/ core/ broker/ utils/ render/ app/ tests/` + peer `test_utils/` (peer test-support lib, GL via `REContext` only — T18; `AUDIT_SOURCE_DIRS` includes `test_utils`) (`scene/` GL-free value lib, `broker/` only lib that may include both `scene/`+`render/`, `utils/` offscreen context + pixel reader — see `docs/spec/modules.md` §3).
+- Module directories (lowercase): `io/ data/ volume/ scene/ core/ broker/ render/ app/ utils/ test_utils/ tests/` (exact order matching `tools/env.sh:6` `AUDIT_SOURCE_DIRS="io data volume scene core broker render app utils test_utils tests"` and `tools/audit.sh:63` default — spec-review #12 fix; `R15` exact-string gate `test "$AUDIT_SOURCE_DIRS" = "io data volume scene core broker render app utils test_utils tests"` requires this order; `test_utils/` is peer test-support lib, GL via `REContext` only — T18) (`scene/` GL-free value lib, `broker/` only lib that may include both `scene/`+`render/`, `utils/` offscreen context + pixel reader — see `docs/spec/modules.md` §3).
 
 ## 3. Type names
 - Classes/structs/enums/aliases: `PascalCase` (`PhongMaterial`, `VolumeDataset`).
@@ -115,6 +115,7 @@ project.
 - Project name: **RenderEngine**; repo path: current project directory.
 - Roles (loop contract): **runner** / **implementer** / **reviewer** /
   **orchestrator** (see loop-protocol).
+- **Broker roles:** `ViewSynchronizer`/`ViewCompositor`/`ViewBridge` (SRP split) and `IMapper`/`ICachedMapper` per-file naming — see `docs/spec/broker.md` §11.2 naming table and `AGENTS.md` broker mediation; one `IMapper`/`ICachedMapper` per file (`broker_per_type`), `ViewBridge` façade (spec-review #15).
 
 ## 11. Dependencies
 - Use libraries' native types without aliases in v1 (`glm::vec3`, no wrapper

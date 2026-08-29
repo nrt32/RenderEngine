@@ -61,7 +61,8 @@ class Window {
 
     /// The underlying GLFW window handle (for the ImGui GLFW backend and for
     /// making the context current).
-    GLFWwindow* handle() const noexcept {
+    /// @note lifetime: borrowed — owned by `Window::window_` (RAII via `release()`), valid while `*this` lives.
+    GLFWwindow* /*borrow*/ handle() const noexcept {
         return window_;
     }
 

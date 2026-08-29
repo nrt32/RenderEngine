@@ -162,7 +162,7 @@ Q36/Q47 `nlohmann/json` 3.11.x — not `glaze`):
 
 ```json
 {
-  "Version": 1,
+  "Version": 2,
   "LayoutId": 0,
   "Views": [
     {
@@ -171,11 +171,11 @@ Q36/Q47 `nlohmann/json` 3.11.x — not `glaze`):
       "Camera": {"eye":[0,0,3],"center":[0,0,0],"up":[0,1,0],
                  "fov":60,"aspect":1.333,"near":0.1,"far":10,
                  "viewGen":7,"projGen":7},
-      "CompositeKey": {"Version":1,"LayoutId":0,"ViewId":1,"Type":"View","Gen":7,"Hash": 0x9e3779b9},
+      "CompositeKey": {"Version":2,"LayoutId":0,"ViewId":1,"Type":"View","Gen":7,"Hash": 0x9e3779b9},
       "Plane": null,
       "ItemIds": [1],
       "ClearColor": [0.10,0.10,0.12,1.0],
-      "DepthTest": false,
+      "DepthConfig": {"enabled": false, "clearDepth": 1.0},
       "Lights": [],
       "Layer": 0,
       "Priority": 0
@@ -192,6 +192,7 @@ Q36/Q47 `nlohmann/json` 3.11.x — not `glaze`):
   ]
 }
 ```
+// Example shows `Version: 2` (current after `T5/T6` single `1→2` migration; file with `Version 1` migrates via `Migrator{1→2}` to 2 with `Layer/Priority` defaults — spec-review #13).
 
 `Version` is the persistence schema version (`CompositeKey::version`, `uint32`,
 bumped when `Re*` field inventory or hash algorithm changes per §10.1 — without

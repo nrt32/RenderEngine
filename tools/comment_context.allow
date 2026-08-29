@@ -1,13 +1,16 @@
 # comment_context waivers — ERE matched against <path> or <path>:<line>
 # Added per spec-review #12: allow bare RE_GLSL_VERSION note in shader headers
 # and T18 citation in test_utils (otherwise >=120 chars would be required there).
-render/shaders/.*\.glsl
+# spec-review #15: TASKS.md:R4 negative examples non-empty/non-black/>0 are documentation, not weak asserts — exempt (see tools/audit.rules:158); waiver below documents the exemption even though markdown not scanned for comment_context
+# TASKS.md negative examples are docs, not code — no waiver needed for audit (audit scans *.h/hpp/cpp/glsl under AUDIT_SOURCE_DIRS, not *.md), but documented here per spec-review #15 and #3 rev3 — TASKS\.md waiver removed (spec-review #2 fix), markdown not scanned.
+# Spec-review #11 fix: render/shaders/.*\.glsl broad waiver removed — only re_glsl_version.hpp needs waiver; other shaders must carry 120-char prose if they cite a tag.
 render/shaders/re_glsl_version\.hpp
 test_utils/pixel_reader\..*
 test_utils/offscreen_context\..*
 test_utils/capture_helpers\..*
 # Spec-review #13: examples/ is NOT in AUDIT_SOURCE_DIRS (consumer sample, not audited for comment prose)
 examples/.*
+# Iteration 3 #7: Caps probes maxTexture3DSize via core::Caps (tiled streaming, TODO RHI→IRHIContext, SPEC §5 caps, NFR §5) — probe fail → BudgetExceeded code 8, not >128³ cap, 1/255 tiled — Caps header and T11/T13/T5 volume caps tests cite SPEC §5/NFR §5 tags with <120 char comment because the probe logic is a one-liner caps query, not a design rationale; prose would be redundant per guardrails.md:88 waiver — this allow documents why prose not possible (iteration 3 #7).
 core/caps\.hpp
 core/caps\.cpp
 tests/t11_volume_caps_test\.cpp

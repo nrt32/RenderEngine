@@ -11,6 +11,7 @@
   `xvfb` (required for T12/T13 sample smoke under WSLg fallback — headless gate).
   Host verified on **Ubuntu 22.04/WSL2, GCC 12.3**; `libgl1-mesa-dev` provides
   `libglx-dev` alias (either package satisfies `glxinfo` verification).
+    Provision (spec-review #12, iteration 1 #9, iteration 6 #8): `sudo apt update && sudo apt install -y gcc g++ cmake ninja-build git clang-format xvfb libgl1-mesa-dev libegl1-mesa-dev libx11-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev mesa-utils curl wget python3 python3-jinja2 pkg-config ccache` (`grep` must be GNU grep with `-P` PCRE for `tools/audit.sh:141` `DEPS_PZO_OK`, not BusyBox — iteration 6 #8) (or `~/.local/bin/ccache` static binary if no sudo; `tools/configure.sh` auto-detects; `python3-jinja2` required for `glad` `Jinja` templating — iteration 1 #9). Mesa pinned `mesa-utils >=22` (spec-review #12: `glxinfo | grep "OpenGL core profile version"` must show 4.6 core on `llvmpipe` with `MESA_GL_VERSION_OVERRIDE=4.6`); llvmpipe 22 vs 23 difference affects `152 MB` OIT budget calc `157286400 B` (`640×480×16×32`), so setup verifies `glxinfo | grep "OpenGL core profile version string: 4.6"` after `tools/env.sh` source and documents `152 MB` tolerance `MESA_GL_VERSION_OVERRIDE=4.6 GALLIUM_DRIVER=llvmpipe` deterministic path — iteration 1 #9.
 - GL dev headers: `libgl1-mesa-dev` (alias `libglx-dev`), `libegl1-mesa-dev`, `libx11-dev`,
   `libxrandr-dev`, `libxcursor-dev`, `libxi-dev`, `libxinerama-dev`
   (GLFW build deps), plus mesa GL drivers for WSLg (`mesa-utils` for
@@ -19,10 +20,11 @@
   test runs: no display needed (offscreen GL context). `xvfb` is a **REQUIRED**
   package — the sample smoke gates (T12/T13) run under WSLg when present,
   otherwise under `xvfb`.
-- Build tools: `curl`/`wget` (asset fetch at setup), `python3 >=3.10` (conversion
-  tooling for NRRD downsample at setup — `tools/convert_nrrd.py`, **stdlib
-  only, no pip deps**; `python3 --version` ≥3.10 required, verified stdlib-only
-  via `python3 -c "import sys; print(sys.version)"`), `unzip`.
+- Build tools: `curl`/`wget` (asset fetch at setup), `grep` (GNU, with `-P` PCRE for `tools/audit.sh:141` `DEPS_PZO_OK` `grep -PRzo` multiline hard floor — BusyBox grep would fail, iteration 5 #6), `python3 >=3.10` (conversion
+   tooling for NRRD downsample at setup — `tools/convert_nrrd.py`, **stdlib
+   only, no pip deps**; `python3 --version` ≥3.10 required, verified stdlib-only
+   via `python3 -c "import sys; print(sys.version)"`), `python3-jinja2` (required for `glad_add_library` `Jinja` templating at `CMakeLists.txt:147-150` — `glad` cmake probes `python3` + `Jinja`, stdlib alone insufficient — iteration 1 #9), `unzip`.
+  - **Verification (iteration 2 #8, iteration 13 #4 fix — `grep -q "3\.1[0-9]\."` would miss `3.20+` or `3.10` without trailing dot; `python3 --version` on 3.13 outputs `Python 3.13.2`):** `python3 -c "import sys; assert sys.version_info>=(3,10)"` (≥3.10, stdlib-only, portable) + `sha256sum -c <<<"cec7d6356631cbeaff1139f6ebcdbbad52b1d349dec2a74ad8b55c62b7668b56  tools/convert_nrrd.py"` (reproducibility gate — canonical SHA in `assets.md:59`, `env.md:27` cites `assets.md:59` per iteration 14 #4 DRY, not duplicating hex) + `glxinfo | grep "OpenGL core profile version string: 4.6"` under `MESA_GL_VERSION_OVERRIDE=4.6 GALLIUM_DRIVER=llvmpipe` (llvmpipe 22 vs 23 `152 MB` budget `157286400 B` deterministic path).
 - `pkg-config` (for `glfw` fallback probe, not used — `FetchContent` `GIT_TAG 3.4` is source), `libglfw3-dev` system alternative not used; **system `libglm-dev` / `nlohmann-json3-dev` not used — `glm`/`json` are `FetchContent` `GIT_TAG` pinned per SPEC §2 (`pkg-config` json/glm fallback not used, see `docs/spec/techstack.md` §2)**
 - `ccache` (recommended, not required) — compiler cache so rebuilds after
   `tools/clean.sh` (or spurious recompiles) hit cached objects. If the system
@@ -49,7 +51,7 @@
 - `AUDIT_SOURCE_DIRS="io data volume scene core broker render app utils test_utils tests"` — required for
   audit ownership rules to see our non-default layout.
 - `MESA_GL_VERSION_OVERRIDE=4.6` + `GALLIUM_DRIVER=llvmpipe` — required leak-gate driver (per `nfr.md:33` + `tools/env.sh`; deterministic LLVMPipe, not d3d12). Do not override.
-- `ASAN_OPTIONS` / `LSAN_OPTIONS` + suppression file `tools/lsan.supp` — llvmpipe/d3d12 false-positive suppressions (documented `nfr.md` T11/T12 + `tools/env.sh`).
+- `ASAN_OPTIONS` / `LSAN_OPTIONS` + suppression file `tools/lsan.supp` absolute (`$ROOT/tools/lsan.supp` via `ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"` in `tools/env.sh:15` — not `$(pwd)/tools/lsan.supp` brittle when sourced from `build/` subdir, fix #10).
 - `ccache` — optional compiler cache; `tools/configure.sh` auto-detects `ccache` on `PATH` and wires as CMake launcher (see `nfr.md` incremental builds).
 
 ### Convenience scripts (tools/)
