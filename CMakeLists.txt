@@ -42,9 +42,9 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 # ---------------------------------------------------------------------------
-# Third-party dependencies — pinned via FetchContent GIT_TAG (SPEC §2/§6).
-# Every GIT_TAG is a release tag or commit SHA (never a branch name).
-# Sole source is FetchContent GIT_TAG — no find_package fallback (spec-review #1):
+# Third-party dependencies — pinned via FetchContent tag (SPEC §2/§6).
+# Every pinned tag is a release tag or commit SHA (never a branch name).
+# Sole source is FetchContent via pinned tag — no find_package fallback (spec-review #1):
 # system libglfw3-dev / libglm-dev / libspdlog-dev must not satisfy the build
 # and bypass the pinned SHAs. See docs/spec/techstack.md §2 for canonical pins.
 # ---------------------------------------------------------------------------

@@ -24,8 +24,11 @@ target_include_directories(re_imgui PUBLIC
 )
 # The GLFW backend needs the GLFW headers and the OpenGL3 backend needs the GL
 # loader; glfw is linked through re_core, but expose it here so re_app and the
-# samples resolve GLFW symbols regardless of link order.
-target_link_libraries(re_imgui PUBLIC
+# samples resolve GLFW symbols regardless of link order. T16 hardening: glfw is
+# PRIVATE to re_imgui (not propagated to consumers) — re_app and samples link
+# glfw via re_core's PRIVATE BUILD_INTERFACE, so no consumer inherits via
+# re_imgui's INTERFACE.
+target_link_libraries(re_imgui PRIVATE
     $<BUILD_INTERFACE:glfw>
 )
 
@@ -52,10 +55,19 @@ target_include_directories(re_app PUBLIC
 # and the slice-display camera factories (broker/slice_display.hpp).
 target_link_libraries(re_app PUBLIC
     re_core
-    $<BUILD_INTERFACE:re_imgui>
     re_scene
     re_broker
+    $<BUILD_INTERFACE:re_imgui>
     $<BUILD_INTERFACE:spdlog::spdlog>
+)
+# T16 hardening: warnings/sanitizers are PRIVATE to re_app — consumers of
+# re_app (samples, tests) already link re_project_warnings via their own
+# PRIVATE linkage, so no consumer inherits -Werror via INTERFACE propagation
+# from re_app (prevents -Werror leak to install consumers). re_app itself
+# needs glfw headers for glfw_camera_interactor.cpp (GLFW/glfw3.h) — link it
+# PRIVATE here since re_imgui no longer propagates glfw via PUBLIC (T16).
+target_link_libraries(re_app PRIVATE
+    $<BUILD_INTERFACE:glfw>
     re_project_warnings
     re_project_sanitizers
 )

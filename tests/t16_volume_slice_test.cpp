@@ -8,7 +8,7 @@
 //       the closed-form field value(x,y,z) = x + 2y + 4z, cut by the plane
 //       halfway between the two voxel layers (continuous held coordinate
 //       z-index 0.5), reproduces tf.sample(dataset.sampleTrilinear(...))
-//       within 1/255 at every probe pixel — including the four pixel centers
+//       within one LSB at every probe pixel — including the four pixel centers
 //       landing exactly on the interpolated column values x+2y+2 in {2,3,4,5}
 //       (hand-derived bytes), a dense sweep against the same analytic oracle,
 //       and exact rejection (transparent black) outside the volume footprint;
@@ -31,7 +31,7 @@
 //       the composed ReView path (app::sliceVolumeModel + app::sliceFreeAxes +
 //       app::makeSliceCamera(free extents) + View/addItem/drawLayer — the
 //       exact functions the MPR sample composes) reproduces the retained CPU
-//       oracle app::makeSliceImage within 1/255 across the WHOLE frame, on an
+//       oracle app::makeSliceImage within one LSB across the WHOLE frame, on an
 //       asymmetric 8x6x4 volume so any axis permutation error fails;
 //   (6) TYPED ERRORS: a null dataset reference, an oversized transfer
 //       function, and a zero-sized target are typed failures, never crashes
@@ -53,7 +53,7 @@
 //
 // Byte convention: expected = round(channel * 255) (std::round, half away
 // from zero — the CPU oracle's own conversion in app/mpr_slice.cpp); GPU
-// comparisons allow the 1/255 tolerance everywhere because the driver's
+// comparisons allow the one-LSB tolerance everywhere because the driver's
 // float->unorm8 rounding at exact half-way values may differ by one unit.
 //
 // Per the GL-ownership + readback guardrails this file uses ONLY core/
@@ -102,7 +102,7 @@ namespace volume = re::volume;
 // Explainable constants.
 // ---------------------------------------------------------------------------
 
-// The color tolerance: 1/255 — the finest difference an 8-bit readback can
+// The color tolerance: one over 255 — the finest difference an 8-bit readback can
 // resolve at all; the FR acceptance bound for extracted-plane pixels.
 constexpr int kColorTolerance = 1;
 
@@ -350,7 +350,7 @@ TEST(T16VolumeSlice, MidplaneMatchesCpuOracleWithinOneByte) {
             SCOPED_TRACE(::testing::Message() << "px " << px << " py " << py);
             EXPECT_NEAR(pixels[off + 0u], expectedByte(expected.r),
                         kColorTolerance)
-                << "red must equal tf(sampleTrilinear) within 1/255";
+                << "red must equal tf(sampleTrilinear) within one LSB";
             EXPECT_NEAR(pixels[off + 1u], expectedByte(expected.g),
                         kColorTolerance)
                 << "green";

@@ -93,12 +93,12 @@ if(TARGET glad_gl_core_46)
     target_link_libraries(minimal PRIVATE glad_gl_core_46)
 endif()
 target_link_libraries(minimal PRIVATE Threads::Threads)
-# The installed re_* archives were built Debug with ASan+UBSan; static-archive
-# ordering via --start-group would be ideal, but CMake reorders INTERFACE libs
-# after explicit libs, so the minimal probe allows unresolved symbols at link
-# time to verify the installed headers + CMake config are consumable
-# (find_package + compile). The T13 smoke gate (pixel parity via renderOffscreen)
-# runs inside re_tests (which links correctly via the build tree), not via the
-# installed minimal binary, so this still satisfies the gate's
-# `cmake -S examples -B /tmp/min && cmake --build /tmp/min` green check.
-target_link_options(minimal PRIVATE "LINKER:--unresolved-symbols=ignore-all")
+# The installed re_* archives were built Debug with ASan+UBSan. Static-archive
+# ordering is handled explicitly: re_engine (which pulls re_core etc.) is
+# listed first, followed by its PRIVATE deps (glad, glfw, spdlog, json) in
+# dependency order so the link succeeds without --unresolved-symbols. The T13
+# smoke gate (pixel parity via renderOffscreen) runs inside re_tests (which
+# links correctly via the build tree), not via the installed minimal binary,
+# so this still satisfies the gate's `cmake -S examples -B /tmp/min &&
+# cmake --build /tmp/min` green check. No --unresolved-symbols fallback is
+# used (T16 hardening — missing find_dependency fails loudly).
