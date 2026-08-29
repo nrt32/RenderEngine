@@ -18,6 +18,7 @@
 // center. At integer coordinates the interpolant reproduces the voxel value
 // exactly (the weights collapse to a single 1.0).
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -35,14 +36,16 @@ class VolumeDataset {
    public:
     /// Build a dataset with the given per-axis voxel counts and values.
     ///
-    /// Preconditions (the io/ loader validates before calling):
-    ///   - every size is >= 1;
-    ///   - `voxels.size() == sizeX * sizeY * sizeZ` (x-fastest order:
-    ///     index = x + sizeX*y + sizeX*sizeY*z);
-    ///   - the product of the sizes fits in the memory budget (SPEC §5:
-    ///     <= 128^3 for v1 sample data).
-    VolumeDataset(std::uint32_t sizeX, std::uint32_t sizeY, std::uint32_t sizeZ,
-                  std::vector<float> voxels);
+     /// Preconditions (the io/ loader validates before calling):
+     ///   - every size is >= 1;
+     ///   - `voxels.size() == sizeX * sizeY * sizeZ` (x-fastest order:
+     ///     index = x + sizeX*y + sizeX*sizeY*z) — asserted in ctor (T11a);
+     ///   - the product of the sizes fits in the memory budget (SPEC §5:
+     ///     <= 128^3 for v1 sample data).
+     /// @note T11a: ctor asserts voxels.size()==sx*sy*sz (debug) to catch
+     ///       size==0 wrap; sampleTrilinear guards NaN and size==0.
+     VolumeDataset(std::uint32_t sizeX, std::uint32_t sizeY, std::uint32_t sizeZ,
+                   std::vector<float> voxels);
 
     /// Voxel count along X.
     std::uint32_t sizeX() const noexcept {

@@ -16,6 +16,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include "core/caps.hpp"
+
 namespace re::io {
 namespace {
 
@@ -30,6 +32,14 @@ namespace {
 // multi-GB hostile file fails fast with a typed error and warn log.
 constexpr std::uint64_t kHeaderSlackBytes = 64ULL * 1024ULL;
 constexpr std::uint64_t kMaxFileBytes = 512ULL * 512ULL * 512ULL * 8ULL + kHeaderSlackBytes;
+
+inline data::Result<data::VolumeDataset> makeBudgetError(const std::string& path,
+                                                          const std::string& detail) {
+    return data::makeError<data::VolumeDataset>(
+        data::ErrorDomain::VolumeIo,
+        static_cast<int>(VolumeLoadError::BudgetExceeded),
+        "NRRD loader: '" + path + "': " + detail);
+}
 
 // Element layout for one supported scalar type (from the NRRD "type:" field).
 struct ScalarInfo {
@@ -164,14 +174,7 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
                     "— rejecting before slurp to avoid OOM",
                     path, static_cast<std::uint64_t>(fileSize), kMaxFileBytes,
                     kHeaderSlackBytes);
-                return data::makeError<data::VolumeDataset>(
-                    data::ErrorDomain::VolumeIo,
-                    static_cast<int>(VolumeLoadError::BudgetExceeded),
-                    "NRRD loader: '" + path + "': file size " +
-                        std::to_string(static_cast<std::uint64_t>(fileSize)) +
-                        " bytes exceeds the absolute cap " +
-                        std::to_string(kMaxFileBytes) +
-                        " bytes (512^3 * 8 + header slack)");
+                return makeBudgetError(path, "file size " + std::to_string(static_cast<std::uint64_t>(fileSize)) + " bytes exceeds the absolute cap " + std::to_string(kMaxFileBytes) + " bytes (512^3 * 8 + header slack)");
             }
         }
     }
@@ -359,8 +362,39 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     // within reference). The loader no longer returns the budget error for
     // >128³ alone — that error only when the GL caps probe fails (in
     // render/) or the host file size exceeds the large absolute cap above.
-    const std::uint64_t voxelCount =
-        sizesValue[0] * sizesValue[1] * sizesValue[2];
+    // Checked product with overflow guard and UINT32_MAX range-check before
+    // static_cast<uint32_t>; size==0 or >UINT32_MAX triggers cap error
+    // only when core::Caps probe also fails (NFR §5 tiled streaming).
+    for (int i = 0; i < 3; ++i) {
+        if (sizesValue[i] == 0 || sizesValue[i] > static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) {
+            const auto& caps = core::caps();
+            if (caps.maxTexture3DSize == 0) {
+                return makeBudgetError(path, "sizes value " + std::to_string(sizesValue[i]) + " out of uint32 range or zero (Caps probe fail)");
+            }
+            return makeBudgetError(path, "sizes value " + std::to_string(sizesValue[i]) + " out of uint32 range or zero");
+        }
+    }
+    std::uint64_t voxelCount = 0;
+    {
+        std::uint64_t tmp = 0;
+        if (__builtin_mul_overflow(sizesValue[0], sizesValue[1], &tmp) ||
+            __builtin_mul_overflow(tmp, sizesValue[2], &voxelCount)) {
+            return makeBudgetError(path, "voxel count overflow");
+        }
+    }
+    {
+        std::uint64_t expectedBytes = 0;
+        // width is set later but we can guard voxelCount * 8 (max width) against overflow
+        if (__builtin_mul_overflow(voxelCount, static_cast<std::uint64_t>(8), &expectedBytes)) {
+            return makeBudgetError(path, "voxel bytes overflow");
+        }
+        if (expectedBytes > kMaxFileBytes) {
+            const auto& caps = core::caps();
+            if (caps.maxTexture3DSize == 0) {
+                return makeBudgetError(path, "voxel block " + std::to_string(expectedBytes) + " exceeds kMaxFileBytes and Caps probe failed");
+            }
+        }
+    }
 
     // --- type ----------------------------------------------------------------
     const ScalarInfo* info = scalarInfo(*type);
@@ -402,8 +436,11 @@ data::Result<data::VolumeDataset> loadNrrdVolume(const std::string& path) {
     }
 
     // --- raw voxel block -----------------------------------------------------
-    const std::size_t expected = static_cast<std::size_t>(voxelCount) *
-                                 static_cast<std::size_t>(info->width);
+    std::uint64_t expected64 = 0;
+    if (__builtin_mul_overflow(voxelCount, static_cast<std::uint64_t>(info->width), &expected64)) {
+        return makeBudgetError(path, "expected bytes overflow");
+    }
+    const std::size_t expected = static_cast<std::size_t>(expected64);
     const std::size_t rawSize = bytes.size() - pos;
     if (rawSize < expected) {
         return data::makeError<data::VolumeDataset>(

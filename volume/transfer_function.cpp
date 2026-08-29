@@ -15,6 +15,22 @@ TransferFunction::TransferFunction()
 TransferFunction::TransferFunction(std::vector<ControlPoint> points)
     : points_(std::move(points)) {}
 
+data::Result<TransferFunction> TransferFunction::tryCreate(std::vector<ControlPoint> points) {
+    if (points.empty()) {
+        return data::makeError<TransferFunction>(data::ErrorDomain::VolumeIo, 1,
+                                                 "TransferFunction: points must be non-empty");
+    }
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        if (!(points[i].value > points[i - 1].value)) {
+            return data::makeError<TransferFunction>(
+                data::ErrorDomain::VolumeIo, 2,
+                "TransferFunction: control points must be strictly increasing (duplicate or unsorted at index " +
+                    std::to_string(i) + ")");
+        }
+    }
+    return data::makeValue<TransferFunction>(TransferFunction(std::move(points)));
+}
+
 RgbaColor TransferFunction::sample(float value) const noexcept {
     // Defensive: an empty control-point list would be UB on front()/back().
     // Return transparent black (the degenerate ramp's low endpoint) so a

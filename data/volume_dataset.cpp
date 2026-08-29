@@ -17,7 +17,9 @@ VolumeDataset::VolumeDataset(std::uint32_t sizeX, std::uint32_t sizeY,
       voxelCount_(static_cast<std::uint64_t>(sizeX) *
                   static_cast<std::uint64_t>(sizeY) *
                   static_cast<std::uint64_t>(sizeZ)),
-      voxels_(std::move(voxels)) {}
+      voxels_(std::move(voxels)) {
+    assert((voxels_.size() == voxelCount_) && "VolumeDataset: voxels.size() must equal sx*sy*sz");
+}
 
 float VolumeDataset::voxelAt(std::uint32_t x, std::uint32_t y,
                              std::uint32_t z) const noexcept {
@@ -30,6 +32,13 @@ float VolumeDataset::voxelAt(std::uint32_t x, std::uint32_t y,
 }
 
 float VolumeDataset::sampleTrilinear(float x, float y, float z) const noexcept {
+    // T11a: guard NaN and size==0 wrap — return 0 without UB (no clamp on empty).
+    if (voxels_.empty() || sizeX_ == 0 || sizeY_ == 0 || sizeZ_ == 0) {
+        return 0.0f;
+    }
+    if (std::isnan(x)) x = 0.0f;
+    if (std::isnan(y)) y = 0.0f;
+    if (std::isnan(z)) z = 0.0f;
     // Clamp continuous index coordinates into [0, dim-1] per axis (a lattice
     // coordinate beyond the last center clamps to the last center, fx = 0).
     const float cx = std::clamp(x, 0.0f, static_cast<float>(sizeX_ - 1u));

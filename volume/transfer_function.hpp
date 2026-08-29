@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <vector>
 
+#include "data/result.hpp"
 #include "volume/color.hpp"
 
 namespace re::volume {
@@ -41,8 +42,13 @@ class TransferFunction {
     /// Precondition (caller-validated, matching the data/ container style):
     /// `points` is non-empty and sorted by strictly increasing `value` — a
     /// duplicate value would make the ramp between the two breakpoints
-    /// ambiguous (the interpolation denominator would be zero).
+    /// ambiguous (the interpolation denominator would be zero). T11a asserts
+    /// this and provides tryCreate() returning typed error.
     explicit TransferFunction(std::vector<ControlPoint> points);
+
+    /// Validated factory: returns typed error if points empty or not strictly
+    /// increasing (duplicate → divide-by-0 inf/NaN guard, T11a).
+    static data::Result<TransferFunction> tryCreate(std::vector<ControlPoint> points);
 
     /// The control points, in ascending value order.
     const std::vector<ControlPoint>& controlPoints() const noexcept {
