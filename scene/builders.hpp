@@ -30,7 +30,7 @@ namespace re::scene {
 ///
 /// The builder holds a View value (copyable, not yet inserted) and a PerspectiveFraming for live-dims updates.
 /// Construction is `SceneViewBuilder{ ViewId, Rect }`; chaining is `.withCamera(cam).withItems(ids).withClear(color).build() → View`.
-/// `applyLiveDims(w,h)` is the ONE call that replaces the former two-liner `view.setRect({0,0,w,h}); view.mutateCamera(setPerspective...)` in every sample — rect goes to {0,0,w,h} and camera perspective is re-derived from the stored framing at aspect w/h (degenerate dims clamp via aspect helper, same as app::aspectFromDims). Change-guarded setters make repeated same-size calls free (no generation churn), so onResize + renderFrame can both call it without extra sync work. Targets the T6 single-map store API — the builder produces Values only, never touches SceneStore internals.
+/// `applyLiveDims(w,h)` is the ONE call that replaces the former two-liner `view.setRect({0,0,w,h}); view.setCamera(setPerspective...)` in every sample — rect goes to {0,0,w,h} and camera perspective is re-derived from the stored framing at aspect w/h (degenerate dims clamp via aspect helper, same as app::aspectFromDims). Change-guarded setters make repeated same-size calls free (no generation churn), so onResize + renderFrame can both call it without extra sync work. Targets the T6 single-map store API — the builder produces Values only, never touches SceneStore internals.
 class SceneViewBuilder {
    public:
     /// Construct with the View's stable id and initial rect (OPENING size; live dims override via applyLiveDims).
@@ -84,9 +84,9 @@ class SceneViewBuilder {
         const float w = static_cast<float>(width > 0 ? width : 1);
         const float h = static_cast<float>(height > 0 ? height : 1);
         const float aspect = w / h;
-        view_.mutateCamera([&](Camera& cam) {
-            cam.setPerspectiveFromFraming(framing_, aspect);
-        });
+        Camera cam = view_.camera;
+        cam.setPerspectiveFromFraming(framing_, aspect);
+        view_.setCamera(std::move(cam));
     }
 
     /// Alias for samples that want a differently named entry without duplicating the framing logic — calls applyLiveDims internally so app/*.cpp can avoid repeating the helper name at many call sites when the gate counts the helper definition strictly.

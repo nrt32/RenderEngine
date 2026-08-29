@@ -6,8 +6,8 @@
 // (a sample's renderFrame) invokes update(view) before the live-dims sync; the adapter polls the current context's
 // cursor position and mouse buttons via the windowing API, derives the pixel delta since the previous frame, respects
 // the overlay's WantCaptureMouse guard (when the overlay wants the mouse, the camera is not touched), forwards the
-// delta into the pure-math controller's onMouseDrag / onScroll translators, and finally mutates the view's camera
-// through View::mutateCamera so the per-field viewGen bump propagates to the broker's generation cache per SPEC
+// delta into the pure-math controller's onMouseDrag / onScroll translators, and finally updates the view's camera
+// through View::setCamera so the per-field viewGen bump propagates to the broker's generation cache per SPEC
 // §10.4, letting the synchronizer re-translate only the dirty camera fields. Orthographic views are skipped because
 // plane + MPR 2D orthographic displays are fixed to the dataset extents and should not orbit on drag. V5 T9.
 
@@ -35,8 +35,8 @@ class GlfwCameraInteractor {
     const scene::CameraController& controller() const noexcept { return controller_; }
 
     /// Poll the current windowing context's cursor and buttons, respect the overlay capture guard, and mutate
-    /// the supplied view's camera if a mapped drag is active. The view's camera is mutated via
-    /// View::mutateCamera so viewGen and generation bump correctly and the broker re-translates only dirty
+    /// the supplied view's camera if a mapped drag is active. The view's camera is updated via
+    /// View::setCamera so viewGen and generation bump correctly and the broker re-translates only dirty
     /// fields. Orthographic cameras are left untouched (the plane and MPR 2D displays keep their fixed slice
     /// framing). No-ops when no current context exists or no button is held.
     void update(scene::View& view) noexcept;
@@ -49,7 +49,7 @@ class GlfwCameraInteractor {
 
     /// Test helper that bypasses windowing polling and drives the controller with explicit synthetic input while
     /// still honouring the WantCaptureMouse guard and the orthographic skip. When wantCaptureMouse is true the
-    /// view is left untouched (delta 0 within 1e-6); when false the delta is forwarded into View::mutateCamera
+    /// view is left untouched (delta 0 within 1e-6); when false the delta is forwarded into View::setCamera
     /// exactly as the real poll path would. Orthographic cameras are left untouched in both paths (plane + MPR 2D
     /// skip). This lets the unit test assert the guard without creating a real window or cursor, while still
     /// exercising the same mutation path.

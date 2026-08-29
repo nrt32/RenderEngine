@@ -140,10 +140,10 @@ class OitSample final : public app::ISample {
                "fragments are captured into a per-pixel linked list, sorted "
                "by depth, and composited back-to-front over the opaque image "
                "— correct regardless of draw order.\n"
-               "Controls: left-drag orbits, right-drag pans, middle/wheel "
-               "zooms via scene::CameraController with WantCaptureMouse guard; "
-               "View::mutateCamera bumps viewGen so broker re-translates only "
-               "dirty camera fields.\n"
+                "Controls: left-drag orbits, right-drag pans, middle/wheel "
+                "zooms via scene::CameraController with WantCaptureMouse guard; "
+                "View::setCamera bumps viewGen so broker re-translates only "
+                "dirty camera fields.\n"
                "Resize check: drag a window edge — the composition reframes "
                "to the live pixel size (ortho extents follow width/height), "
                "no stretching.\n"
@@ -163,9 +163,11 @@ class OitSample final : public app::ISample {
         // the default eye (0,0,5). This keeps the WantCaptureMouse guard and generation bump semantics while
         // allowing the OIT composition to be orbited interactively.
         if (view_.camera.isPerspective()) {
-            view_.mutateCamera([&](scene::Camera& c) { c = oit::cameraFor(aspect); });
+            view_.setCamera(oit::cameraFor(aspect));
         } else {
-            view_.mutateCamera([&](scene::Camera& c) { c.setOrtho(-aspect, aspect, -1.0f, 1.0f, oit::kNearPlane, oit::kFarPlane); });
+            scene::Camera cam = view_.camera;
+            cam.setOrtho(-aspect, aspect, -1.0f, 1.0f, oit::kNearPlane, oit::kFarPlane);
+            view_.setCamera(std::move(cam));
         }
     }
 

@@ -107,7 +107,11 @@ TEST(T7LoaderFacade, LoadMeshCenterPixelWithin1_255_OfManualPath) {
     manualView.setClearColor(glm::vec4(0.10f,0.10f,0.12f,1.0f));
     manualView.setItemIds({manualId});
     manualView.setRect(scene::Rect{0,0,W,H});
-    manualView.mutateCamera([&](scene::Camera& c){ c.setPerspectiveFromFraming(framing, static_cast<float>(W)/H); });
+    {
+        scene::Camera c = manualView.camera;
+        c.setPerspectiveFromFraming(framing, static_cast<float>(W)/H);
+        manualView.setCamera(std::move(c));
+    }
 
     // Facade view via builder — proves builder parity too (but separate test checks it more directly)
     scene::SceneViewBuilder bld(1, scene::Rect{0,0,W,H}, framing);

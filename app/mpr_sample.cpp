@@ -263,7 +263,7 @@ class MPRView final : public app::ISample {
         applySliceState();
         // Camera interaction for the 3D view only — the three 2D slice views are orthographic and keep their
         // fixed dataset-extent framing per the task's plane + MPR 2D orthographic skip. The interactor polls the
-        // windowing cursor and the WantCaptureMouse guard and mutates only views_[3] via View::mutateCamera so
+        // windowing cursor and the WantCaptureMouse guard and mutates only views_[3] via View::setCamera so
         // viewGen bumps and the broker re-translates only dirty camera fields. The 2D views are not touched.
         interactor_.update(views_[3]);
 
@@ -326,7 +326,7 @@ class MPRView final : public app::ISample {
                "one voxel layer and all views track it.\n"
                "Controls: left-drag orbits the 3D view (yaw/pitch), right-drag "
                "pans, middle/wheel zooms via scene::CameraController with "
-               "WantCaptureMouse guard; View::mutateCamera bumps viewGen so "
+                "WantCaptureMouse guard; View::setCamera bumps viewGen so "
                "broker re-translates only dirty camera fields. The three 2D "
                "orthographic slice views keep fixed framing and are not orbited.\n"
                "Resize check: drag a window edge — the grid re-splits into "
@@ -429,10 +429,10 @@ class MPRView final : public app::ISample {
         // resize reframes the 3D view instead of stretching it.
         const float aspect3d = app::aspectFromDims(grid_[3].width,
                                                    grid_[3].height);
-        views_[3].mutateCamera([&](scene::Camera& c) {
-            c = broker::make3dCamera(app::sliceCrosshair(sliceState_),
-                                     box_->bounds(), aspect3d);
-        });
+        {
+            scene::Camera cam = broker::make3dCamera(app::sliceCrosshair(sliceState_), box_->bounds(), aspect3d);
+            views_[3].setCamera(std::move(cam));
+        }
     }
 
     /// The dataset axis a slice view holds constant: Transverse → Z,

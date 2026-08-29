@@ -118,7 +118,7 @@ class VolumeSample final : public app::ISample {
                "driven by the IViewBridge façade.\n"
                "Controls: left-drag orbits, right-drag pans, middle/wheel "
                "zooms via scene::CameraController with WantCaptureMouse guard; "
-               "View::mutateCamera bumps viewGen so broker re-translates only "
+               "View::setCamera bumps viewGen so broker re-translates only "
                "dirty camera fields.\n"
                "Resize check: drag a window edge — the view reframes to the "
                "live pixel size (camera aspect follows width/height), no "

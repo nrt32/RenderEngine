@@ -121,7 +121,11 @@ TEST(T21PersistenceHonesty, CameraOnlyMutationYieldsExactlyCameraField) {
     scene::View* /*borrow*/ vm = vstore.getViewMut(vid);
     ASSERT_NE(vm, nullptr);
     uint64_t viewGenBefore = vm->camera.viewGen();
-    vm->mutateCamera([](scene::Camera& c) { c.pan(1.0f, 0.0f); });
+    {
+        scene::Camera cam = vm->camera;
+        cam.pan(1.0f, 0.0f);
+        vm->setCamera(std::move(cam));
+    }
     EXPECT_EQ(vm->camera.viewGen(), viewGenBefore + 1)
         << "pan bumps viewGen by exactly 1 (Camera::pan increments viewGen_)";
     vstore.markDirty(vid, scene::FieldId::CameraView);
@@ -347,7 +351,11 @@ TEST(T21PersistenceHonesty, SynchronizerTwoCamerasAlternatePansCacheHits) {
 
     // Alternate real pans across frames: the mutated camera re-translates,
     // the untouched one keeps hitting — the cross-camera-thrash killer.
-    views[0].mutateCamera([](scene::Camera& c) { c.pan(1.0f, 0.0f); });
+    {
+        scene::Camera cam = views[0].camera;
+        cam.pan(1.0f, 0.0f);
+        views[0].setCamera(std::move(cam));
+    }
     ASSERT_TRUE(sync.sync(views, sceneStore, 9).ok());
     EXPECT_EQ(cams->cacheMisses(), 3u) << "view-1 pan re-translates once";
 

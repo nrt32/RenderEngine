@@ -142,7 +142,11 @@ TEST(T1Hierarchy, TeapotRendersThroughBridgeCenterPixelAnalytic) {
     view.rect = scene::Rect{0, 0, 64, 64};
     view.itemIds = {oid};
     view.camera = scene::Camera();
-    view.mutateCamera([](scene::Camera& c){ c.setOrtho(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f); });
+    {
+        scene::Camera cam = view.camera;
+        cam.setOrtho(-1.0f, 1.0f, -1.0f, 1.0f, 0.1f, 10.0f);
+        view.setCamera(std::move(cam));
+    }
 
     auto compositor = std::make_shared<broker::ViewCompositor>(broker, stack);
     auto synchronizer = std::make_shared<broker::ViewSynchronizer>(broker, compositor, stack);

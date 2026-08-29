@@ -8,7 +8,7 @@
 // so every unit test can derive the expected view matrix by calling the same Camera primitives (rotate/pan/zoom) with
 // the closed-form delta and comparing matrices within 1e-6. The adapter in app (camera interactor) owns the
 // per-frame polling of cursor buttons and positions plus the WantCaptureMouse guard and then forwards the delta
-// into View::mutateCamera so the generation bump (viewGen) lets the broker re-translate only the dirty camera
+// into View::setCamera so the generation bump (viewGen) lets the broker re-translate only the dirty camera
 // fields per SPEC §10.4 per-field split. This file must never include windowing or overlay headers, keeping the
 // scene disposition render-free and testable headlessly via the offscreen fixture. V5 T9.
 
@@ -42,7 +42,7 @@ struct CameraBindings {
 
 /// Result of one input event interpreted by the controller. Only the fields whose has* flag is set are meaningful;
 /// the others stay at their identity defaults (0 for angles/pan, 1 for zoom factor). The adapter inspects these
-/// flags and calls View::mutateCamera with the matching Camera primitive (rotate/pan/zoom) exactly once per flagged
+/// flags and calls View::setCamera with the matching Camera primitive (rotate/pan/zoom) exactly once per flagged
 /// degree of freedom, so a pure yaw drag does not dirt pan or zoom generations.
 struct CameraDelta {
     float yawDeg{0.0f};
@@ -70,7 +70,7 @@ class CameraController {
 
     /// Translate a mouse drag delta in pixels into a camera delta. The button and modifiers are compared against
     /// the stored bindings; a mismatch returns an empty delta (all has* false) so the caller can skip the
-    /// View::mutateCamera bump. For the rotate button, yaw = dx * rotateSpeed and pitch = -dy * rotateSpeed
+    /// View::setCamera bump. For the rotate button, yaw = dx * rotateSpeed and pitch = -dy * rotateSpeed
     /// (drag right yaws right, drag up pitches up); pan maps similarly via panSpeed; zoom via middle-button
     /// vertical drag maps to an exponential factor exp(-dy * zoomSpeed * 0.02) so a 10-pixel drag yields a
     /// deterministic factor within 1e-6.
@@ -88,7 +88,7 @@ class CameraController {
 
     /// Apply a CameraDelta to a Camera in place, calling rotate/pan/zoom exactly for the flagged degrees of
     /// freedom. Each call bumps viewGen exactly once per flagged branch (rotate/pan/zoom are separate bumps),
-    /// preserving the per-field generation split so View::mutateCamera can propagate the bump to view generation
+    /// preserving the per-field generation split so View::setCamera can propagate the bump to view generation
     /// and the broker re-translates only the dirty camera fields.
     void apply(Camera& cam, const CameraDelta& delta) const noexcept;
 

@@ -6,7 +6,7 @@
 //      direct Camera::rotate(5,0) within 1e-6, and the per-field viewGen bumps exactly once.
 //  (2) WantCaptureMouse guard: same drag with WantCaptureMouse=true leaves viewMatrix unchanged (delta 0 ±1e-6) vs
 //      false yields analytic orbit; the adapter's updateForTest respects the guard and the broker path via
-//      View::mutateCamera bumps generation only when guard is clear.
+//      View::setCamera bumps generation only when guard is clear.
 //  (3) scene/camera_controller.hpp contains no windowing include (grep -c "glfw" ==0) and the controller header is
 //      render-free (disposition).
 //  (4) Bounded run with no input still green via offscreen fixture (renderOffscreen without interaction returns ok
@@ -133,11 +133,11 @@ TEST(T9CameraController, WantCaptureMouseGuardLeavesViewMatrixUnchanged) {
         << "WantCaptureMouse=false must yield analytic orbit 10px->5deg within 1e-6";
     EXPECT_EQ(view.camera.viewGen(), genBefore + 1) << "guard clear must bump viewGen by 1";
 
-    // Also verify View::mutateCamera generation bump propagates via view.generation
+    // Also verify View::setCamera generation bump propagates via view.generation
     const uint64_t viewGenBefore = view.generation;
     // Second drag with guard false should bump again
     interactor.updateForTest(view, false, 10.0f, 0.0f, scene::MouseButton::Left, 0);
-    EXPECT_EQ(view.generation, viewGenBefore + 1) << "View::mutateCamera must bump view generation";
+    EXPECT_EQ(view.generation, viewGenBefore + 1) << "View::setCamera must bump view generation";
 }
 
 // Direct controller pan/zoom analytic within 1e-6

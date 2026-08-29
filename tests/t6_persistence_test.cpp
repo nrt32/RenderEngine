@@ -97,7 +97,11 @@ TEST(T6Persistence, CameraRotateKeepsReViewIdentity) {
     // Analytic rotate 1° yaw
     uint64_t viewGenBefore = view.camera.viewGen();
     uint64_t projGenBefore = view.camera.projGen();
-    view.mutateCamera([](scene::Camera& c) { c.rotate(1.0f, 0.0f); });
+    {
+        scene::Camera cam = view.camera;
+        cam.rotate(1.0f, 0.0f);
+        view.setCamera(std::move(cam));
+    }
     EXPECT_NE(view.camera.viewGen(), viewGenBefore) << "viewGen must bump on rotate 1° (explainable)";
     EXPECT_EQ(view.camera.projGen(), projGenBefore) << "projGen must NOT bump on pure rotate (per-field split)";
 
@@ -176,9 +180,11 @@ TEST(T6Persistence, Toggle2D3DKeepsIdentityNoChurn) {
     view.setPlane(std::nullopt);
     view.setItemIds({id2});
     // Switch camera to perspective for 3D
-    view.mutateCamera([](scene::Camera& c) {
-        c.setPerspective(45.0f, 640.0f / 480.0f, 0.1f, 100.0f);
-    });
+    {
+        scene::Camera cam = view.camera;
+        cam.setPerspective(45.0f, 640.0f / 480.0f, 0.1f, 100.0f);
+        view.setCamera(std::move(cam));
+    }
     EXPECT_FALSE(view.plane.has_value());
     views[0] = view;
     ASSERT_TRUE(sync.sync(views, sceneStore, 7).ok());

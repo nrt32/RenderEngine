@@ -1,19 +1,78 @@
 #include "scene/view.hpp"
 
-// scene/view.cpp — View non-inline methods for dumb layers T5.
+// scene/view.cpp — View setters with per-field generation bumps (SPEC §10.4, T8a).
 //
-// At T5 the per-view bitmask and per-object override map that together
-// replaced insertion-order painting with deterministic (layer,
-// techniquePriority) grouping are deleted. The old mask hid whole layers
-// without removing objects and the old override reassigned a single object's
-// effective layer for this view only. Both bumped layerGen so the
-// synchronizer re-grouped. With dumb LAYER_0..7 the stacking is determined
-// solely by the object's Layer tag and its scoped priority (lower numeric
-// draws first, no bitset, no override, no 1u<<layer UB). This translation
-// unit therefore has no per-view mask or override setters; setDepthConfig
-// lives in
-// broker/view_synchronizer.cpp to keep grep -Rl DepthConfig scene/ at exactly
-// two files (depth_config.hpp + view.hpp) per the T4 gate.
+// Each setter bumps its dedicated per-field generation plus the coarse generation only
+// when the value actually changes (change-guarded, so repeated same-size calls are free).
+// Camera changes are via setCamera(Camera) replacing the former lambda (T8a):
+// the caller builds a new Camera value and passes it in, the View compares viewGen/projGen
+// and eye/center/up to detect a real change, then bumps cameraGen. This keeps View SRP
+// (View owns rect/plane/camera/items/clearColor/lights) and the store's bump(FieldId)
+// remains the single mutation entry for persistent stores (ViewStore::bump) while View's
+// own setters handle the value-object case without a store indirection.
 
 namespace re::scene {
+
+void View::setRect(Rect r) noexcept {
+    if (rect != r) {
+        rect = r;
+        ++rectGen;
+        ++generation;
+    }
+}
+
+void View::setPlane(std::optional<PlaneDesc> p) noexcept {
+    if (plane != p) {
+        plane = std::move(p);
+        ++planeGen;
+        ++generation;
+    }
+}
+
+void View::setItemIds(std::vector<uint64_t> ids) noexcept {
+    if (itemIds != ids) {
+        itemIds = std::move(ids);
+        ++itemsGen;
+        ++generation;
+    }
+}
+
+void View::setCamera(const Camera& cam) noexcept {
+    const bool viewChanged = camera.viewGen() != cam.viewGen() || camera.eye() != cam.eye() ||
+                             camera.center() != cam.center() || camera.up() != cam.up();
+    const bool projChanged = camera.projGen() != cam.projGen() || camera.projMatrix() != cam.projMatrix();
+    if (viewChanged || projChanged) {
+        camera = cam;
+        ++cameraGen;
+        ++generation;
+    }
+}
+
+void View::setCamera(Camera&& cam) noexcept {
+    const bool viewChanged = camera.viewGen() != cam.viewGen() || camera.eye() != cam.eye() ||
+                             camera.center() != cam.center() || camera.up() != cam.up();
+    const bool projChanged = camera.projGen() != cam.projGen() || camera.projMatrix() != cam.projMatrix();
+    if (viewChanged || projChanged) {
+        camera = std::move(cam);
+        ++cameraGen;
+        ++generation;
+    }
+}
+
+void View::setClearColor(glm::vec4 c) noexcept {
+    if (clearColor != c) {
+        clearColor = c;
+        ++clearColorGen;
+        ++generation;
+    }
+}
+
+void View::setLights(std::vector<Light> ls) noexcept {
+    if (lights != ls) {
+        lights = std::move(ls);
+        ++lightsGen;
+        ++generation;
+    }
+}
+
 } // namespace re::scene

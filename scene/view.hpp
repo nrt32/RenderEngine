@@ -1,47 +1,47 @@
 #pragma once
 
-// scene/view.hpp — View description for scene value library (SPEC §3.1, V3.1).
+// scene/view.hpp — View description for scene value library (SPEC §3.1, V3.1, T8a).
 //
-// View{rect, plane, itemIds, camera, gen} — pure value type, GL-free, RE-free.
+// View is View{rect, clearColor, Camera, plane, lights, itemIds} per modules.md:20 — six core
+// fields each with a per-field generation for the broker's per-field cache (SPEC §10.4) so a
+// Camera orbit dirties only the camera cache and a material tweak does not force a plane re-translate.
+// Depth presentation is opt-in via DepthConfig value object (T4) — View owns DepthConfig directly
+// with depthConfigGen; ViewState{clearColor,DepthConfig} composition was considered for SRP but
+// deferred as View retains exactly six core fields/gens and the extra presentation state travels
+// with View without an extra indirection (engine facade defaults DepthConfig{true} for viz while
+// low-level View defaults DepthConfig{false} for deterministic llvmpipe gates).
 
 #include <cstdint>
 #include <optional>
 #include <vector>
 
-#include <glm/glm.hpp>
+#include <glm/vec4.hpp>
 
 #include "scene/camera.hpp"
 #include "scene/depth_config.hpp"
-#include "scene/layer.hpp"
 #include "scene/light.hpp"
 #include "scene/plane_desc.hpp"
 
 namespace re::scene {
 
-/// Integer rect in physical pixels (framebuffer size, origin bottom-left matching core::setViewport).
 struct Rect {
     int x{0};
     int y{0};
     int w{0};
     int h{0};
-
-    bool operator==(const Rect& o) const noexcept {
-        return x == o.x && y == o.y && w == o.w && h == o.h;
-    }
+    bool operator==(const Rect& o) const noexcept { return x == o.x && y == o.y && w == o.w && h == o.h; }
     bool operator!=(const Rect& o) const noexcept { return !(*this == o); }
 };
 
-/// Scene view: a screen section with rect + optional plane (2D vs 3D) + item list + camera.
-///
-/// 2D when plane has_value(), 3D when nullopt — plane lives on View, not on item (SPEC §11.4).
-/// Per-field generations (rectGen/planeGen/cameraGen/itemsGen) per SPEC §10.4.
 struct View {
     uint64_t id{0};
     Rect rect{0, 0, 640, 480};
     std::optional<PlaneDesc> plane{std::nullopt};
     std::vector<uint64_t> itemIds{};
     Camera camera{};
-    /// Per-field generations — bumped by setters below. generation() is max.
+    glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 0.0f};
+    DepthConfig depthConfig{DepthConfig{false, 1.0f}};
+    std::vector<Light> lights{};
     uint64_t rectGen{0};
     uint64_t planeGen{0};
     uint64_t cameraGen{0};
@@ -49,92 +49,15 @@ struct View {
     uint64_t clearColorGen{0};
     uint64_t depthConfigGen{0};
     uint64_t lightsGen{0};
-    uint64_t layerGen{0};
-    uint64_t generation{0}; // legacy coarse — equals max of per-field.
-    /// Clear color of this screen section (consumed by the render-side pass
-    /// prologue; see setClearColor).
-    glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 0.0f};
-    /// Value-object depth config — View owns DepthConfig (T8b composition, not raw bool on Renderer — Renderer is stateless drawLayer and has no ViewTarget size, would break IRenderable type-erasure + ViewTarget SRP; depth over mixed VolumeSlice+MeshSlice vs Volume+Mesh + OIT opaque depth + transparent depth-off over same target only View knows; OIT capture/composite disableDepthTest explicit on same REContext; default enabled=false color-only for deterministic llvmpipe gates, Engine facade defaults DepthConfig{true} for mesh views viz correctness — T17 G4 divergence documented in docs/engine.md).
-    DepthConfig depthConfig{DepthConfig{false, 1.0f}};
-    /// Per-View lights: empty vector = unlit (2D) or fixed headlight fallback
-    /// (Phong-only non-goal: existing mesh shader headlight preserved when
-    /// empty, so empty lights keeps FR-render.* 1/255 gates byte-identical).
-    /// Non-empty vector is translated via LightMapper → ReLight before the
-    /// drawLayer loop (one upload per view, not per item). T19 stretch.
-    std::vector<Light> lights{};
-
-    /// Set rect and bump rectGen.
-    void setRect(Rect r) noexcept {
-        if (rect != r) {
-            rect = r;
-            ++rectGen;
-            ++generation;
-        }
-    }
-    /// Set plane (nullopt = 3D) and bump planeGen only if changed.
-    void setPlane(std::optional<PlaneDesc> p) noexcept {
-        if (plane != p) {
-            plane = std::move(p);
-            ++planeGen;
-            ++generation;
-        }
-    }
-    /// Set item list and bump itemsGen only if changed.
-    void setItemIds(std::vector<uint64_t> ids) noexcept {
-        if (itemIds != ids) {
-            itemIds = std::move(ids);
-            ++itemsGen;
-            ++generation;
-        }
-    }
-    /// Mutate camera via callback and bump cameraGen if viewGen or projGen changed.
-    template <typename Fn>
-    void mutateCamera(Fn&& fn) {
-        const uint64_t beforeView = camera.viewGen();
-        const uint64_t beforeProj = camera.projGen();
-        fn(camera);
-        if (camera.viewGen() != beforeView || camera.projGen() != beforeProj) {
-            ++cameraGen;
-            ++generation;
-        }
-    }
-    /// Set the view's clear color (the RGBA the render-side pass prologue
-    /// clears this screen section to) and bump `clearColorGen` plus `generation`.
-    /// Default matches the engine's historical default (transparent black), so
-    /// views that never call this keep their previous behavior. The dedicated
-    /// `clearColorGen` allows the synchronizer's per-field cache (ViewCache)
-    /// to skip re-applying the clear color when it hasn't changed — the
-    /// per-field generation split keeps color dirt separate from rect/plane
-    /// dirt (SPEC §10.4, T9 A5).
-    void setClearColor(glm::vec4 c) noexcept {
-        if (clearColor != c) {
-            clearColor = std::move(c);
-            ++clearColorGen;
-            ++generation;
-        }
-    }
-    /// Opt this view into depth-tested rendering via DepthConfig value object.
-    /// The render side recreates its target with a real depth attachment and
-    /// enables plus clears depth in the pass prologue, so overlapping opaque
-    /// items resolve by true occlusion instead of draw order. Bumps generation
-    /// plus the dedicated per-field counter (the poll path sees the flip); the
-    /// default stays false — color-only painter order, the deterministic gate
-    /// configuration. The dedicated counter keeps depth dirt separate from other
-    /// fields (T9 A5).
+    uint64_t generation{0};
+    void setRect(Rect r) noexcept;
+    void setPlane(std::optional<PlaneDesc> p) noexcept;
+    void setItemIds(std::vector<uint64_t> ids) noexcept;
+    void setCamera(const Camera& cam) noexcept;
+    void setCamera(Camera&& cam) noexcept;
+    void setClearColor(glm::vec4 c) noexcept;
     void setDepthConfig(DepthConfig cfg) noexcept;
-    /// Set per-View lights and bump lightsGen + generation when changed.
-    /// Part of CompositeKey dirty tracking (SPEC §10): a light tweak dirties
-    /// only LightMapper cache via lightsGen, not whole View (per-field split).
-    /// Empty vector is the unlit/2D default; non-empty uploads ReLight uniforms
-    /// once per view before drawLayer (T19).
-    void setLights(std::vector<Light> ls) noexcept {
-        if (lights != ls) {
-            lights = std::move(ls);
-            ++lightsGen;
-            ++generation;
-        }
-    }
-
+    void setLights(std::vector<Light> ls) noexcept;
 };
 
 } // namespace re::scene

@@ -281,18 +281,26 @@ TEST(T1SceneView, PerFieldGeneration) {
     EXPECT_EQ(v.itemsGen, 1u) << "identical itemIds must not bump itemsGen";
     v.setItemIds({1, 2});
     EXPECT_EQ(v.itemsGen, 2u);
-    // mutateCamera via pan bumps cameraGen + viewGen.
+    // setCamera via pan bumps cameraGen + viewGen.
     EXPECT_EQ(v.cameraGen, 0u);
-    v.mutateCamera([](scene::Camera& c) { c.pan(1.0f, 0.0f); });
-    EXPECT_EQ(v.cameraGen, 1u) << "mutateCamera(pan) must bump cameraGen by 1";
+    {
+        scene::Camera cam = v.camera;
+        cam.pan(1.0f, 0.0f);
+        v.setCamera(std::move(cam));
+    }
+    EXPECT_EQ(v.cameraGen, 1u) << "setCamera(pan) must bump cameraGen by 1";
     EXPECT_EQ(v.generation, 5u) << "generation must be 5 after rect(1)+plane(1)+items(2)+camera(1) bumps";
     uint64_t beforeCam = v.cameraGen;
-    v.mutateCamera([](scene::Camera& c) { c.setPerspective(60.0f, 1.5f, 0.1f, 200.0f); });
-    EXPECT_EQ(v.cameraGen, beforeCam + 1u) << "mutateCamera(setPerspective) must bump cameraGen via projGen";
-    // No-op mutate must not bump.
+    {
+        scene::Camera cam = v.camera;
+        cam.setPerspective(60.0f, 1.5f, 0.1f, 200.0f);
+        v.setCamera(std::move(cam));
+    }
+    EXPECT_EQ(v.cameraGen, beforeCam + 1u) << "setCamera(setPerspective) must bump cameraGen via projGen";
+    // No-op setCamera must not bump.
     uint64_t genBefore = v.cameraGen;
-    v.mutateCamera([](scene::Camera&) {});
-    EXPECT_EQ(v.cameraGen, genBefore) << "no-op mutateCamera must not bump cameraGen";
+    v.setCamera(v.camera);
+    EXPECT_EQ(v.cameraGen, genBefore) << "no-op setCamera must not bump cameraGen";
 }
 
 TEST(T1ScenePlaneDesc, SpaceAndGeneration) {

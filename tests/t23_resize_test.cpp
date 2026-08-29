@@ -89,9 +89,9 @@ const scene::PerspectiveFraming kFraming{kFovDeg, kNearPlane, kFarPlane};
 
 inline void applyFraming(scene::View& view, const scene::PerspectiveFraming& framing, int width, int height) {
     view.setRect(scene::Rect{0, 0, width, height});
-    view.mutateCamera([&](scene::Camera& cam) {
-        cam.setPerspectiveFromFraming(framing, app::aspectFromDims(width, height));
-    });
+    scene::Camera cam = view.camera;
+    cam.setPerspectiveFromFraming(framing, app::aspectFromDims(width, height));
+    view.setCamera(std::move(cam));
 }
 
 /// All 16 entries of `got` must equal `want` within `tol`. The tolerance is

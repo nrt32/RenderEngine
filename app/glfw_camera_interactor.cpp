@@ -7,7 +7,7 @@
 // producing the analytic orbit when the flag is clear. Orthographic cameras are skipped to keep plane and MPR 2D
 // slice displays pinned to their dataset-extent windows. The implementation polls the current context via the
 // windowing API's current-context accessor, derives dx/dy from the stored previous position, maps the held button
-// through the controller's bindings, and finally calls View::mutateCamera with the controller's apply helper so the
+// through the controller's bindings, and finally calls View::setCamera with the controller's apply helper so the
 // generation bump is exactly the per-field viewGen split the broker relies on per SPEC §10.4. V5 T9.
 
 #include "app/glfw_camera_interactor.hpp"
@@ -108,7 +108,9 @@ void GlfwCameraInteractor::update(scene::View& view) noexcept {
 
     auto delta = controller_.onMouseDrag(dx, dy, btn, mods);
     if (delta.hasRotate || delta.hasPan || delta.hasZoom) {
-        view.mutateCamera([&](scene::Camera& c) { controller_.apply(c, delta); });
+        scene::Camera cam = view.camera;
+        controller_.apply(cam, delta);
+        view.setCamera(std::move(cam));
     }
     // Consume any pending scroll (GLFW scroll via callback → poll bridge). The scroll delta is applied as a
     // zoom factor through the same controller.onScroll path the task requires, guarded by the same overlay capture
@@ -118,7 +120,9 @@ void GlfwCameraInteractor::update(scene::View& view) noexcept {
         pendingScroll() = 0.0;
         auto sDelta = controller_.onScroll(static_cast<float>(scrollDelta));
         if (sDelta.hasZoom) {
-            view.mutateCamera([&](scene::Camera& c) { controller_.apply(c, sDelta); });
+            scene::Camera cam = view.camera;
+            controller_.apply(cam, sDelta);
+            view.setCamera(std::move(cam));
         }
     }
 }
@@ -133,7 +137,9 @@ void GlfwCameraInteractor::updateForTest(scene::View& view, bool wantCaptureMous
     }
     auto delta = controller_.onMouseDrag(dx, dy, button, mods);
     if (delta.hasRotate || delta.hasPan || delta.hasZoom) {
-        view.mutateCamera([&](scene::Camera& c) { controller_.apply(c, delta); });
+        scene::Camera cam = view.camera;
+        controller_.apply(cam, delta);
+        view.setCamera(std::move(cam));
     }
 }
 
