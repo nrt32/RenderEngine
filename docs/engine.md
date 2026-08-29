@@ -38,13 +38,13 @@ examples -B /tmp/min && cmake --build /tmp/min` green, `find_package(RenderEngin
 #include "render_engine/engine.hpp"
 #include "scene/camera.hpp"
 #include "render/offscreen.hpp"
+#include "utils/asset_utils.hpp"
 #include <glm/vec3.hpp>
-#include <glm/mat4x4.hpp>
 int main() {
     re::viz::Engine e;
-    auto r = e.addMesh("data/meshes/bunny.obj");
-    if (r.failed()) return 1;
-    auto id = *r;
+    auto mr = re::utils::loadMeshAsset("data/meshes/bunny.obj");
+    if (mr.failed()) return 1;
+    auto id = e.addMesh(*mr);
     re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
     cam.setPerspective(60, 800.0f/600.0f, 0.1f, 10.0f);
     e.setView({{0,0,800,600}, cam, {id}});
@@ -57,14 +57,16 @@ int main() {
 }
 ```
 
-Window path (samples) — same `Engine` plus a visible `Window`:
+Window path (samples) — same `Engine` plus a visible `Window` (T2: IO lives in `utils/`):
 
 ```cpp
 #include "render_engine/engine.hpp"
 #include "core/window.hpp"
+#include "utils/asset_utils.hpp"
 auto window = re::core::Window::create(800, 600, "Engine minimal").value();
 re::viz::Engine engine;
-auto id = *engine.addMesh("data/meshes/bunny.obj", glm::mat4(1.0f), glm::vec4(0.85f,0.45f,0.15f,1.0f));
+auto mr = re::utils::loadMeshAsset("data/meshes/bunny.obj").value();
+auto id = engine.addMesh(mr, glm::mat4(1.0f), glm::vec4(0.85f,0.45f,0.15f,1.0f));
 re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
 cam.setPerspective(60.0f, 800.0f/600.0f, 0.1f, 10.0f);
 engine.setView({{0,0,800,600}, cam, {id}});
@@ -79,7 +81,8 @@ Offscreen headless path (tests / server-side visualization) is the same
 
 ```cpp
 re::viz::Engine engine;
-auto id = *engine.addMesh("data/meshes/bunny.obj", glm::mat4(1.0f), glm::vec4(0.2f,0.4f,0.8f,1.0f));
+auto mr = re::utils::loadMeshAsset("data/meshes/bunny.obj").value();
+auto id = engine.addMesh(mr, glm::mat4(1.0f), glm::vec4(0.2f,0.4f,0.8f,1.0f));
 re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
 cam.setPerspective(60.0f, 1.0f, 0.1f, 10.0f);
 engine.setView({{0,0,64,64}, cam, {id}});
@@ -100,13 +103,13 @@ renderAll/presentAll`) on N>=3 runs — the analytic headlight color
 ```
 re::viz::Engine
 
-  // Asset loading — typed Result<ObjectId>, domain MeshIo/VolumeIo on failure:
-  Result<ObjectId> addMesh(path, mat4, MeshMaterialDesc)   // 4-step ceremony hidden
-  Result<ObjectId> addMesh(path, mat4, vec4 baseColor)     // solid-color convenience
-  Result<ObjectId> addMesh(path)                           // identity + white (minimal)
-  Result<ObjectId> addVolume(path, mat4, TransferFunction)
-  Result<ObjectId> addVolume(path, mat4)                   // opaque ramp
-  Result<ObjectId> addVolume(path)
+  // Asset loading — store-typed (T2: IO lives in utils/, Engine owns only add):
+  ObjectId addMesh(AssetRef<Mesh> asset, mat4, MeshMaterialDesc)
+  ObjectId addMesh(AssetRef<Mesh> asset, mat4, vec4 baseColor) // Phong solid-color convenience
+  ObjectId addMesh(AssetRef<Mesh> asset)                       // identity + white (minimal)
+  ObjectId addVolume(AssetRef<Volume> asset, mat4, TransferFunction)
+  ObjectId addVolume(AssetRef<Volume> asset, mat4)             // opaque ramp
+  ObjectId addVolume(AssetRef<Volume> asset)
 
   // Views — plain descriptor or full View:
   void setView(ViewDescriptor{rect, camera, ids})          // aggregate {{0,0,w,h}, cam, {id}}
@@ -167,11 +170,12 @@ target_link_libraries(my_app PRIVATE re_engine)
 
 `scene/light.hpp` `re::scene::Light` is the single-struct value type (no `render/light/` hierarchy this iteration — one struct keeps `View::lights` trivial; `Point`/`Spot` remain spec-deferred per §12.3). `View::lights` is `vector<Light>` inline — empty vector = **fixed headlight preserved** (`max(dot(n,(0,0,1)),0)` in `render/shaders/mesh_opaque.frag.glsl` with `uLightDir=(0,0,1)`), so all `FR-render.*` gates stay byte-identical within 1/255 on `N>=3` runs; a mesh rendered with `lights=={}` is pixel-identical to the historical Phong headlight path. `ViewBuilder::withLights(lights)` and `Engine::setLights(viewId, lights)` publish the same value type end-to-end (the 80% viz case): `scene::Light{Directional, dir{-1,-1,-1}}` → `broker::LightMapper` world-space forwarding (normalizes `dir` to `dirWS`, `SPEC §12.5` single responsibility is translation, not view-space multiplication) → `render::ReLight` (`render/light.hpp` uniform-ready) uploaded once per `View` before the `drawLayer` loop via `ViewSynchronizer` per-field `lightsGen` cache (one upload per view, not per item, `SPEC §10.4`). `broker/light_mapper.hpp` is the single Directional minimal path; `Point`/`Spot` fields are carried but unused this iteration (stretch).
 
-`Engine` facade:
+`Engine` facade (T2: IO via `utils::loadMeshAsset`):
 
 ```cpp
 re::viz::Engine e;
-auto id = *e.addMesh("data/meshes/bunny.obj", I, mat);
+auto mr = re::utils::loadMeshAsset("data/meshes/bunny.obj").value();
+auto id = e.addMesh(mr, I, mat);
 re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
 cam.setPerspective(60, 1, 0.1f, 10.0f);
 e.setView({{0,0,800,600}, cam, {id}}); // creates view id 1 with headlight

@@ -1,13 +1,13 @@
 #include "render_engine/engine.hpp"
 #include "scene/camera.hpp"
 #include "render/offscreen.hpp"
+#include "utils/asset_utils.hpp"
 #include <glm/vec3.hpp>
-#include <glm/mat4x4.hpp>
 int main() {
     re::viz::Engine e;
-    auto r = e.addMesh("data/meshes/bunny.obj");
-    if (r.failed()) return 1;
-    auto id = *r;
+    auto mr = re::utils::loadMeshAsset("data/meshes/bunny.obj");
+    if (mr.failed()) return 1;
+    auto id = e.addMesh(*mr);
     re::scene::Camera cam(glm::vec3(0,0,3), glm::vec3(0,0,0), glm::vec3(0,1,0));
     cam.setPerspective(60, 800.0f/600.0f, 0.1f, 10.0f);
     e.setView({{0,0,800,600}, cam, {id}});

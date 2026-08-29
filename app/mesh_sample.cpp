@@ -15,10 +15,10 @@
 #include "render_engine/engine.hpp"
 #include "core/window.hpp"
 #include "scene/camera.hpp"
+#include "utils/asset_utils.hpp"
 #include <glm/vec3.hpp>
 #include <glm/mat4x4.hpp>
 #include <cstdlib>
-#include <string>
 #include <spdlog/spdlog.h>
 #ifndef RE_SOURCE_DIR
 #define RE_SOURCE_DIR "."
@@ -29,9 +29,9 @@ int main() {
     if (wr.failed()) { spdlog::error("window: {}", wr.error().message); return 1; }
     auto& w = *wr;
     re::viz::Engine e;
-    auto r = e.addMesh(std::string(RE_SOURCE_DIR)+"/data/meshes/bunny.obj");
-    if (r.failed()) { spdlog::error("mesh: {}", r.error().message); return 1; }
-    auto id = *r;
+    auto meshRes = re::utils::loadMeshAsset(std::string(RE_SOURCE_DIR)+"/data/meshes/bunny.obj");
+    if (meshRes.failed()) { spdlog::error("mesh: {}", meshRes.error().message); return 1; }
+    auto id = e.addMesh(*meshRes);
     re::scene::Camera cam(glm::vec3(0,0,3),glm::vec3(0,0,0),glm::vec3(0,1,0));
     cam.setPerspective(60,800.f/600.f,0.1f,10.f);
     e.setView({{0,0,800,600},cam,{id}});

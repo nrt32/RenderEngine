@@ -63,11 +63,13 @@ TEST(T13MinimalExample, EngineRenderOffscreenParityWithin1_255){
         auto dImgRes = render::renderOffscreen(kW,kH,std::span<const scene::View>(dviews.data(),dviews.size()), direct.store());
         ASSERT_TRUE(dImgRes.ok()) << "run "<<run<<" direct renderOffscreen: "<<dImgRes.error().message;
         const auto &dImg = *dImgRes;
-        // Engine path — same mesh, same camera, same rect via minimal logic.
+        // Engine path via utils::loadMeshAsset (T2: Engine IO depollution — filesystem IO lives exclusively in utils::loadMeshAsset and the store's register path, the Engine facade owns only the final store-typed addMesh(AssetRef,transform,material)->ObjectId delegation so the public header never includes io/mesh loaders or path strings; this parity check proves the same mesh, camera and rect render identically within 1/255 after the IO extraction while keeping the header lean and the disposition audit green).
         viz::Engine eng;
-        auto idRes = eng.addMesh(meshPath, glm::mat4(1.0f), glm::vec4(0.85f,0.45f,0.15f,1.0f));
-        ASSERT_TRUE(idRes.ok()) << "run "<<run<<" engine addMesh: "<<idRes.error().message;
-        uint64_t eid = *idRes;
+        auto loaded = re::utils::loadMeshAsset(meshPath);
+        ASSERT_TRUE(loaded.ok()) << "run "<<run<<" loadMeshAsset: "<<loaded.error().message;
+        // Use store-typed addMesh(AssetRef, transform, material) → ObjectId (T2: no Result wrapper because load failures are reported by utils::loadMeshAsset before this delegation, the facade merely forwards the already-loaded AssetRef to the store's addMeshObject and mints the stable ObjectId without touching the filesystem or typed MeshIo domain).
+        scene::MeshMaterialDesc mat; mat.phong.baseColor = glm::vec4(0.85f,0.45f,0.15f,1.0f);
+        uint64_t eid = eng.addMesh(*loaded, glm::mat4(1.0f), mat);
         auto cam = makeCam();
         eng.setView({{0,0,static_cast<int>(kW),static_cast<int>(kH)}, cam, {eid}});
         auto v = eng.views().front();

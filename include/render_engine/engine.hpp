@@ -28,9 +28,9 @@
 
 #include "broker/app_context.hpp"
 #include "core/framebuffer.hpp"
+#include "data/mesh.hpp"
 #include "data/result.hpp"
-#include "io/mesh/obj_mesh_loader.hpp"
-#include "io/volume/nrrd_volume_loader.hpp"
+#include "data/volume_dataset.hpp"
 #include "scene/camera.hpp"
 #include "scene/depth_config.hpp"
 #include "scene/light.hpp"
@@ -79,95 +79,89 @@ class Engine {
 
     // ---- asset helpers -------------------------------------------------------
 
-    /// Load a mesh from `path` and add it to the store with `transform` and
-    /// `material`. The 4-step ceremony (load → shared_ptr → MeshObject → add)
-    /// that was duplicated across five samples is now one call. Returns a typed
-    /// error with domain MeshIo on load failure; no partial object ever enters
-    /// the store.
-    ::re::data::Result<::re::scene::ObjectId> addMesh(
-        const std::string& path, const glm::mat4& transform,
+    /// Add a mesh asset already loaded via `utils::loadMeshAsset` to the store.
+    ///
+    /// The 4-step ceremony (`load → shared_ptr → register → add`) now lives in
+    /// `utils/` (`utils::loadMeshAsset` → `store.registerMeshAsset` → `addMesh`);
+    /// this facade owns only the final `addMeshObject` delegation and never
+    /// touches the filesystem or `io/` loaders. Returns the stable `ObjectId`
+    /// minted by the store; load failures are reported by `utils::loadMeshAsset`
+    /// before this call, so no typed `Result` is needed here (SPEC §5, T1/T2).
+    ::re::scene::ObjectId addMesh(
+        ::re::scene::AssetRef<::re::data::Mesh> asset,
+        const glm::mat4& transform,
         const ::re::scene::MeshMaterialDesc& material) {
-        auto loaded = ::re::io::loadObjMesh(path);
-        if (loaded.failed()) {
-            return ::re::data::Result<::re::scene::ObjectId>(
-                ::re::data::error, loaded.error());
-        }
-        auto shared =
-            std::make_shared<const ::re::data::Mesh>(std::move(*loaded));
         ::re::scene::MeshObject obj;
-        obj.mesh = shared;
+        obj.mesh = std::move(asset);
         obj.transform = transform;
         obj.presentation = material;
-        const ::re::scene::ObjectId id =
-            ctx_.store().addMeshObject(std::move(obj));
-        return ::re::data::Result<::re::scene::ObjectId>(
-            ::re::data::value, id);
+        return ctx_.store().addMeshObject(std::move(obj));
     }
 
-    /// Convenience: mesh baseColor directly (Phong opaque path). Keeps call sites
-    /// that care only about a solid color from constructing a full material desc.
-    ::re::data::Result<::re::scene::ObjectId> addMesh(
-        const std::string& path, const glm::mat4& transform,
-        const glm::vec4& baseColor) {
-        ::re::scene::MeshMaterialDesc mat;
-        mat.phong.baseColor = baseColor;
-        return addMesh(path, transform, mat);
-    }
-
-    /// Add mesh with identity transform and default white material — the
-    /// single-argument form that makes `examples/minimal.cpp` a 20-line copy-paste.
-    ::re::data::Result<::re::scene::ObjectId> addMesh(
-        const std::string& path) {
-        return addMesh(path, glm::mat4(1.0f),
+    /// Convenience: mesh with identity transform and white material.
+    ::re::scene::ObjectId addMesh(
+        ::re::scene::AssetRef<::re::data::Mesh> asset) {
+        return addMesh(std::move(asset), glm::mat4(1.0f),
                        ::re::scene::MeshMaterialDesc{});
     }
 
-    /// Add mesh with identity plus material — `addMesh(path, material)` form.
-    ::re::data::Result<::re::scene::ObjectId> addMesh(
-        const std::string& path,
-        const ::re::scene::MeshMaterialDesc& material) {
-        return addMesh(path, glm::mat4(1.0f), material);
+    /// Convenience: mesh with explicit transform, white material.
+    ::re::scene::ObjectId addMesh(
+        ::re::scene::AssetRef<::re::data::Mesh> asset,
+        const glm::mat4& transform) {
+        return addMesh(std::move(asset), transform,
+                       ::re::scene::MeshMaterialDesc{});
     }
 
-    /// Load a volume from `path` and add it with `transform` and an optional
-    /// transfer function. Overload without a TF uses an opaque linear ramp.
-    ::re::data::Result<::re::scene::ObjectId> addVolume(
-        const std::string& path, const glm::mat4& transform,
+    /// Convenience: mesh with material and identity transform.
+    ::re::scene::ObjectId addMesh(
+        ::re::scene::AssetRef<::re::data::Mesh> asset,
+        const ::re::scene::MeshMaterialDesc& material) {
+        return addMesh(std::move(asset), glm::mat4(1.0f), material);
+    }
+
+    /// Convenience: mesh baseColor directly (Phong opaque path).
+    ::re::scene::ObjectId addMesh(
+        ::re::scene::AssetRef<::re::data::Mesh> asset,
+        const glm::mat4& transform, const glm::vec4& baseColor) {
+        ::re::scene::MeshMaterialDesc mat;
+        mat.phong.baseColor = baseColor;
+        return addMesh(std::move(asset), transform, mat);
+    }
+
+    /// Add a volume asset already loaded via `utils::loadVolumeAsset`.
+    ::re::scene::ObjectId addVolume(
+        ::re::scene::AssetRef<::re::data::VolumeDataset> asset,
+        const glm::mat4& transform,
         const ::re::volume::TransferFunction& tf) {
-        auto loaded = ::re::io::loadNrrdVolume(path);
-        if (loaded.failed()) {
-            return ::re::data::Result<::re::scene::ObjectId>(
-                ::re::data::error, loaded.error());
-        }
-        auto shared = std::make_shared<const ::re::data::VolumeDataset>(
-            std::move(*loaded));
         ::re::scene::VolumeObject obj;
-        obj.volume = shared;
+        obj.volume = std::move(asset);
         obj.transform = transform;
         obj.transferFunction = tf;
-        const ::re::scene::ObjectId id =
-            ctx_.store().addVolumeObject(std::move(obj));
-        return ::re::data::Result<::re::scene::ObjectId>(
-            ::re::data::value, id);
+        return ctx_.store().addVolumeObject(std::move(obj));
     }
 
-    ::re::data::Result<::re::scene::ObjectId> addVolume(
-        const std::string& path, const glm::mat4& transform) {
+    ::re::scene::ObjectId addVolume(
+        ::re::scene::AssetRef<::re::data::VolumeDataset> asset) {
         ::re::volume::TransferFunction tf(
             {{{0.0f, ::re::volume::RgbaColor{0, 0, 0, 0}},
               {1.0f, ::re::volume::RgbaColor{1, 1, 1, 1}}}});
-        return addVolume(path, transform, tf);
+        return addVolume(std::move(asset), glm::mat4(1.0f), tf);
     }
 
-    ::re::data::Result<::re::scene::ObjectId> addVolume(
-        const std::string& path) {
-        return addVolume(path, glm::mat4(1.0f));
+    ::re::scene::ObjectId addVolume(
+        ::re::scene::AssetRef<::re::data::VolumeDataset> asset,
+        const glm::mat4& transform) {
+        ::re::volume::TransferFunction tf(
+            {{{0.0f, ::re::volume::RgbaColor{0, 0, 0, 0}},
+              {1.0f, ::re::volume::RgbaColor{1, 1, 1, 1}}}});
+        return addVolume(std::move(asset), transform, tf);
     }
 
-    ::re::data::Result<::re::scene::ObjectId> addVolume(
-        const std::string& path,
+    ::re::scene::ObjectId addVolume(
+        ::re::scene::AssetRef<::re::data::VolumeDataset> asset,
         const ::re::volume::TransferFunction& tf) {
-        return addVolume(path, glm::mat4(1.0f), tf);
+        return addVolume(std::move(asset), glm::mat4(1.0f), tf);
     }
 
     // ---- view helpers -------------------------------------------------------

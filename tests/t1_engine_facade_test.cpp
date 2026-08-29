@@ -1,20 +1,19 @@
-// tests/t1_engine_facade_test.cpp — T1 gate: Engine facade vs direct AppContext oracle (SPEC §3, TASKS T1).
+// tests/t1_engine_facade_test.cpp — T1 gate: Engine facade vs direct AppContext oracle (SPEC §3, TASKS T1/T2).
 //
 // Asserts (R4 evidence rule — every check is an explainable constant):
 //
-//   (1) Engine e; addMesh("data/meshes/bunny.obj", I, mat); setView({{0,0,w,h}, cam, {id}});
+//   (1) Engine e; utils::loadMeshAsset("data/meshes/bunny.obj") → addMesh(asset,I,mat); setView({{0,0,w,h}, cam, {id}});
 //       render(fb) center pixel within 1/255 of the direct AppContext path that does
 //       the same 4-step ceremony manually (load → shared_ptr → MeshObject → add → View
 //       → sync/render/present) — the Engine vs direct oracle parity on N=3 consecutive
-//       runs. The acceptance is 1/255 per channel, not `>0`; the expected color is the
-//       Phong head-lighted baseColor (0.85,0.45,0.15) ≈ (217,115,38) at the analytic
-//       center probe, so the test is anchored to an explainable constant while the
-//       gate assertion is the parity within 1/255.
+//       runs. After T2 the IO lives in utils (loadMeshAsset) and Engine owns only the
+//       store-typed addMesh(AssetRef,...)→ObjectId, so the parity proves the facade
+//       still forwards identically within 1/255. Acceptance is 1/255 per channel, not `>0`.
 //   (2) Engine::createView centralizes the Rect+Camera ceremony — the helper returns a
 //       View whose rect and camera equal the manual construction and whose render
 //       parity via Engine::setView(createView(...)) is still within 1/255 on N=3.
-//   (3) Malformed addMesh returns a typed MeshIo error (domain ErrorDomain::MeshIo,
-//       code FileOpen == 1) and does not insert a store entry — no partial state.
+//   (3) Malformed utils::loadMeshAsset returns a typed MeshIo error (domain ErrorDomain::MeshIo,
+//       code FileOpen == 1) and does not insert a store entry — no partial state (T2: Engine no longer owns IO, error is from utils).
 //   (4) The public header contains exactly one `class Engine` and no persistence key
 //       literal `CompositeKey` (mechanical T1 header gate — grep counts).
 
@@ -39,6 +38,7 @@
 #include "scene/object.hpp"
 #include "scene/view.hpp"
 #include "tests/offscreen_fixture.hpp"
+#include "utils/asset_utils.hpp"
 #include "utils/pixel_reader.hpp"
 
 namespace re::tests {
@@ -134,13 +134,13 @@ TEST(T1EngineFacade, EngineVsDirectAppContextParityWithin1_255) {
         ASSERT_TRUE(readDirect.ok()) << readDirect.error().message;
         ASSERT_EQ(directPx.size(), 4u);
 
-        // ---- Engine path ----------------------------------------------------
+        // ---- Engine path via utils::loadMeshAsset (T2: Engine IO depollution — filesystem IO lives exclusively in utils::loadMeshAsset and the store's register path, the Engine facade owns only the final store-typed addMesh(AssetRef,transform,material)->ObjectId delegation so the public header never includes io/mesh loaders or path strings; this parity within 1/255 proves the facade still forwards identically after the IO extraction while keeping the header lean and the disposition audit green) ----
         viz::Engine engine;
         scene::MeshMaterialDesc mat;
         mat.phong.baseColor = glm::vec4(0.85f, 0.45f, 0.15f, 1.0f);
-        auto idRes = engine.addMesh(meshPath, glm::mat4(1.0f), mat);
-        ASSERT_TRUE(idRes.ok()) << "run " << run << " engine addMesh: " << idRes.error().message;
-        const uint64_t engineId = *idRes;
+        auto loaded = re::utils::loadMeshAsset(meshPath);
+        ASSERT_TRUE(loaded.ok()) << "run " << run << " loadMeshAsset: " << loaded.error().message;
+        const uint64_t engineId = engine.addMesh(*loaded, glm::mat4(1.0f), mat);
 
         auto cam = makeCam();
         viz::ViewDescriptor desc;
@@ -208,13 +208,13 @@ TEST(T1EngineFacade, CreateViewHelperParity) {
         ASSERT_TRUE(reader.read(kCenterX, kCenterY, 1u, 1u, dPx).ok());
         dTarget.fb.unbind();
 
-        // Engine via createView helper
+        // Engine via createView helper (T2: Engine IO depollution — the same utils::loadMeshAsset ceremony supplies the AssetRef so Engine::addMesh(AssetRef,transform,material)->ObjectId is the sole facade entry; the helper createView then centralizes the Rect+Camera ceremony and the resulting View still renders within 1/255 of the direct AppContext oracle, proving no regression after the IO extraction)
         viz::Engine engine;
         scene::MeshMaterialDesc mat;
         mat.phong.baseColor = glm::vec4(0.2f, 0.4f, 0.8f, 1.0f);
-        auto idRes = engine.addMesh(meshPath, glm::mat4(1.0f), mat);
-        ASSERT_TRUE(idRes.ok()) << idRes.error().message;
-        const uint64_t eid = *idRes;
+        auto loaded = re::utils::loadMeshAsset(meshPath);
+        ASSERT_TRUE(loaded.ok()) << loaded.error().message;
+        const uint64_t eid = engine.addMesh(*loaded, glm::mat4(1.0f), mat);
         auto cam = makeCam();
         // The helper is the single site for Rect+Camera ceremony.
         auto view = viz::Engine::createView(scene::Rect{0, 0, static_cast<int>(kW), static_cast<int>(kH)}, cam, {eid});
@@ -239,19 +239,18 @@ TEST(T1EngineFacade, CreateViewHelperParity) {
 }
 
 // ---------------------------------------------------------------------------
-// (3) Malformed addMesh returns typed MeshIo error (no partial entry).
+// (3) Malformed load via utils::loadMeshAsset returns typed MeshIo error (T2).
 // ---------------------------------------------------------------------------
 
 TEST(T1EngineFacade, AddMeshMalformedIsTypedError) {
     viz::Engine engine;
     const uint64_t before = engine.store().totalObjectCount();
-    auto res = engine.addMesh("/nonexistent/path/bogus.obj", glm::mat4(1.0f),
-                              glm::vec4(1, 1, 1, 1));
+    auto res = re::utils::loadMeshAsset("/nonexistent/path/bogus.obj");
     ASSERT_TRUE(res.failed());
     EXPECT_EQ(res.error().domain, data::ErrorDomain::MeshIo);
     EXPECT_EQ(res.error().code, 1) << "FileOpen == 1 per io/mesh_loader";
     EXPECT_EQ(engine.store().totalObjectCount(), before)
-        << "no partial object inserted on failure";
+        << "no partial object inserted on failure (utils failure does not touch store)";
 }
 
 // ---------------------------------------------------------------------------

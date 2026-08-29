@@ -174,7 +174,7 @@ target_include_directories(re_engine INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(re_engine INTERFACE re_broker re_scene re_core re_io re_volume)
+target_link_libraries(re_engine INTERFACE re_broker re_scene re_core re_volume)
 
 if(RE_BUILD_TESTS)
     enable_testing()
