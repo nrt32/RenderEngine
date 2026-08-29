@@ -36,16 +36,12 @@ namespace re::broker {
 
 namespace {
 
-int techniquePriorityFor(scene::SceneKind k) noexcept {
-    switch (k) {
-        case scene::SceneKind::Volume: return 0;
-        case scene::SceneKind::VolumeSlice: return 1;
-        case scene::SceneKind::Plane: return 2;
-        case scene::SceneKind::Mesh: return 3;
-        case scene::SceneKind::MeshSlice: return 4;
-        case scene::SceneKind::Contour: return 5;
-        default: return 10;
+// Index inside broker::techniqueOrder (Volume,VolumeSlice,Plane,Mesh,MeshSlice,Contour) — explicit hardcoded renderer call order that governs cross-type order inside each Layer (BGFX Sequential / UE AddPass precedent). Lower index draws first within the same Layer. Returns large sentinel if kind not found (should never happen for the 6 technique kinds).
+inline int indexInTechniqueOrder(scene::SceneKind k) noexcept {
+    for (size_t i = 0; i < techniqueOrder.size(); ++i) {
+        if (techniqueOrder[i] == k) return static_cast<int>(i);
     }
+    return 99;
 }
 
 } // namespace
@@ -98,8 +94,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         curGen ^= std::hash<uint64_t>{}(v.clearColorGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.depthConfigGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.lightsGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
-        curGen ^= std::hash<uint64_t>{}(v.layerGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
-        // T5 dumb layers: no LayerMask bitset and no per-view override map — stacking is per-object Layer (LAYER_0..7) + scoped priority, lower numeric draws first, no 1u<<layer UB, no array sized by COUNT. Mask/override hashing removed.
+        // T6: ViewCache dropped layerGen tied to mask (per-view LayerMask no longer exists), kept layerOrderHash for deterministic ordering. No per-view mask or override hash remains — order is per-object Layer + techniqueOrder + scoped priority.
     }
     for (auto& kv : pushDirties_) {
         curGen ^= std::hash<uint64_t>{}(kv.first) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
@@ -131,6 +126,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
                 case scene::FieldId::TransferFunction:
                 case scene::FieldId::Plane:
                 case scene::FieldId::Layer:
+                case scene::FieldId::Priority:
                     return true;
                 default:
                     return false;
@@ -153,10 +149,6 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         bool depthDirty = isNew || cache.depthConfigGen != av.depthConfigGen || hasPushDirty(av.id, scene::FieldId::DepthTest);
         bool clearColorDirty = isNew || cache.clearColorGen != av.clearColorGen || hasPushDirty(av.id, scene::FieldId::ClearColor);
         bool lightsDirty = isNew || cache.lightsGen != av.lightsGen || hasPushDirty(av.id, scene::FieldId::Lights);
-        bool layerDirty = isNew || cache.layerGen != av.layerGen || hasPushDirty(av.id, scene::FieldId::Layer);
-        if (layerDirty) {
-            cache.layerGen = av.layerGen;
-        }
         if (depthDirty) {
             rv->setDepthTest(av.depthConfig.enabled);
             cache.depthConfigGen = av.depthConfigGen;
@@ -272,34 +264,37 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
             cache.projGen = av.camera.projGen();
         }
 
-        // T5 dumb layers: deterministic (layer, techniquePriority, scoped priority) ordering — no per-view mask or override map, lower numeric Layer draws first (LAYER_0..7, no semantic names, no LayerMask bitset, no 1u<<layer), no mask culling, no override lookup. Technique priority is orthogonal (Volume→Contour) so same-layer VolumeSlice still sorts before Contour. Scoped priority will be wired fully at T6 (OrderEntry gains priority+insertionIdx); T5 stores Layer LAYER_0 default and priority 0, broker keeps simple layer+prio ordering without mask — pixel parity before broker reorder is via plain layer asc, techniquePriority asc (stable).
-        struct OrderEntry { uint64_t oid; scene::Layer effLayer; int prio; };
+        // T6 global techniqueOrder + scoped priority ordering (broker side) — the view synchronizer's deterministic ordering is stable_sort by (uint16(layer) asc, orderIdx asc, priority asc, insertionIdx asc) where techniqueOrder is the global hardcoded renderer call order that governs cross-type order inside each Layer (BGFX Sequential / UE AddPass precedent). Priority is scoped inside the same (layer, technique) bucket so a VolumeSlice priority 100 still draws before a Contour priority 0 on the same LAYER_0 when techniqueOrder says VolumeSlice before Contour, and insertionIdx is the stable tie for same layer+type+priority. No per-view mask cull via 1u<<layer, no per-view override map lookup, and no techniquePriorityFor closed switch — ordering uses techniqueOrder array index. The order hash combines only the surviving determinants layer+orderIdx+priority+oid so a view's deterministic ordering changes only when those change.
+        struct OrderEntry { uint64_t oid; scene::Layer layer; int orderIdx; int priority; size_t insertionIdx; };
         std::vector<OrderEntry> order;
         order.reserve(av.itemIds.size());
-        for (uint64_t oid : av.itemIds) {
+        for (size_t idx = 0; idx < av.itemIds.size(); ++idx) {
+            uint64_t oid = av.itemIds[idx];
             // @note lifetime: SceneStore owns the object; borrow valid until next store mutation.
             const scene::ISceneObject* /*borrow*/ obj = scene.getObject(oid);
             if (!obj) {
-                order.push_back({oid, scene::Layer::LAYER_0, 99});
+                order.push_back({oid, scene::Layer::LAYER_0, 99, 99, idx});
                 continue;
             }
-            scene::Layer eff = obj->layer();
-            // T5 dumb layers: the per-view override map that previously allowed one view to reassign an object's effective layer is deleted, so eff is the object's global Layer tag only and no per-view remapping lookup occurs; similarly the per-view bitmask that hid whole layers via 1u shifted by layer index is removed, so every layer is visible and no bitset cull is performed — stacking is determined solely by the object's Layer numeric and its scoped priority, which keeps deterministic painter's order without UB shifts or arrays sized by COUNT.
-            int prio = techniquePriorityFor(obj->kind());
-            order.push_back({oid, eff, prio});
+            scene::Layer lyr = obj->layer();
+            int oIdx = indexInTechniqueOrder(obj->kind());
+            int prio = obj->priority();
+            order.push_back({oid, lyr, oIdx, prio, idx});
         }
-        std::sort(order.begin(), order.end(), [](const OrderEntry& a, const OrderEntry& b) {
-            if (static_cast<uint16_t>(a.effLayer) != static_cast<uint16_t>(b.effLayer)) return static_cast<uint16_t>(a.effLayer) < static_cast<uint16_t>(b.effLayer);
-            return a.prio < b.prio;
+        std::stable_sort(order.begin(), order.end(), [](const OrderEntry& a, const OrderEntry& b) {
+            if (static_cast<uint16_t>(a.layer) != static_cast<uint16_t>(b.layer)) return static_cast<uint16_t>(a.layer) < static_cast<uint16_t>(b.layer);
+            if (a.orderIdx != b.orderIdx) return a.orderIdx < b.orderIdx;
+            if (a.priority != b.priority) return a.priority < b.priority;
+            return a.insertionIdx < b.insertionIdx;
         });
         uint64_t orderHash = 1469598103934665603ULL;
         for (auto& e : order) {
             orderHash ^= std::hash<uint64_t>{}(e.oid) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
-            orderHash ^= std::hash<int>{}(static_cast<int>(e.effLayer)) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
-            orderHash ^= std::hash<int>{}(e.prio) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
+            orderHash ^= std::hash<int>{}(static_cast<int>(e.layer)) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
+            orderHash ^= std::hash<int>{}(e.orderIdx) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
+            orderHash ^= std::hash<int>{}(e.priority) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
         }
-        // T5 dumb layers: the order hash no longer includes any per-view mask or override identity because visibility is now determined solely by each object's global Layer tag and its scoped priority; the hash therefore combines only layer, technique priority, and object id, which ensures that a view's deterministic ordering changes only when an object's Layer or priority or insertion changes, not when a deleted per-view bitset would have flipped.
-        bool orderDirty = isNew || cache.layerOrderHash != orderHash || layerDirty || hasPushDirty(av.id, scene::FieldId::Layer);
+        bool orderDirty = isNew || cache.layerOrderHash != orderHash || hasPushDirty(av.id, scene::FieldId::Layer) || hasPushDirty(av.id, scene::FieldId::Priority);
         bool itemsDirty = isNew || storeItemsDirty ||
                            cache.itemsGen != av.itemsGen ||
                            planeDirty ||
@@ -312,8 +307,8 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
                 auto r = mapItemToLayer(av, scene, entry.oid, rv, transparentPending);
                 if (r.failed()) return r;
             }
-            // Unknown ids that were masked out as missing were already flattened to Background entries above; any truly missing oid will still error via mapItemToLayer (never silently dropped).
-            // For views where all entries were masked out, the view simply renders no layers (clear color only).
+            // Missing oids are represented as sentinel OrderEntry{LAYER_0,99,99} sorted to the end and will error via mapItemToLayer (never silently dropped).
+            // If every entry is missing, the view renders no layers (clear color only).
             effective->setTransparentItems(layoutId, av.id,
                                             stack_ && stack_->pipeline
                                                 ? std::move(transparentPending)

@@ -23,6 +23,7 @@
 // MeshRenderer is constructed WITH the pipeline so its own direct-render path
 // stays consistent. No raw gl* here (renderers own GL via core/).
 
+#include <array>
 #include <memory>
 
 #include "render/asset_registry.hpp"
@@ -33,8 +34,29 @@
 #include "render/slice_renderer.hpp"
 #include "render/volume_renderer.hpp"
 #include "render/volume_slice_renderer.hpp"
+#include "scene/iscene_object.hpp"
 
 namespace re::broker {
+
+/// Global renderer call order that governs cross-type ordering inside each
+/// Layer (SPEC §3.1 V6 — dumb LAYER_0..7 + techniqueOrder + scoped priority).
+/// Lower index draws first within the same Layer; priority is scoped inside
+/// the same (layer, technique) bucket so a VolumeSlice priority 100 still
+/// draws before a Contour priority 0 on the same LAYER_0 when techniqueOrder
+/// says VolumeSlice before Contour. The order is explicit and hardcoded
+/// (BGFX Sequential / UE AddPass precedent) — Volume, VolumeSlice, Plane,
+/// Mesh, MeshSlice, Contour — and the synchronizer's stable_sort groups by
+/// (uint16(layer) asc, orderIdx asc, priority asc, insertionIdx asc) before
+/// dispatching to the render-side view. Deterministic regardless of store
+/// insertion order because insertionIdx is the stable tie for same
+/// layer+type+priority. No per-view LayerMask or per-object override map.
+inline constexpr std::array<scene::SceneKind, 6> techniqueOrder{
+    scene::SceneKind::Volume,
+    scene::SceneKind::VolumeSlice,
+    scene::SceneKind::Plane,
+    scene::SceneKind::Mesh,
+    scene::SceneKind::MeshSlice,
+    scene::SceneKind::Contour};
 
 /// The per-technique renderer set one bridge composes with.
 struct RenderStack {
