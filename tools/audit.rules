@@ -50,7 +50,7 @@ deps_pinned_no_find_package	forbid_grep	find_package[[:space:]]*\([[:space:]]*(g
 # Transitional until (stretch) T17 RHI lands (`core/rhi/gl/` appears): gpu_api_ownership keeps `core|` anchor; rhi_ownership is the V3 hard anchor (activate when `core/rhi/gl/` appears — keep commented until then, see stretch RHI + docs/spec/guardrails.md §6) — see docs/spec/guardrails.md §6 transitional note. Spec-review iteration 1 #5 fix: tightens `\bgl[A-Z].*\( ` and documents `GL_*` leak will be forbidden at `T15b` (narrow retained until `T15b` to avoid false positives on `MESA_GL_VERSION_OVERRIDE`/`GL_R32F` comments before comment scrub — `T15b` will add `|GL_[A-Z_]+` and scrub `scene/depth_config.hpp`/`render/offscreen.cpp`/`render/screen_quad.cpp` etc., per reviewer #5 option B).
 # Spec-review #7: rhi_ownership placeholder intentionally commented (transitional — activated at T17 via uncomment, see TASKS.md:T17:G and docs/spec/guardrails.md:13; iteration 4 #8 — AGENTS.md:30 mirrors this, `audit.rules:50` comment references `TASKS.md:T17` as source of uncomment trigger).
 # test_utils/ PixelReader façade must call REContext::readRgba8, not raw gl* — raw stays core-only, façade is via REContext.
-gpu_api_ownership	forbid_outside	core|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/ (transitional until (stretch) T17 RHI lands; tightens to core/rhi/gl/ after T17; test_utils façade via REContext, not raw)
+gpu_api_ownership	forbid_outside	core|\bgl[A-Z][A-Za-z0-9]*\(|\bGL_[A-Z_]+	raw GL calls and GL constants only under core/ (tightened at T15b to cover GL_* — Mesa version override excluded via scrub, R32F constants via core wrappers; transitional until (stretch) T17 RHI lands; tightens to core/rhi/gl/ after T17; test_utils façade via REContext, not raw)
 # rhi_ownership	forbid_outside	core/rhi/gl|\bgl[A-Z][A-Za-z0-9]*\(	raw GL calls only under core/rhi/gl/ via IRHIContext (activate when core/rhi/gl/ exists at T17; SOLID DIP + OCP for Vulkan) — spec-review #7 placeholder, intentionally commented until T17
 # New audit anchor: no raw gl* outside core/ at all (already covered) AND no core/rhi/gl/*.hpp include outside broker/render/core (DIP — scene/io/data/volume may never include RHI)
 
@@ -184,8 +184,9 @@ no_object_duplicate	forbid_grep	__never_matches_no_object_duplicate__	scene obje
 
 # --- Sanitizer contract (SPEC §5) — catch re-introduction of per-target flags ----------
 # V3 T11 defines INTERFACE re_project_sanitizers linked by every re_* target; ad-hoc per-dir -fsanitize blocks deleted.
-# This forbid catches direct add_compile_options/add_definitions with -fsanitize outside the INTERFACE target.
-no_per_target_sanitize	forbid_grep	add_compile_options.*-fsanitize|add_definitions.*-fsanitize|target_compile_options.*-fsanitize|target_link_options.*-fsanitize|add_link_options.*-fsanitize	per-target -fsanitize is forbidden — use INTERFACE re_project_sanitizers linked by every re_* target (T11, hardened V8 T8.5 to cover target_* variant)
+# This forbid catches direct add_compile_options/target_compile_options/add_link_options with -fsanitize outside the INTERFACE target.
+# Allowlist is INTERFACE re_project_sanitizers (cmake/sanitizers.cmake) — the sole sanctioned site per T15b hardening (forbid_grep -E "add_compile_options.*-fsanitize|target_compile_options.*-fsanitize|add_link_options.*-fsanitize" with INTERFACE allowlist, verified via grep -c "INTERFACE re_project_sanitizers" CMakeLists.txt ==1).
+no_per_target_sanitize	forbid_grep	add_compile_options.*-fsanitize|target_compile_options.*-fsanitize|add_link_options.*-fsanitize	per-target -fsanitize is forbidden — use INTERFACE re_project_sanitizers linked by every re_* target (T11, hardened at T15b to allowlist INTERFACE re_project_sanitizers)
 
 # --- Build hygiene (generic, reinforce here) -----------------------------------
 # (built-in checks already cover warning-suppression flags/pragmas)

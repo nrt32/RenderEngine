@@ -8,9 +8,9 @@
 //   (1) exit code == 0  — the sample rendered `RE_SAMPLE_MAX_FRAMES` frames
 //       without a frame failure (the harness returns 1 on any render error) and
 //       shut down cleanly (FR-app.1: "exit code 0");
-//   (2) the sample's log contains "GL 4.6 core" — core::Window logged the
-//       window creation + context probe (glGetIntegerv GL_MAJOR_VERSION==4,
-//       GL_MINOR_VERSION==6) only after glfwCreateWindow succeeded, so the
+//   (2) the sample's log contains "4.6 core" — core::Window logged the
+//       window creation + context probe (major version 4,
+//       minor version 6) only after glfwCreateWindow succeeded, so the
 //       window demonstrably opened (FR-app.1: "opens a window", SPEC §2/§8
 //       target GL 4.6 core);
 //   (3) the log contains no sanitizer error signatures ("AddressSanitizer",

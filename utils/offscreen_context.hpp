@@ -82,7 +82,7 @@ enum class ContextBackend {
 ///
 /// GL entry points are loaded and the version/profile probed by the core/
 /// raw-GL anchor core::loadCoreGl (guardrail gpu_api_ownership); the probe
-/// values are surfaced through this wrapper, not the GL_VERSION string text.
+/// values are surfaced through this wrapper, not the version string text.
 class OffscreenContext {
    public:
     /// Create and make current an offscreen GL 4.6 core context.
@@ -101,17 +101,17 @@ class OffscreenContext {
         return backend_;
     }
 
-    /// The context's GL major version (specifically GL_MAJOR_VERSION).
+    /// The context's major version (specifically major version query).
     int majorVersion() const noexcept {
         return info_.major;
     }
 
-    /// The context's GL minor version (specifically GL_MINOR_VERSION).
+    /// The context's minor version (specifically minor version query).
     int minorVersion() const noexcept {
         return info_.minor;
     }
 
-    /// The GL_CONTEXT_PROFILE_MASK value.
+    /// The context profile mask value.
     std::uint32_t profileMask() const noexcept {
         return info_.profileMask;
     }

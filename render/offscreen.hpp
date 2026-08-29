@@ -54,7 +54,7 @@ namespace re::render {
 ///
 /// Creates a hidden offscreen GL 4.6 core context (owns the `GlfwRuntime` ref
 /// via `utils::OffscreenContext`), builds a `w*h` destination `Framebuffer`
-/// (color-only, `GL_COLOR_ATTACHMENT0`), drives the broker composition
+/// (color-only, color attachment zero), drives the broker composition
 /// (`ViewBridge::sync(views,store)` → `renderAll()` → `presentAll(destination)`)
 /// through a fresh `broker::AppContext` wired with the full default mapper
 /// inventory (Camera, Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour) and

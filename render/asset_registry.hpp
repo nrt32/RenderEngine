@@ -478,7 +478,7 @@ class AssetRegistry {
     // Volume kind: data::VolumeDataset → core::Texture3D (T14).
     // ------------------------------------------------------------------
 
-    /// Acquire `dataset` as a GPU 3D texture: uploads it once (GL_R32F,
+    /// Acquire `dataset` as a GPU 3D texture: uploads it once (R32F single-channel 32-bit float,
     /// trilinear filtering, clamp-to-edge) and takes one reference. Registering
     /// identical content again — including through a second renderer or a
     /// distinct allocation with identical voxels — returns the SAME handle

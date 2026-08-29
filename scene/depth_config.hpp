@@ -8,7 +8,7 @@ namespace re::scene {
 
 /// Per-View depth configuration — value object owned by View (T8b, T17 G4).
 ///
-/// Default `enabled=false` is the color-only deterministic configuration every analytic gate was baked against on llvmpipe (`GALLIUM_DRIVER=llvmpipe` `MESA_GL_VERSION_OVERRIDE=4.6`): no depth attachment, depth test disabled, painter's order. `enabled=true` requests a `ViewTarget` with `DepthMode::Enabled` (depth 24-bit at depth attachment, completeness-checked) and a pass prologue that enables + clears depth (`REContext::beginPass(depthConfig)` pattern after T8b).
+/// Default `enabled=false` is the color-only deterministic configuration every analytic gate was baked against on software llvmpipe (Gallium driver llvmpipe with Mesa version override 4.6): no depth attachment, depth test disabled, painter's order. `enabled=true` requests a `ViewTarget` with `DepthMode::Enabled` (depth 24-bit at depth attachment, completeness-checked) and a pass prologue that enables + clears depth (`REContext::beginPass(depthConfig)` pattern after T8b).
 struct DepthConfig {
     bool enabled{false};
     float clearDepth{1.0f};

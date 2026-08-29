@@ -289,7 +289,7 @@ data::Result<OffscreenContext> OffscreenContext::createGlfw() {
         ctx.glfwRuntime_.reset();
         return data::makeError<OffscreenContext>(3, loaded.error().message);
     }
-    // T13: after loadCoreGl verify the probed GL version is exactly 4.6 core with the core profile bit set, else return a typed configuration error (SPEC §2 OpenGL 4.6 core). The verification checks GL_MAJOR==4 && MINOR==6 && CORE_PROFILE, and if any check fails the context creation returns a typed error with code 3 rather than silently continuing with an unsupported GL version, satisfying FR-core.1 and ensuring the offscreen context always meets the project's OpenGL 4.6 core requirement.
+    // T13: after loadCoreGl verify the probed version is exactly 4.6 core with the core profile bit set, else return a typed configuration error (SPEC §2 OpenGL 4.6 core). The verification checks major==4 and minor==6 and core profile, and if any check fails the context creation returns a typed error with code 3 rather than silently continuing with an unsupported version, satisfying FR-core.1 and ensuring the offscreen context always meets the project's OpenGL 4.6 core requirement.
     if (loaded->major != 4 || loaded->minor != 6 || !loaded->isCoreProfile()) {
         spdlog::error("offscreen context: expected GL 4.6 core, got {}.{} profileMask 0x{:x}",
                       loaded->major, loaded->minor, loaded->profileMask);

@@ -112,17 +112,20 @@ class Broker {
      template <typename AppT, typename ReT>
      void registerMapper(std::unique_ptr<IMapper<AppT, ReT>> mapper) {
          AppReKey key{std::type_index(typeid(AppT)), std::type_index(typeid(ReT))};
-         IMapperBase* /*borrow*/ raw = mapper.get(); // borrow of the object
-         // that ownedByApp_ will own after release — alias kept in kind map
-         // below so Broker::registeredTypes() sees the kind without double
-         // ownership.
-         ownedByApp_[key] = std::unique_ptr<IMapperBase>(mapper.release());
+         // Convert unique ownership to shared so the SceneKind alias can hold a
+         // weak observer rather than a raw borrow (ownership discipline T15b:
+         // weak_ptr for mutual wiring, shared_ptr for sole owner, no raw alias
+         // store — the alias expires when the owned mapper is replaced).
+         std::shared_ptr<IMapperBase> shared = std::move(mapper);
+         ownedByApp_[key] = shared;
          if constexpr (requires { AppT::Kind; }) {
              // AppT is a SceneKind-carrying polymorphic object (MeshObject etc.
              // — the T1 hierarchy). Alias the same mapper into the kind-keyed
-             // registry so registeredTypes() reflects the open set and the
-             // synchronizer can look up by SceneKind without branching.
-             sceneKindAliases_[AppT::Kind] = raw;
+             // weak registry so registeredTypes() reflects the open set and the
+             // synchronizer can look up by SceneKind without branching. The
+             // weak observer expires on re-registration, preventing stale raw
+             // aliases.
+             sceneKindAliases_[AppT::Kind] = shared;
          }
      }
 
@@ -170,13 +173,8 @@ class Broker {
          static_assert(std::is_base_of_v<IMapperBase, MapperT>,
                        "MapperT must inherit IMapperBase");
          auto key = std::type_index(typeid(MapperT));
-         IMapperBase* /*borrow*/ rawAfter = mapper.get(); // borrow before move, used for kind alias below
-         ownedByMapper_[key] = std::unique_ptr<IMapperBase>(mapper.release());
-         // Retrieve the canonical borrow from the owning map so the kind alias
-         // never holds a stale raw from the released unique_ptr — the owning
-         // map is the sole owner, and the alias consults it via the pair index
-         // to avoid a dangling borrow after re-registration (T9 A2).
-         IMapperBase* /*borrow*/ ownedRaw = ownedByMapper_[key].get();
+         std::shared_ptr<IMapperBase> shared = std::move(mapper);
+         ownedByMapper_[key] = shared;
          if constexpr (requires { typename MapperT::AppType; typename MapperT::ReType; }) {
              using AppT = typename MapperT::AppType;
              using ReT = typename MapperT::ReType;
@@ -189,10 +187,8 @@ class Broker {
              if (pit != pairToMapperType_.end()) pit->second = key;
              else pairToMapperType_.emplace(pair, key);
              if constexpr (requires { AppT::Kind; }) {
-                 sceneKindAliases_[AppT::Kind] = ownedRaw;
+                 sceneKindAliases_[AppT::Kind] = shared;
              }
-         } else {
-             (void)rawAfter;
          }
      }
 
@@ -250,11 +246,15 @@ class Broker {
      /// Retrieve mapper for a SceneKind (open hierarchy), or nullptr if not
      /// registered. The returned pointer is a non-owning view into broker-owned
      /// storage — same lifetime contract as get<AppT,ReT>() — valid while the
-     /// Broker does and until re-registration of that kind.
+     /// Broker does and until re-registration of that kind. The alias is a
+     /// weak observer of the shared-owned mapper, so it expires when the mapper
+     /// is replaced rather than dangling.
      /// @note lifetime: broker-owned storage borrow (see get<AppT,ReT>() note).
      IMapperBase* /*borrow*/ getByKind(scene::SceneKind kind) const noexcept {
          auto it = sceneKindAliases_.find(kind);
-         return it == sceneKindAliases_.end() ? nullptr : it->second;
+         if (it == sceneKindAliases_.end()) return nullptr;
+         auto sp = it->second.lock();
+         return sp ? sp.get() : nullptr;
      }
 
      /// Typed SceneKind getter — convenience for mappers that know their ReT.
@@ -279,22 +279,22 @@ class Broker {
     }
 
    private:
-     std::unordered_map<AppReKey, std::unique_ptr<IMapperBase>, AppReKeyHash> ownedByApp_;
+     std::unordered_map<AppReKey, std::shared_ptr<IMapperBase>, AppReKeyHash> ownedByApp_;
      // Pair -> mapper-type indirection (T9 A2) — derived from ownedByMapper_
      // instead of a raw-pointer alias store. get<AppT,ReT>() consults this map
      // to find the mapper's type_index and then fetches the live borrow from
      // ownedByMapper_. No stale raw alias can survive a re-registration because
      // the only raw borrows are the transient get() results, not a stored map.
      std::unordered_map<AppReKey, std::type_index, AppReKeyHash> pairToMapperType_;
-     std::unordered_map<std::type_index, std::unique_ptr<IMapperBase>> ownedByMapper_;
-     // SceneKind-keyed alias view into the same owned storage —Strategy per
-     // Kind (one file per mapper). Adding a new kind needs only one new
-     // *Mapper file plus one registerMapper call; existing files and the view
-     // synchronizer remain closed for modification (OCP via type_index/SceneKind
-     // factories). The map holds non-owning borrows into ownedByApp_/
-     // ownedByMapper_ storage (same lifetime contract as the former alias-map,
-     // now derived).
-     std::unordered_map<scene::SceneKind, IMapperBase* /*borrow*/> sceneKindAliases_;
+     std::unordered_map<std::type_index, std::shared_ptr<IMapperBase>> ownedByMapper_;
+     // SceneKind-keyed weak alias view into the same shared-owned storage —
+     // Strategy per Kind (one file per mapper). Adding a new kind needs only
+     // one new *Mapper file plus one registerMapper call; existing files and
+     // the view synchronizer remain closed for modification (OCP via
+     // type_index/SceneKind factories). The map holds weak observers of the
+     // shared-owned mappers (T15b ownership discipline: weak_ptr for observers,
+     // shared_ptr for sole owner, no raw alias store — expired on replacement).
+     std::unordered_map<scene::SceneKind, std::weak_ptr<IMapperBase>> sceneKindAliases_;
 };
 
 } // namespace re::broker

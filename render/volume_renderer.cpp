@@ -94,7 +94,7 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
                                                  core::VertexArray* quadVao) {
     // No cap streaming via core::Caps — any dims tiled/downsampled (T11).
     // The hardware limit maxTexture3DSize is queried via core::caps() (cached
-    // core::caps() probes GL_MAX_3D_TEXTURE_SIZE once until RHI lands,
+    // core::caps() probes max 3D texture size once until RHI lands,
     // TODO(RHI) → IRHIContext::capabilities() per docs/spec/nfr.md:25).
     // If the probe failed (max==0, no GL context) surface BudgetExceeded;
     // otherwise, if dims exceed the cap, downsample the dataset CPU-side

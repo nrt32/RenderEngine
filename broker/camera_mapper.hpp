@@ -27,7 +27,7 @@
 #include <cstdint>
 #include <unordered_map>
 
-#include "broker/i_mapper.hpp"
+#include "broker/i_cached_mapper.hpp"
 #include "broker/stable_key.hpp"
 #include "render/types.hpp"
 #include "scene/camera.hpp"

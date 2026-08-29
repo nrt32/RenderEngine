@@ -26,8 +26,8 @@ namespace re::tests {
 
 namespace {
 
-// Explainable constants (SPEC §2): GL 4.6 core is the project's target;
-// llvmpipe reports 4.6 via MESA_GL_VERSION_OVERRIDE=4.6 and the probe uses the
+// Explainable constants (SPEC §2): 4.6 core is the project's target;
+// llvmpipe reports 4.6 via Mesa version override and the probe uses the
 // integer queries, not the version string text.
 constexpr int kExpectedMajor = 4;
 constexpr int kExpectedMinor = 6;
@@ -97,10 +97,10 @@ TEST(T5V2PlatformBackend, BackendNameIsDistinctPerBackend) {
 // ---------------------------------------------------------------------------
 
 TEST(T5V2PlatformBackend, LinuxPathStillGl46Core) {
-    // The shared fixture context (utils::OffscreenContext) is still a GL 4.6
+    // The shared fixture context (utils::OffscreenContext) is still a 4.6
     // core context even after the per-OS factory was introduced. The version
-    // and profile are probed inside core/ via the integer queries and surfaced
-    // through the wrapper (not the GL_VERSION string).
+    // and profile are probed inside core via the integer queries and surfaced
+    // through the wrapper (not the version string).
     utils::OffscreenContext* ctx = OffscreenEnvironment::context();
     ASSERT_NE(ctx, nullptr);
     EXPECT_EQ(ctx->majorVersion(), kExpectedMajor);
@@ -110,7 +110,7 @@ TEST(T5V2PlatformBackend, LinuxPathStillGl46Core) {
 
     // On this Linux host the actual backend that succeeded must be either the
     // GLFW hidden window (when a display is on the host, e.g. WSLg/xvfb) or
-    // the EGL-surfaceless fallback (deterministic Linux fallback). It must not
+    // the surfaceless fallback (deterministic Linux fallback). It must not
     // be the Windows/macOS fallback.
     const auto backend = ctx->backend();
     EXPECT_TRUE(backend == utils::ContextBackend::Glfw ||
@@ -122,7 +122,7 @@ TEST(T5V2PlatformBackend, LinuxPathStillGl46Core) {
 }
 
 TEST(T5V2PlatformBackend, EglSurfacelessTokenScopedToLinux) {
-    // Guard against the Mesa-only EGL_PLATFORM_SURFACELESS_MESA hardcode
+    // Guard against the Mesa-only surfaceless hardcode
     // leaking onto non-Linux builds: the EGL-surfaceless path is the Linux
     // fallback, but the compile-time selector on this host must still be Egl
     // (proving the token is scoped to Linux, not a cross-platform hardcode).

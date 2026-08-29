@@ -29,7 +29,7 @@
 // 64x64 texture on the identity-model unit quad under an orthographic camera
 // mapping NDC [-1,1]^2 onto the full 64x64 viewport, pixel center (px,py)
 // samples texel s = (px+0.5)/64 * 64 - 0.5 = px exactly (frac = 0 under
-// GL_LINEAR). With PlaneRenderer's internal row flip (imageToRgba8: data::Image
+// linear filtering). With PlaneRenderer's internal row flip (imageToRgba8: data::Image
 // is top-left origin, GL textures bottom-up), viewport pixel (px,py) samples
 // image pixel (px, H-1-py).
 //

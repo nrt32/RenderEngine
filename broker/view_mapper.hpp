@@ -23,7 +23,8 @@ namespace re::broker {
 ///
 /// Owns no state; delegates per-field translation. Light mapping is
 /// vector<Light> -> vector<ReLight> via LightMapper::map per element.
-struct ViewMapper {
+class ViewMapper {
+   public:
     /// Translate app lights to RE lights via mapper.
     static data::Result<std::vector<render::ReLight>> mapLights(
         const std::vector<scene::Light>& appLights,

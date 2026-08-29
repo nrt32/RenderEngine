@@ -65,8 +65,8 @@ class ScreenQuad {
 
    private:
     std::optional<core::VertexArray> vao_;
-    // The VAO captures the GL_ARRAY_BUFFER (via setAttribute) and the
-    // GL_ELEMENT_ARRAY_BUFFER (via EBO bind) bindings by name, so both
+    // The VAO captures the array buffer (via setAttribute) and the
+    // element array buffer (via EBO bind) bindings by name, so both
     // buffers must outlive it — they are kept as siblings here.
     std::optional<core::VertexBuffer> vbo_;
     std::optional<core::ElementBuffer> ebo_;

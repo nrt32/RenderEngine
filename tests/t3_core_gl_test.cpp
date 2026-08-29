@@ -167,8 +167,8 @@ TEST(T3CoreGl, VertexArrayCreateBindConfigureDestroyIsErrorFree) {
     vao->bind();
     EXPECT_FALSE(core::hasPendingGlError());
 
-    // glVertexAttribPointer requires a bound GL_ARRAY_BUFFER; bind a VBO with
-    // the golden triangle so the attribute configuration is valid GL.
+    // vertex attribute pointer requires a bound array buffer; bind a VBO with
+    // the golden triangle so the attribute configuration is valid.
     auto vbo = core::VertexBuffer::create();
     ASSERT_TRUE(vbo.ok());
     vbo->bind();

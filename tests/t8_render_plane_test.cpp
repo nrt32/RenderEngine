@@ -13,7 +13,7 @@
 //           from the normal's side).
 //
 // Analytic setup (docs/render.md): the textured pass samples the source
-// texture with GL_LINEAR and CLAMP_TO_EDGE (core::Texture2D defaults). The
+// texture with linear and clamp-to-edge (core::Texture2D defaults). The
 // plane is the unit XY quad ([-1,1]^2 at z=0) with an identity model, and the
 // camera uses an orthographic projection mapping NDC [-1,1]^2 onto the full
 // 64x64 viewport, so the quad covers the viewport 1:1. The texture is made the
@@ -24,7 +24,7 @@
 //   v = (py + 0.5) / 64,  s_v = v * 64 - 0.5 = py          (integer)
 //
 // so the rendered pixel reproduces the source texel exactly (frac = 0 under
-// GL_LINEAR), within the 1/255 tolerance.
+// linear filtering), within the 1/255 tolerance.
 //
 // Orientation / vertical flip: the source image has a top-left origin
 // (data::Image), while core::Texture2D expects row 0 = the BOTTOM scanline.

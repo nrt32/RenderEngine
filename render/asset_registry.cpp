@@ -71,8 +71,8 @@ uint64_t materialContentHash(const PhongMaterial& m) noexcept {
 // store is the single place that turns CPU asset bytes into GPU objects).
 // ---------------------------------------------------------------------------
 
-/// Upload `dataset`'s float32 voxel grid into a fresh GL_R32F 3D texture
-/// (GL_LINEAR trilinear filtering, GL_CLAMP_TO_EDGE — core::Texture3D's
+/// Upload `dataset`'s float32 voxel grid into a fresh R32F 32-bit float 3D texture
+/// (linear trilinear filtering, clamp-to-edge — core::Texture3D's
 /// upload-time defaults), so the ray-cast shader's `(idx+0.5)/dim` texcoord
 /// reproduces the CPU trilinear sample.
 data::Result<std::unique_ptr<core::Texture3D>> createVolumeTexture(
@@ -147,7 +147,7 @@ std::vector<std::uint8_t> imageToRgba8(const data::Image& image) {
 }
 
 /// Convert `image` to RGBA8 and upload it into a fresh 2D texture
-/// (GL_LINEAR / CLAMP_TO_EDGE per core::Texture2D defaults, so a quad mapped
+/// (linear / clamp-to-edge per core::Texture2D defaults, so a quad mapped
 /// 1:1 onto the viewport reproduces the source texels exactly).
 data::Result<std::unique_ptr<core::Texture2D>> createImageTexture(
     const data::Image& image) {

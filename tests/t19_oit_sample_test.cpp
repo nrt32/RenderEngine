@@ -39,7 +39,7 @@
 // Analytic derivation of the probe bytes (all colors straight RGBA; the
 // capture shader stores PREMULTIPLIED base color with no lighting, the
 // composite accumulates far->near with `rgb = s.rgb + (1-s.a)*acc.rgb` and
-// blends over the opaque destination with (GL_ONE, GL_ONE_MINUS_SRC_ALPHA)):
+// blends over the opaque destination with premultiplied one and one-minus-src-alpha factors:
 //
 //   gold  opaque base (flat +Z face shades at exactly base color):
 //         {0.85,0.45,0.15,1} -> bytes {217,115,38,255}

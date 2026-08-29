@@ -18,7 +18,7 @@
 #include <cstdint>
 #include <unordered_map>
 
-#include "broker/i_mapper.hpp"
+#include "broker/i_cached_mapper.hpp"
 #include "scene/plane_desc.hpp"
 #include "scene/translate_context.hpp"
 

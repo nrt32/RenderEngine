@@ -227,7 +227,7 @@ TEST(T5View, TwoViewsRenderIntoTheirOwnViewTargets) {
 }
 
 // ---------------------------------------------------------------------------
-// (4) Blit via core::blit places ViewTarget into window rect (1:1, GL_NEAREST).
+// (4) Blit via core::blit places ViewTarget into window rect (1:1, nearest).
 // ---------------------------------------------------------------------------
 TEST(T5View, BlitPlacesViewsInPinnedWindowRects) {
     TwoViewReViewFixture f;

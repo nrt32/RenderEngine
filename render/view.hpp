@@ -167,7 +167,7 @@ class View {
 
     /// Blit the View's FBO into its pinned window rect on destination
     /// (nullptr = the window's default framebuffer 0) via core::blit. The copy
-    /// is GL_NEAREST, 1:1 when target size == rect size (the pinned gate).
+    /// is nearest filtering, 1:1 when target size == rect size (the pinned gate).
     /// @note lifetime: `destination` is borrowed for the DURATION OF THIS CALL
     /// only (structurally guaranteed — the blit consumes it synchronously and
     /// retains nothing); owned by the caller (window default FB or a

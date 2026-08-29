@@ -149,7 +149,7 @@ struct PlaneScene {
 /// O(1) handle (`resolveImage`, content-hash IS identity, no per-frame
 /// FNV-1a, no lazy lookupImage path), so each distinct image is uploaded once
 /// per store and no per-renderer texture map exists. Textures are sampled with
-/// GL_LINEAR and CLAMP_TO_EDGE (core::Texture2D defaults), so a quad mapped
+/// linear and clamp-to-edge (core::Texture2D defaults), so a quad mapped
 /// 1:1 onto the viewport reproduces the source texels exactly (FR-render.5).
 /// T14 removed the IRenderer Scene variant dispatch; all rendering goes through
 /// drawLayer after View's beginPass.

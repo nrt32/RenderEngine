@@ -8,7 +8,7 @@
 // RGBA. Hits off the volume slab write transparent black, so the extracted
 // slice appears exactly where the plane crosses the dataset. The texel
 // mapping (idx + 0.5) / dim is the same one the volume ray-cast shader uses,
-// which is what makes GL_LINEAR reproduce the CPU trilinear interpolant
+// which is what makes linear filtering reproduce the CPU trilinear interpolant
 // (data::VolumeDataset::sampleTrilinear) and keeps the analytic gates within
 // 1/255.
 in vec2 vNdc;
@@ -58,7 +58,7 @@ void main() {
     // units) purely to absorb float rounding on the outermost voxel centers:
     // without it, a boundary hit intended for model coordinate exactly 1.0
     // can land at 1.0000001 after the unproject/invert round trip and punch a
-    // transparent hole into the last voxel ring. CLAMP_TO_EDGE sampling turns
+    // transparent hole into the last voxel ring. clamp-to-edge sampling turns
     // anything inside the widened band into the boundary voxel's value, so
     // the widening is invisible in the output bytes.
     vec3 modelPos = (uInvModel * vec4(worldPos, 1.0)).xyz;

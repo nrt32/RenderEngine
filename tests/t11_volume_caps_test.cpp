@@ -3,8 +3,8 @@
 // T11 lifts the 128³ loader cap: any dims via core::Caps tiled/downsampled
 // streaming (render/volume_renderer.cpp checks maxTexture3DSize via
 // core::Caps core/caps.hpp Caps{uint32_t maxTexture3DSize; bool ssboAtomics;}
-// cached core::caps() (core/caps.cpp probes GL_MAX_3D_TEXTURE_SIZE /
-// GL version string once until RHI lands, TODO(RHI) →
+// cached core::caps() (core/caps.cpp probes max 3D texture size /
+// version string once until RHI lands, TODO(RHI) →
 // IRHIContext::capabilities() after T10). The synthetic NRRD 256³ via
 // core::Caps tiled load must stay within 1/255 of reference tiled (analytic,
 // not OOM) and valid 128³ must still load byte-identical 1/255; grep Caps
@@ -13,7 +13,7 @@
 // Evidence rule (R4): every check is explainable — 256³=16,777,216 (=8×
 // 2,097,152), 128³ byte-identical exact, center pixel within 1/255 via
 // front-to-back compositing (same as T9 FR-render.6), caps probe via
-// GL_MAX_3D_TEXTURE_SIZE analytic, BudgetExceeded only when probe fails.
+// max 3D texture size analytic, BudgetExceeded only when probe fails.
 
 #include <gtest/gtest.h>
 

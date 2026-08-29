@@ -25,8 +25,8 @@
 // back premultiplied compositing (volume::compositeFrontToBack, FR-vol.2) of
 // four such samples yields {0, 0.9375, 0, 0.9375}.
 //
-// The GL fragment shader mirrors this exact math (slab intersection, center
-// stepping, GL_LINEAR 3D-texture trilinear sampling, piecewise-linear TF,
+// The fragment shader mirrors this exact math (slab intersection, center
+// stepping, linear 3D-texture trilinear sampling, piecewise-linear TF,
 // front-to-back premultiplied compositing), so the rendered center pixel must
 // match the CPU value within 1/255 (FR-render.6).
 //

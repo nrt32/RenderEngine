@@ -10,7 +10,7 @@
 // converts the hit point into the dataset's model space (the unit cube
 // [0,1]^3), samples the cached R32F `core::Texture3D` with hardware
 // trilinear filtering at texel coordinate (idx+0.5)/dim — the exact mapping
-// the VolumeRenderer ray-cast uses, so GL_LINEAR reproduces the CPU sampler
+// the VolumeRenderer ray-cast uses, so linear filtering reproduces the CPU sampler
 // `data::VolumeDataset::sampleTrilinear` — and writes the transfer-function
 // color as straight RGBA. Rays that miss the volume slab write transparent
 // black, so the extracted slice appears exactly where the plane crosses the

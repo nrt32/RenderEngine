@@ -109,7 +109,7 @@ data::Result<core::VertexArray*> PlaneRenderer::quadGeometry() {
     vao->unbind();
 
     // Keep the EBO alive for the lifetime of the renderer: the VAO captures
-    // the GL_ELEMENT_ARRAY_BUFFER binding by name, so deleting the EBO (as the
+    // the element array buffer binding by name, so deleting the EBO (as the
     // local would on scope exit) would free the index buffer the shared quad
     // draws from. Mirrors MeshGeometry's ebo_ ownership.
     quadVbo_ = std::move(*vbo);

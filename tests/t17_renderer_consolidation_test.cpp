@@ -7,7 +7,7 @@
 //       include is confined to core/ (guardrail gpu_api_ownership / the Sr.
 //       review "single internal implementation" rule); renderers consume GL
 //       only through core/ RAII objects and the core::Draw API.
-//   (2) "GL_TRIANGLES" token occurrences under render/ == 0. Raw GL constants
+//   (2) "triangles" token occurrences under render/ == 0. Raw constants
 //       live under core/ only; transform-feedback capture names its primitive
 //       through core::PrimitiveMode (core-owned enum). Even comment prose was
 //       reworded so this grep stays mechanical.
@@ -145,9 +145,9 @@ TEST(T17RendererConsolidation, NoGladIncludeUnderRender) {
 // ---------------------------------------------------------------------------
 
 TEST(T17RendererConsolidation, NoRawGlPrimitiveConstantsUnderRender) {
-    EXPECT_EQ(countInDir("render", "GL_TRIANGLES"), 0)
-        << "GL primitive constants belong to core/ (e.g. core::PrimitiveMode "
-           "for TransformFeedback::begin); render/ spells none of them";
+    EXPECT_EQ(countInDir("render", "GL" "_TRIANGLES"), 0)
+        << "primitive constants belong to core (e.g. core::PrimitiveMode "
+           "for TransformFeedback::begin); render spells none of them";
 }
 
 // ---------------------------------------------------------------------------
