@@ -41,6 +41,10 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#ifdef RE_HAS_EGL
+#include <EGL/egl.h>
+#endif
+
 namespace re::core {
 
 namespace {
@@ -48,6 +52,15 @@ namespace {
 // Per-GLFWwindow* REContext map.
 std::unordered_map<GLFWwindow*, std::unique_ptr<REContext>> g_windowMap;
 std::mutex g_windowMutex;
+
+// Per-EGLContext REContext map (T13) — mutex-guarded like g_windowMap:49,
+// iteration 1 #11 pin — invalidate() on release:129 alone is insufficient;
+// map is binding so second EGL context on same thread starts cold.
+// Kept as void* map to keep public header EGL-free (typed EGL lives only in
+// utils/offscreen_context.hpp with RE_HAS_EGL guard; core header uses void*).
+std::unordered_map<void*, std::unique_ptr<REContext>> g_eglMap;
+std::mutex g_eglMutex;
+thread_local void* t_eglCurrent = nullptr;
 
 // Thread-local current pointer and per-thread EGL/surfaceless fallback.
 thread_local REContext* t_current = nullptr;
@@ -190,7 +203,13 @@ void REContext::beginPass(Framebuffer* /*borrow*/ framebuffer, std::uint32_t wid
 
 REContext& REContext::current() noexcept {
     if (t_current != nullptr) return *t_current;
-    // No window has been set on this thread yet — use per-thread fallback.
+    // No window/EGL context has been set on this thread yet — use per-thread
+    // fallback. For EGL, the per-EGLContext map (g_eglMap) is the binding
+    // isolation; t_fallback is retained only for the non-EGL fallback path
+    // (no display). Mutex is held only for map insertion/lookup, not for
+    // t_current access — single-threaded contract (nfr.md:24) keeps per-frame
+    // work lock-free while still isolating per-EGLContext state so the second
+    // EGL context on the same thread starts cold (no viewport/clearColor bleed).
     t_current = &t_fallback;
     return *t_current;
 }
@@ -235,6 +254,38 @@ void REContext::makeCurrent(GLFWwindow* window) noexcept {
 void REContext::syncFromGLFW() noexcept {
     GLFWwindow* cur = glfwGetCurrentContext();
     setCurrentWindow(cur);
+}
+
+void REContext::setCurrentEgl(void* /*dpy*/, void* ctx) noexcept {
+    if (ctx == nullptr) {
+        t_current = &t_fallback;
+        t_eglCurrent = nullptr;
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_eglMutex);
+    auto it = g_eglMap.find(ctx);
+    if (it != g_eglMap.end()) {
+        t_current = it->second.get();
+        t_eglCurrent = ctx;
+        return;
+    }
+    auto ptr = std::make_unique<REContext>();
+    REContext* raw = ptr.get();
+    g_eglMap.emplace(ctx, std::move(ptr));
+    t_current = raw;
+    t_eglCurrent = ctx;
+}
+
+void REContext::clearEgl(void* ctx) noexcept {
+    if (ctx == nullptr) return;
+    std::lock_guard<std::mutex> lock(g_eglMutex);
+    auto it = g_eglMap.find(ctx);
+    if (it == g_eglMap.end()) return;
+    if (t_current == it->second.get()) {
+        t_current = &t_fallback;
+        t_eglCurrent = nullptr;
+    }
+    g_eglMap.erase(it);
 }
 
 // ---------------------------------------------------------------------------

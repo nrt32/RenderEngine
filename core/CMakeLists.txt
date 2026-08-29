@@ -45,7 +45,13 @@ target_link_libraries(re_core PUBLIC
 target_link_libraries(re_core PRIVATE $<BUILD_INTERFACE:glfw> $<BUILD_INTERFACE:glad_gl_core_46>)
 
 # EGL is used by the surfaceless fallback in utils/offscreen_context.cpp (the
-# offscreen context moved out of core/ in V2.1); core/ itself only needs GLFW.
+# offscreen context moved out of core/ in V2.1); T13 per-EGLContext REContext map
+# requires core/ to know RE_HAS_EGL as well so g_eglMap is compiled when EGL is
+# present, while VG9 configure must still pass when libEGL is missing.
+find_library(RE_EGL_LIBRARY NAMES EGL)
+if(RE_EGL_LIBRARY)
+    target_compile_definitions(re_core PRIVATE RE_HAS_EGL=1)
+endif()
 find_package(Threads REQUIRED)
 target_link_libraries(re_core PUBLIC Threads::Threads)
 

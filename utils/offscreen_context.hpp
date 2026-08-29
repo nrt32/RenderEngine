@@ -20,11 +20,40 @@
 #include "core/load_core_gl.hpp"
 #include "data/result.hpp"
 
+#ifdef RE_HAS_EGL
+#include <EGL/egl.h>
+#endif
+
 struct GLFWwindow;
 
 namespace re::core {
 class GlfwRuntime;
 }
+
+namespace re::utils {
+
+/// Deleter for GLFWwindow owned by OffscreenContext (RAII via unique_ptr).
+struct GlfwDeleter {
+    void operator()(GLFWwindow* w) const noexcept;
+};
+
+/// Typed EGL handle for the surfaceless fallback (T13).
+/// When RE_HAS_EGL is not defined (VG9 — libEGL missing at configure),
+/// the same layout is kept with void* placeholders so the header stays
+/// compilable without EGL headers; only the EGL backend is disabled.
+struct EglHandle {
+#ifdef RE_HAS_EGL
+    EGLDisplay dpy{EGL_NO_DISPLAY};
+    EGLContext ctx{EGL_NO_CONTEXT};
+    EGLSurface surf{EGL_NO_SURFACE};
+#else
+    void* dpy{nullptr};
+    void* ctx{nullptr};
+    void* surf{nullptr};
+#endif
+};
+
+} // namespace re::utils
 
 namespace re::utils {
 
@@ -122,15 +151,16 @@ class OffscreenContext {
 
     /// Access underlying GLFW window handle (for REContext switching tests).
     /// Null when backend is not Glfw.
-    /// @note lifetime: borrowed — owned by `OffscreenContext::window_` (RAII via `release()`), valid while `*this` lives.
-    GLFWwindow* /*borrow*/ glfwHandle() const noexcept { return window_; }
+    /// @note lifetime: borrowed — owned by `OffscreenContext::window_` (RAII via unique_ptr `GlfwDeleter`), valid while `*this` lives.
+    GLFWwindow* /*borrow*/ glfwHandle() const noexcept { return window_.get(); }
 
    private:
     explicit OffscreenContext(ContextBackend backend) noexcept;
 
     /// Destroy the underlying GLFW window / EGL display+context, if any.
     /// Idempotent: members are nulled after release, so a second call is a
-    /// no-op.
+    /// no-op. Move-nulling via unique_ptr and EglHandle reset keeps the
+    /// destructor idempotent without double-free.
     void release() noexcept;
 
     static data::Result<OffscreenContext> createGlfw();
@@ -139,9 +169,8 @@ class OffscreenContext {
     static data::Result<OffscreenContext> createCgl();
     static data::Result<OffscreenContext> createPlatformFallback();
 
-    GLFWwindow* window_{nullptr};
-    void* eglDisplay_{nullptr};
-    void* eglContext_{nullptr};
+    std::unique_ptr<GLFWwindow, GlfwDeleter> window_{nullptr};
+    EglHandle egl_{};
     ContextBackend backend_{ContextBackend::Glfw};
     core::GlContextInfo info_{};
     std::shared_ptr<core::GlfwRuntime> glfwRuntime_;

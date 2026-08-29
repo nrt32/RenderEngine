@@ -196,11 +196,16 @@ class REContext {
     // ---- global per-GL-context API ----
 
     /// Return the REContext for the current thread's current GL context.
-    /// Thread-local pointer set by loadCoreGl() / makeContextCurrent(GLFWwindow*).
-    /// Each GLFWwindow* maps to its own REContextState; EGL/surfaceless contexts
-    /// use a per-thread fallback. Single-threaded gate stays, but state is not
-    /// process-global singleton — worker threads with private contexts get private
-    /// mirrors with no lock.
+    /// Thread-local pointer `t_current` is set by `setCurrentWindow` /
+    /// `setCurrentEgl` and points into one of two mutex-guarded maps:
+    /// `g_windowMap` (GLFWwindow*) or `g_eglMap` (EGLContext). The mutex is
+    /// held only for map insertion/lookup, not for `t_current` access — the
+    /// single-threaded contract (nfr.md:24) keeps per-frame GL work
+    /// thread-local and lock-free, while still isolating per-EGLContext state.
+    /// EGL contexts therefore start cold (no viewport/clearColor bleed) even on
+    /// the same thread; the fallback `t_fallback` is retained only for the
+    /// non-EGL fallback path (no display, no EGL) where no EGLContext exists.
+    /// When RE_HAS_EGL is not defined the EGL map is absent and fallback is used.
     static REContext& current() noexcept;
 
     /// Set the current REContext for this thread to the state belonging to
@@ -218,6 +223,17 @@ class REContext {
     /// Sync REContext::current() from the currently-current GLFW context
     /// (via glfwGetCurrentContext). Called by loadCoreGl() after glad loads.
     static void syncFromGLFW() noexcept;
+
+    /// Set the current REContext for this thread to the state belonging to
+    /// EGL `ctx` (creates if not present). `dpy` is kept for future display-
+    /// scoped extensions but the key is `ctx` alone. No GL call — pure cache.
+    /// Uses void* for EGL handles to keep the public header EGL-free (guardrail
+    /// no EGL leak to core headers; typed EGLDisplay/EGLContext live only in
+    /// utils/offscreen_context.hpp and core/re_context.cpp with RE_HAS_EGL guard).
+    static void setCurrentEgl(void* dpy, void* ctx) noexcept;
+
+    /// Clear the mapping for EGL `ctx` (called on EGL context destruction).
+    static void clearEgl(void* ctx) noexcept;
 
     /// Explicit invalidation of the current context's cache (public for tests
     /// and SampleHarness post-ImGui boundary — no auto-guess).
