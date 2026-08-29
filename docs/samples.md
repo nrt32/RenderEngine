@@ -162,7 +162,7 @@ soft tissue opaque/bright). The slice sample loads the teapot and clips it by a
 horizontal plane at its vertical midpoint (`y = 0.5*(min.y + max.y)`, kept side
 `y >= midpoint`) through `render::SliceRenderer` — the geometry shader keeps the
 upper half and emits the on-plane cross-section (slicing is geometry, not
-compositing, SPEC §3). The OIT sample composes REAL meshes (the shared scene
+compositing, SPEC §3). **Hotfix T19 (2026-08-30):** the bounded `volume` and `slice` samples previously lost `itemIds`/`plane` because `SceneViewBuilder::syncLive` is intentionally scoped to `rect` + `camera` only — `volume_sample.cpp` and `slice_sample.cpp` now mirror their long-lived peers `volume_long.cpp`/`slice_long.cpp` by assigning `builder_.view() = view_` after init and by preserving `plane`/`itemIds` across each `syncLive` (slice saves/restores `PlaneDesc` and updates `builder_.view()`; volume carries `itemIds` via the builder's stored view), so `syncRenderPresent` receives a view with one item and (for slice) a plane, restoring `FR-render.6`/`FR-render.4` rendering. The OIT sample composes REAL meshes (the shared scene
 rig `app/oit_scene.hpp` — the exact arrangement the T19 gate probes): two
 OPAQUE meshes, a golden box and the Stanford bunny at different depths, render
 first through a `render::View` whose per-view depth-test flag is ON

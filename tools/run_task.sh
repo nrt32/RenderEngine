@@ -444,12 +444,12 @@ CORE="$(mktemp)"; IMPLPROMPT="$(mktemp)"; REVIEWPROMPT="$(mktemp)"
 trap 'rm -f "$CORE" "$IMPLPROMPT" "$REVIEWPROMPT"' EXIT
 
 {
-  awk '/^## T[0-9]+([ :]|$)/ { exit } { print }' "$TASKS"
+  awk '/^## T[0-9]+[a-z]?([ :]|$)/ { exit } { print }' "$TASKS"
   echo
   echo "## Task to execute (fresh session, one task only)"
   awk -v n="$N" '
     $0 ~ ("^## T" n "([ :]|$)") { on = 1; next }
-    on && ($0 ~ /^## T[0-9]+([ :]|$)/ || $0 ~ /^# /) { exit }
+    on && ($0 ~ /^## T[0-9]+[a-z]?([ :]|$)/ || $0 ~ /^# /) { exit }
     on { print }
   ' "$TASKS"
 } > "$CORE"

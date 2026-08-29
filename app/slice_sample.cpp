@@ -110,18 +110,26 @@ class SliceSample final : public app::ISample {
         view_.setItemIds({sliceId});
         view_.setPlane(plane);
         builder_ = std::move(bld);
+        builder_.view() = view_;
     }
 
     /// The resize hook: one builder call (T7 V5) — the builder stores the framing type (fov/near/far) and its syncLive(w,h) does rect := {0,0,w,h} plus camera.setPerspectiveFromFraming at aspect w/h, which is the single helper that replaces the six private duplicates; this hook therefore forwards the live harness pixel size through the builder so the projection stays derived from the current size without re-deriving framing distance (T7).
     void onResize(int width, int height) noexcept override {
         builder_.syncLive(width, height);
+        // Preserve plane across syncLive (syncLive only touches rect + projection)
+        scene::PlaneDesc p = view_.plane.value();
         view_ = builder_.view();
+        view_.setPlane(p);
+        builder_.view() = view_;
     }
 
     data::Result<void> renderFrame(int width, int height) override {
         interactor_.update(builder_.view());
         builder_.syncLive(width, height);
+        scene::PlaneDesc p = view_.plane.value();
         view_ = builder_.view();
+        view_.setPlane(p);
+        builder_.view() = view_;
         views_ = {view_};
         return app::syncRenderPresent(ctx_, views_);
     }

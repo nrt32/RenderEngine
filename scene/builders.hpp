@@ -79,6 +79,7 @@ class SceneViewBuilder {
     /// One call live-dims update — replaces the former per-sample helper.
     ///
     /// Sets rect to {0,0,width,height} and re-derives camera perspective from stored framing at aspect `width/height` (clamped degenerate dims → 1, same rule as app::aspectFromDims). Change-guarded so same-size reapplication is free. This is the sole helper definition (the 6 private duplicates in samples are removed, T7 gate expects single helper in this builder, not 6 copies).
+    /// Intentionally scoped to rect + camera only (SRP — one helper, not six private duplicates per T7): callers that carry itemIds/plane/clearColor/depthConfig/lights must preserve those fields across syncLive by assigning builder.view() after init and by save/restore of plane/itemIds across each syncLive (see volume_long/slice_long peers; hotfix T19 keeps this helper minimal while samples preserve their View state explicitly).
     void applyLiveDims(int width, int height) noexcept {
         view_.setRect(Rect{0, 0, width, height});
         const float w = static_cast<float>(width > 0 ? width : 1);

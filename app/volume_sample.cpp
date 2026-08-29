@@ -90,6 +90,7 @@ class VolumeSample final : public app::ISample {
         view_.setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
         view_.setItemIds({volId});
         builder_ = std::move(bld);
+        builder_.view() = view_;
     }
 
     /// The resize hook: one builder call (T7 V5) — the builder stores the framing type (fov/near/far) and its syncLive(w,h) does rect := {0,0,w,h} plus camera.setPerspectiveFromFraming at aspect w/h, which is the single helper that replaces the six private duplicates; this hook therefore forwards the live harness pixel size through the builder so the projection stays derived from the current size without re-deriving framing distance (T7).
