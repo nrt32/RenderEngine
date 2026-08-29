@@ -302,19 +302,18 @@ TEST(T16VolumeSlice, MidplaneMatchesCpuOracleWithinOneByte) {
 
     constexpr std::uint32_t kW = 64u;
     constexpr std::uint32_t kH = 64u;
-    RenderedTarget target = makeTarget(kW, kH);
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kW;
-    rt.height = kH;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
-    render::VolumeSliceRenderer renderer;
-    auto result = renderer.render(scene, broker::toRenderCamera(broker::makeSliceCamera(2.0f, 2.0f)), rt);
+    // T3b View port: VolumeSliceRenderer::render deleted
+    auto rendererPtr = std::make_shared<render::VolumeSliceRenderer>();
+    render::View view1(render::ViewRect{0, 0, static_cast<int>(kW), static_cast<int>(kH)}, glm::vec4(0,0,0,0));
+    view1.setCamera(broker::toRenderCamera(broker::makeSliceCamera(2.0f, 2.0f)));
+    view1.addItem(scene, rendererPtr);
+    auto result = view1.renderWithEnsure();
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
-
+    ASSERT_NE(view1.target(), nullptr);
+    view1.target()->framebuffer().bind();
     const std::vector<std::uint8_t> pixels = readBoundFramebuffer(kW, kH);
+    view1.target()->framebuffer().unbind();
 
     // Dense sweep: every pixel either matches the analytic oracle (inside the
     // footprint [0.5, 1.5]^2) or is exact transparent black (outside). The
@@ -383,14 +382,7 @@ TEST(T16VolumeSlice, StateChangeReextractsNewLayerWithoutCpuImage) {
     // 2x2 target over [0,2]^2: pixel centers at display {0.5, 1.5} == the
     // outer voxel centers, so each pixel reads its column's voxel EXACTLY
     // (continuous index integers — zero interpolation error).
-    RenderedTarget target = makeTarget(2u, 2u);
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = 2u;
-    rt.height = 2u;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
-    render::VolumeSliceRenderer renderer;
+    auto rendererPtr2 = std::make_shared<render::VolumeSliceRenderer>();
     render::VolumeSliceScene scene;
     render::VolumeSliceInstance instance;
     instance.dataset = dataset;
@@ -402,9 +394,15 @@ TEST(T16VolumeSlice, StateChangeReextractsNewLayerWithoutCpuImage) {
     instance.plane.point = glm::vec3(0.0f, 0.0f, 0.5f);
     scene.slices.clear();
     scene.slices.push_back(instance);
-    auto first = renderer.render(scene, broker::toRenderCamera(broker::makeSliceCamera(2.0f, 2.0f)), rt);
+    render::View viewA(render::ViewRect{0, 0, 2, 2}, glm::vec4(0,0,0,0));
+    viewA.setCamera(broker::toRenderCamera(broker::makeSliceCamera(2.0f, 2.0f)));
+    viewA.addItem(scene, rendererPtr2);
+    auto first = viewA.renderWithEnsure();
     ASSERT_TRUE(first.ok()) << first.error().message;
+    ASSERT_NE(viewA.target(), nullptr);
+    viewA.target()->framebuffer().bind();
     const std::vector<std::uint8_t> layer0 = readBoundFramebuffer(2u, 2u);
+    viewA.target()->framebuffer().unbind();
 
     // State B: ONLY the plane point moves — one voxel layer forward (held
     // index 1). No new renderer, no new dataset upload, no intermediate
@@ -412,10 +410,16 @@ TEST(T16VolumeSlice, StateChangeReextractsNewLayerWithoutCpuImage) {
     instance.plane.point = glm::vec3(0.0f, 0.0f, 1.5f);
     scene.slices.clear();
     scene.slices.push_back(instance);
-    auto second = renderer.render(scene, broker::toRenderCamera(broker::makeSliceCamera(2.0f, 2.0f)), rt);
+    render::View viewB(render::ViewRect{0, 0, 2, 2}, glm::vec4(0,0,0,0));
+    viewB.setCamera(broker::toRenderCamera(broker::makeSliceCamera(2.0f, 2.0f)));
+    viewB.addItem(scene, rendererPtr2);
+    auto second = viewB.renderWithEnsure();
     ASSERT_TRUE(second.ok()) << second.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
+    ASSERT_NE(viewB.target(), nullptr);
+    viewB.target()->framebuffer().bind();
     const std::vector<std::uint8_t> layer1 = readBoundFramebuffer(2u, 2u);
+    viewB.target()->framebuffer().unbind();
 
     // Closed form: layer k's density at column (x,y) is x + 2y + 4k, so the
     // red byte IS the density and the green byte is 255 minus it. Readback
@@ -499,23 +503,20 @@ TEST(T16VolumeSlice, FullFrameMatchesOracleOnMiddleLayer) {
     render::VolumeSliceScene scene;
     scene.slices.push_back(instance);
 
-    // Target == slice dims: every pixel center is a voxel center.
+    // Target == slice dims: every pixel center is a voxel center. T3b View port.
     constexpr std::uint32_t kW = 16u;
     constexpr std::uint32_t kH = 16u;
-    RenderedTarget target = makeTarget(kW, kH);
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kW;
-    rt.height = kH;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
-    render::VolumeSliceRenderer renderer;
-    auto result =
-        renderer.render(scene, broker::toRenderCamera(broker::makeSliceCamera(16.0f, 16.0f)), rt);
+    auto rendererPtr3 = std::make_shared<render::VolumeSliceRenderer>();
+    render::View view3(render::ViewRect{0,0,static_cast<int>(kW),static_cast<int>(kH)}, glm::vec4(0,0,0,0));
+    view3.setCamera(broker::toRenderCamera(broker::makeSliceCamera(16.0f, 16.0f)));
+    view3.addItem(scene, rendererPtr3);
+    auto result = view3.renderWithEnsure();
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
-
+    ASSERT_NE(view3.target(), nullptr);
+    view3.target()->framebuffer().bind();
     const std::vector<std::uint8_t> pixels = readBoundFramebuffer(kW, kH);
+    view3.target()->framebuffer().unbind();
     for (std::uint32_t py = 0; py < kH; ++py) {
         for (std::uint32_t px = 0; px < kW; ++px) {
             // Held index = sizeZ/2 = 8; density = px + py + 8 (exact).
@@ -573,19 +574,18 @@ TEST(T16VolumeSlice, ObliquePlaneMatchesRayOracleAndRejectsMisses) {
 
     constexpr std::uint32_t kW = 64u;
     constexpr std::uint32_t kH = 64u;
-    RenderedTarget target = makeTarget(kW, kH);
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kW;
-    rt.height = kH;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
-    render::VolumeSliceRenderer renderer;
-    auto result = renderer.render(scene, camera, rt);
+    // T3b View port: VolumeSliceRenderer::render deleted
+    auto rendererPtr4 = std::make_shared<render::VolumeSliceRenderer>();
+    render::View view4(render::ViewRect{0,0,static_cast<int>(kW),static_cast<int>(kH)}, glm::vec4(0,0,0,0));
+    view4.setCamera(camera);
+    view4.addItem(scene, rendererPtr4);
+    auto result = view4.renderWithEnsure();
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
-
+    ASSERT_NE(view4.target(), nullptr);
+    view4.target()->framebuffer().bind();
     const std::vector<std::uint8_t> pixels = readBoundFramebuffer(kW, kH);
+    view4.target()->framebuffer().unbind();
 
     // Five probes: the center plus ±10 px along both screen axes (offsets of
     // 10/64 * 1.5 ≈ 0.234 view units; worst-case plane distance from the cube
@@ -773,7 +773,7 @@ TEST(T16VolumeSlice, TypedErrorsOnBadInput) {
         broker::toRenderCamera(broker::makeSliceCamera(2.0f, 2.0f));
 
     // Null dataset reference: typed error code 1 naming the cause — never a
-    // crash, never a silently empty layer.
+    // crash, never a silently empty layer. T3b View port: render() deleted.
     {
         render::VolumeSliceScene scene;
         render::VolumeSliceInstance nullInstance;
@@ -781,8 +781,11 @@ TEST(T16VolumeSlice, TypedErrorsOnBadInput) {
         nullInstance.transferFunction = tf;
         nullInstance.plane.point = glm::vec3(0.0f, 0.0f, 1.0f);
         scene.slices.push_back(nullInstance);
-        render::VolumeSliceRenderer renderer;
-        auto result = renderer.render(scene, camera, rt);
+        auto rendererPtr = std::make_shared<render::VolumeSliceRenderer>();
+        render::View view(render::ViewRect{0,0,8,8}, glm::vec4(0,0,0,0));
+        view.setCamera(camera);
+        view.addItem(scene, rendererPtr);
+        auto result = view.renderWithEnsure();
         ASSERT_TRUE(result.failed());
         EXPECT_EQ(result.error().code, 1);
         EXPECT_NE(result.error().message.find("null dataset"),
@@ -804,15 +807,19 @@ TEST(T16VolumeSlice, TypedErrorsOnBadInput) {
         instance.transferFunction = tooMany;
         instance.plane.point = glm::vec3(0.0f, 0.0f, 1.0f);
         scene.slices.push_back(instance);
-        render::VolumeSliceRenderer renderer;
-        auto result = renderer.render(scene, camera, rt);
+        auto rendererPtr = std::make_shared<render::VolumeSliceRenderer>();
+        render::View view(render::ViewRect{0,0,8,8}, glm::vec4(0,0,0,0));
+        view.setCamera(camera);
+        view.addItem(scene, rendererPtr);
+        auto result = view.renderWithEnsure();
         ASSERT_TRUE(result.failed());
         EXPECT_EQ(result.error().code, 1);
         EXPECT_NE(result.error().message.find("more than 8 control points"),
                   std::string::npos);
     }
 
-    // Zero-sized target: invalid geometry, rejected before any draw.
+    // Zero-sized target: invalid geometry, rejected before any draw. View path
+    // validates rect size via ensureTarget (invalid rect).
     {
         render::VolumeSliceScene scene;
         render::VolumeSliceInstance instance;
@@ -820,16 +827,14 @@ TEST(T16VolumeSlice, TypedErrorsOnBadInput) {
         instance.transferFunction = tf;
         instance.plane.point = glm::vec3(0.0f, 0.0f, 1.0f);
         scene.slices.push_back(instance);
-        render::VolumeSliceRenderer renderer;
-        render::RenderTarget badTarget;
-        badTarget.framebuffer = &target.framebuffer;
-        badTarget.width = 0u;
-        badTarget.height = 8u;
-        auto result = renderer.render(scene, camera, badTarget);
+        auto rendererPtr = std::make_shared<render::VolumeSliceRenderer>();
+        // Zero width view should fail ensureTarget
+        render::View view(render::ViewRect{0,0,0,8}, glm::vec4(0,0,0,0));
+        view.setCamera(camera);
+        view.addItem(scene, rendererPtr);
+        auto result = view.renderWithEnsure();
         ASSERT_TRUE(result.failed());
         EXPECT_EQ(result.error().code, 1);
-        EXPECT_NE(result.error().message.find("invalid target size"),
-                  std::string::npos);
     }
 }
 

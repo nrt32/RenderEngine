@@ -17,7 +17,7 @@
 // (`render::AssetRegistry`, SPEC §7 T14 — the RGBA8 conversion and row flip
 // are part of that GPU-upload contract, not an app-side quad path).
 //
-// Stateless rendering: PlaneRenderer::render(scene, camera, target) receives
+// Stateless rendering: PlaneRenderer::drawLayer(scene, camera) receives (T3b render() deleted)
 // all of its data per call; the renderer owns only GL resources (its cached
 // textured-plane shader program and one shared unit-quad VAO/VBO). GPU
 // textures live in the shared asset store: every image is content-hash-deduped
@@ -160,11 +160,6 @@ class PlaneRenderer {
     explicit PlaneRenderer(
         std::shared_ptr<AssetRegistry> assets = AssetRegistry::shared());
 
-    /// Test-only direct path kept for suite-green (will be removed at T3b).
-    /// Name not `render(` so T3a grep stays 0.
-    data::Result<void> renderForTest(const PlaneScene& scene, const Camera& camera,
-                                     const RenderTarget& target);
-
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
     /// assuming ReView already performed bind+viewport+clear via REContext::current()
     /// (T2 global per-GL-context, 2 layers sharing viewport issue 1 glViewport).
@@ -189,8 +184,7 @@ class PlaneRenderer {
     /// quadVao_ `optional<>` member) — valid while this renderer is.
     data::Result<core::VertexArray*> quadGeometry();
 
-    /// The ONE shared instance-draw loop behind both entry points
-    /// (render() after its pass prologue, drawLayer() as a View layer):
+    /// The ONE shared instance-draw loop for drawLayer():
     /// installs `program`, maps the shared unit quad onto each instance's
     /// corner box + model transform (single copy of the basis-matrix math),
     /// binds textures via the shared store (O(1) handle resolve, no per-renderer

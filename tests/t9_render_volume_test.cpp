@@ -51,6 +51,7 @@
 #include "core/texture2d.hpp"
 #include "data/volume_dataset.hpp"
 #include "render/types.hpp" // render::Camera / render::RenderTarget
+#include "render/view.hpp"
 #include "render/volume_renderer.hpp"
 #include "tests/offscreen_fixture.hpp"
 #include "tests/test_helpers.hpp"
@@ -186,25 +187,30 @@ volume::RgbaColor analyticRayCast(const glm::vec3& origin,
 
 /// Render `scene` to the target and read back the single pixel at (x, y).
 /// `x`/`y` are readback coordinates (y = 0 is the bottom scanline).
+/// T3b: VolumeRenderer::render deleted — ported to View path 1/255 (FR-render.6).
 std::vector<std::uint8_t> renderAndReadPixel(const render::VolumeScene& scene,
                                              render::VolumeRenderer& renderer,
                                              RenderedTarget& target,
                                              std::uint32_t x, std::uint32_t y) {
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
+    (void)target;
     render::Camera camera = makeCamera();
-    auto result = renderer.render(scene, camera, rt);
+    auto rendererPtr = std::make_shared<render::VolumeRenderer>(renderer.assets());
+    render::View view(render::ViewRect{0, 0, static_cast<int>(kTargetWidth),
+                                       static_cast<int>(kTargetHeight)},
+                      glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+    view.setCamera(camera);
+    view.addItem(scene, rendererPtr);
+    auto result = view.renderWithEnsure();
     EXPECT_TRUE(result.ok()) << result.error().message;
-
+    EXPECT_NE(view.target(), nullptr);
+    if (!view.target()) return {};
+    view.target()->framebuffer().bind();
     std::vector<std::uint8_t> pixels;
     re::utils::PixelReader reader;
     auto read = reader.read(x, y, 1u, 1u, pixels);
     EXPECT_TRUE(read.ok()) << read.error().message;
     EXPECT_EQ(pixels.size(), 4u);
+    view.target()->framebuffer().unbind();
     return pixels;
 }
 
@@ -335,15 +341,13 @@ TEST(T9RenderVolume, RejectsTooManyTransferFunctionPoints) {
     render::VolumeScene scene;
     scene.volumes.push_back(instance);
 
-    RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-    render::VolumeRenderer renderer;
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
-    auto result = renderer.render(scene, makeCamera(), rt);
+    auto rendererPtr = std::make_shared<render::VolumeRenderer>();
+    render::View view(render::ViewRect{0, 0, static_cast<int>(kTargetWidth),
+                                       static_cast<int>(kTargetHeight)},
+                      glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+    view.setCamera(makeCamera());
+    view.addItem(scene, rendererPtr);
+    auto result = view.renderWithEnsure();
     EXPECT_TRUE(result.failed());
     EXPECT_NE(result.error().message.find("more than 8 control points"),
               std::string::npos);

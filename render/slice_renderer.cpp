@@ -106,24 +106,6 @@ data::Result<void> SliceRenderer::clipInstances(const SliceScene& scene,
     return data::Result<void>(data::value);
 }
 
-data::Result<void> SliceRenderer::renderForTest(const SliceScene& scene,
-                                             const Camera& camera,
-                                             const ClipPlane& plane,
-                                             const RenderTarget& target) {
-    if (target.width == 0u || target.height == 0u) {
-        return data::makeError<void>(1, "SliceRenderer: invalid target size");
-    }
-    auto programResult = clipProgram();
-    if (programResult.failed()) {
-        return data::makeError<void>(programResult.error().code, programResult.error().message);
-    }
-    auto& ctx = core::REContext::current();
-    ctx.beginPass(target.framebuffer, target.width, target.height,
-                  target.clearColor.r, target.clearColor.g,
-                  target.clearColor.b, target.clearColor.a);
-    return clipInstances(scene, camera, plane, *programResult);
-}
-
 data::Result<void> SliceRenderer::drawLayer(const SliceScene& scene, const Camera& camera) {
     return drawLayer(scene, camera, scene.plane);
 }

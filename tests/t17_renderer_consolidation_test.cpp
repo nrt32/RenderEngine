@@ -222,23 +222,22 @@ TEST(T17RendererConsolidation, RenderersDoNotRepeatClearPrologue) {
 }
 
 TEST(T17RendererConsolidation, EveryDirectRenderEntryBeginsItsPassViaBeginPass) {
-    // Exactly six renderers own a direct render(target) entry point today;
-    // each migrated to the single prologue helper.
+    // T3b: all six render() direct entries deleted — single OIT via ViewCompositor,
+    // single drawInstances blend-off. No renderer owns a direct render(target) entry;
+    // each drawLayer assumes View already did beginPass. View::render is the sole pass owner.
     const std::vector<std::string> kDirectRenderers = {
         "mesh_renderer.cpp",         "plane_renderer.cpp",
         "volume_renderer.cpp",       "slice_renderer.cpp",
         "contour_renderer.cpp",      "volume_slice_renderer.cpp",
     };
     ASSERT_EQ(kDirectRenderers.size(), 6u)
-        << "six technique renderers expose a direct render() entry point; "
+        << "six technique renderers (all collapsed to drawLayer); "
            "update this list when that changes";
     for (const auto& file : kDirectRenderers) {
         const std::string content = readFile(kRepoRoot / "render" / file);
         ASSERT_FALSE(content.empty()) << file << " must exist";
-        EXPECT_EQ(countOccurrences(content, "ctx.beginPass("), 1)
-            << file << " begins its pass at exactly ONE site via the shared "
-                       "DrawContext::beginPass prologue (one render(target) "
-                       "entry point, one prologue call)";
+        EXPECT_EQ(countOccurrences(content, "ctx.beginPass("), 0)
+            << file << " must NOT call ctx.beginPass (T3b: View owns the pass, render() deleted, drawLayer assumes View already did beginPass)";
     }
 }
 

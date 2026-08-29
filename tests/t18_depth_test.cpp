@@ -58,6 +58,9 @@
 #include <glm/vec4.hpp>
 
 #include "data/mesh.hpp"
+#include "broker/broker.hpp"
+#include "broker/render_stack.hpp"
+#include "broker/view_compositor.hpp"
 #include "core/gl_error.hpp"
 #include "render/asset_registry.hpp"
 #include "render/imaterial.hpp"
@@ -66,9 +69,11 @@
 #include "render/phong_material.hpp"
 #include "render/view.hpp"
 #include "render/view_target.hpp"
+#include "scene/view.hpp"
 #include "tests/offscreen_fixture.hpp"
 #include "tests/test_helpers.hpp"
 #include "utils/pixel_reader.hpp"
+#include "tests/t3b_compat.hpp"
 
 namespace re::tests {
 namespace {
@@ -309,40 +314,44 @@ TEST(T18Depth, LinkedListOitCompositeUnchangedThroughDepthEnabledTarget) {
         *handle, farMaterial,
         glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -1.0f))});
 
-    // The SAME analytic scene as the established OIT gate, rendered into a
-    // DEPTH-ENABLED ViewTarget: both OIT passes keep the depth test off
-    // exactly as on a color-only target (the capture draws behind this direct
-    // render's default depth-off beginPass prologue; end() issues its own
-    // explicit core::disableDepthTest()), so the composite bytes are identical
-    // — the depth attachment simply sits unused behind them.
-    auto target = render::ViewTarget::create(kTargetWidth, kTargetHeight,
-                                             render::DepthMode::Enabled);
-    ASSERT_TRUE(target.ok()) << target.error().message;
-    EXPECT_TRUE(target->hasDepth());
-
-    render::RenderTarget rt;
-    rt.framebuffer = &target->framebuffer();
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
+    // T3b View port: OIT via ViewCompositor with depth-enabled View (single OIT via compositor, drawLayer blend-off)
     auto pipeline = std::make_shared<render::LinkedListOIT>();
-    render::MeshRenderer renderer(registry, pipeline);
-    auto result = renderer.renderForTest(scene, makeCamera(), rt);
+    auto stack = broker::RenderStack::create(registry, false);
+    stack->pipeline = pipeline;
+    stack->mesh = std::make_shared<render::MeshRenderer>(registry, pipeline);
+    auto brokerPtr = std::make_shared<broker::Broker>();
+    broker::ViewCompositor compositor(brokerPtr, stack);
+    scene::View appView;
+    appView.id = 1;
+    appView.rect = {0,0,static_cast<int>(kTargetWidth),static_cast<int>(kTargetHeight)};
+    appView.clearColor = glm::vec4(0,0,0,0);
+    // Create depth-enabled View via compositor
+    render::View* view = compositor.ensureView(0, appView);
+    ASSERT_NE(view, nullptr);
+    view->setCamera(makeCamera());
+    view->setClearColor(glm::vec4(0,0,0,0));
+    view->setDepthTest(true);
+    ASSERT_TRUE(view->ensureTarget().ok());
+    ASSERT_TRUE(view->target()->hasDepth());
+    // Route transparent meshes via compositor pending (single OIT path)
+    std::vector<render::MeshInstance> pending;
+    pending.push_back(scene.meshes[0]);
+    pending.push_back(scene.meshes[1]);
+    compositor.setTransparentItems(0, 1, pending);
+    // No opaque View items (both are transparent, so View renders just clear)
+    auto result = compositor.renderAll();
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
-
+    view->target()->framebuffer().bind();
     for (int i = 0; i < 5; ++i) {
         static constexpr std::uint32_t kSampleX[5] = {32u, 8u, 56u, 8u, 56u};
         static constexpr std::uint32_t kSampleY[5] = {32u, 8u, 8u, 56u, 56u};
-        expectPixel(readPixel(target->framebuffer(), kSampleX[i], kSampleY[i]),
+        expectPixel(readPixel(kSampleX[i], kSampleY[i]),
                     kOitExpectedR, kOitExpectedG, kOitExpectedB,
                     "OIT-over-depth-enabled-target probe", kOitExpectedA);
     }
+    view->target()->framebuffer().unbind();
 
-    // Exactly two captured fragments per pixel (both full-screen transparent
-    // quads), proving the capture pass ran unmodified on the depth-enabled
-    // target (test-consumed counter readback, guardrail no_production_readback).
     const auto captured = pipeline->readCapturedFragmentCount();
     ASSERT_TRUE(captured.ok()) << captured.error().message;
     EXPECT_EQ(*captured, kExpectedCapturedFragments);

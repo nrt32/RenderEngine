@@ -55,51 +55,6 @@ data::Result<void> ContourRenderer::drawOne(const ContourObject& object,
     return (*geometry)->draw();
 }
 
-data::Result<void> ContourRenderer::render(const ContourScene& scene,
-                                           const Camera& camera,
-                                           const RenderTarget& target) {
-    if (target.width == 0u || target.height == 0u) {
-        return data::makeError<void>(1, "ContourRenderer: invalid target size");
-    }
-
-    auto programResult = program();
-    if (programResult.failed()) {
-        return data::makeError<void>(programResult.error().code,
-                                     programResult.error().message);
-    }
-    core::ShaderProgram* programPtr = *programResult;
-
-    // Begin the pass through the ONE shared prologue (bind target → viewport
-    // → clear → depth state → blend off). A null framebuffer selects the
-    // window's on-screen default framebuffer (interactive samples); direct
-    // single-scene renders keep the deterministic depth-off painter's-order
-    // pass (a target's optional depth attachment is consumed only via the
-    // per-view opt-in), so the depth test is left off. Blending must be OFF
-    // so every stroke pixel is exactly uColor (the FR-app.3 readback compares
-    // exact bytes ±1/255) —
-    // beginPass disables it.
-    auto& ctx = core::REContext::current();
-    ctx.beginPass(target.framebuffer, target.width, target.height,
-                  target.clearColor.r, target.clearColor.g,
-                  target.clearColor.b, target.clearColor.a);
-
-    programPtr->use();
-    programPtr->setUniformMat4("uView", camera.view);
-    programPtr->setUniformMat4("uProj", camera.proj);
-    programPtr->setUniformVec2("uViewport",
-                               glm::vec2(static_cast<float>(target.width),
-                                         static_cast<float>(target.height)));
-    for (const ContourObject& object : scene.contours) {
-        programPtr->setUniformVec3("uPlaneNormal", object.plane.normal);
-        programPtr->setUniformVec3("uPlanePoint", object.plane.point);
-        auto drawn = drawOne(object, programPtr);
-        if (drawn.failed()) {
-            return drawn;
-        }
-    }
-    return data::Result<void>(data::value);
-}
-
 data::Result<void> ContourRenderer::drawLayer(const ContourObject& object, const Camera& camera) {
     auto programResult = program();
     if (programResult.failed()) {

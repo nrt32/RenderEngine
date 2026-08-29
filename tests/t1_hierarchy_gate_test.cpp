@@ -34,6 +34,7 @@
 #include "tests/offscreen_fixture.hpp"
 #include "tests/test_helpers.hpp"
 #include "utils/pixel_reader.hpp"
+#include "tests/t3b_compat.hpp"
 
 namespace re::tests {
 
@@ -198,22 +199,19 @@ TEST(T1Hierarchy, TeapotRendersThroughBridgeCenterPixelAnalytic) {
     render::MeshScene scene;
     scene.meshes.push_back(inst);
     render::Camera cam = makeOrthoCamera();
-    auto targetColor = core::Texture2D::create();
-    auto targetFb = core::Framebuffer::create();
-    ASSERT_TRUE(targetColor.ok());
-    ASSERT_TRUE(targetFb.ok());
-    std::vector<uint8_t> zeros(kW*kH*4, 0);
-    targetColor->bind(0); targetColor->upload(kW, kH, zeros.data()); targetColor->unbind(0);
-    targetFb->bind(); targetFb->attachColor(*targetColor); ASSERT_TRUE(targetFb->isComplete()); targetFb->unbind();
-    render::RenderTarget target{&*targetFb, kW, kH, glm::vec4(0,0,0,0)};
-    render::MeshRenderer renderer(registry, nullptr);
-    auto rr = renderer.renderForTest(scene, cam, target);
+    // T3b View port: MeshRenderer::render deleted — use View path (single drawInstances blend-off)
+    auto rendererPtr = std::make_shared<::re::render::MeshRenderer>(registry, nullptr);
+    auto viewPtr = std::make_shared<::re::render::View>(::re::render::ViewRect{0,0,static_cast<int>(kW),static_cast<int>(kH)}, glm::vec4(0,0,0,0));
+    viewPtr->setCamera(cam);
+    viewPtr->addItem(scene, rendererPtr);
+    auto rr = viewPtr->renderWithEnsure();
     ASSERT_TRUE(rr.ok()) << rr.error().message;
-    targetFb->bind();
+    ASSERT_NE(viewPtr->target(), nullptr);
+    viewPtr->target()->framebuffer().bind();
     std::vector<uint8_t> pixels;
     utils::PixelReader reader;
     auto read = reader.read(kCX, kCY, 1, 1, pixels);
-    targetFb->unbind();
+    viewPtr->target()->framebuffer().unbind();
     ASSERT_TRUE(read.ok()) << read.error().message;
     ASSERT_EQ(pixels.size(), 4u);
     EXPECT_NEAR(pixels[0], kExpR, 1) << "MeshObject(Sphere) center R within 1/255 analytic (51)";

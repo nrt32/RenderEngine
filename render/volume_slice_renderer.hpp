@@ -27,7 +27,7 @@
 // extracted image reproduces the CPU slice oracle byte-for-byte within
 // 1/255 at every probe.
 //
-// Stateless rendering: render()/drawLayer() receive all of their data per
+// Stateless rendering: drawLayer() receives all of its data per (T3b render() deleted)
 // call; the renderer owns only GL resources (its cached shader program and
 // one shared full-screen quad VAO/VBO). GPU 3D textures live in the SHARED
 // asset store (`render::AssetRegistry`, unified multi-kind store): every
@@ -138,16 +138,6 @@ class VolumeSliceRenderer {
 
     VolumeSliceRenderer(const VolumeSliceRenderer&) = delete;
     VolumeSliceRenderer& operator=(const VolumeSliceRenderer&) = delete;
-
-    /// Render `scene`'s extracted slices into `target` from `camera`: binds
-    /// the target framebuffer, sets the viewport, clears to the clear color,
-    /// disables depth test and blending (exact colors), then draws one
-    /// full-screen quad per instance. On success the target framebuffer is
-    /// left bound (so tests can read it back). Returns a typed error if the
-    /// shader fails to build, an instance carries a null dataset or an
-    /// oversized transfer function, or a draw cannot be issued.
-    data::Result<void> render(const VolumeSliceScene& scene,
-                              const Camera& camera, const RenderTarget& target);
 
     /// Draw one layer into the currently-bound framebuffer (ReView's
     /// ViewTarget), assuming ReView already performed bind+viewport+clear via

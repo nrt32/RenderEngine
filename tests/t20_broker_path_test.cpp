@@ -64,6 +64,7 @@
 #include "tests/offscreen_fixture.hpp"
 #include "tests/test_helpers.hpp"
 #include "utils/pixel_reader.hpp"
+#include "tests/t3b_compat.hpp"
 
 namespace re::tests {
 namespace {
@@ -312,13 +313,13 @@ TEST(T20BrokerPath, BridgedSceneLayersMatchDirectRendererOracles) {
     render::MeshRenderer meshR(oracleRegistry, nullptr);
     render::VolumeRenderer volumeR(oracleRegistry);
     render::PlaneRenderer planeR(oracleRegistry);
-    ASSERT_TRUE(meshR.renderForTest(meshOracle, oracleCamera, ort).ok());
+    ASSERT_TRUE(renderMeshViaView(meshR, meshOracle, oracleCamera, ort).ok());
     const std::vector<std::uint8_t> meshOraclePx =
         readPixel(oracleTarget.framebuffer, kCenter, kCenter);
-    ASSERT_TRUE(volumeR.render(volumeOracle, oracleCamera, ort).ok());
+    ASSERT_TRUE(renderVolumeViaView(volumeR, volumeOracle, oracleCamera, ort).ok());
     const std::vector<std::uint8_t> volumeOraclePx =
         readPixel(oracleTarget.framebuffer, kCenter, kCenter);
-    ASSERT_TRUE(planeR.renderForTest(planeOracle, oracleCamera, ort).ok());
+    ASSERT_TRUE(renderPlaneViaView(planeR, planeOracle, oracleCamera, ort).ok());
     const std::vector<std::uint8_t> planeOraclePx =
         readPixel(oracleTarget.framebuffer, kCenter, kCenter);
 

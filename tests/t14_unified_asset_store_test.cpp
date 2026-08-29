@@ -66,6 +66,7 @@
 #include "utils/pixel_reader.hpp"
 #include "volume/color.hpp"
 #include "volume/transfer_function.hpp"
+#include "tests/t3b_compat.hpp"
 
 namespace re::tests {
 namespace {
@@ -169,19 +170,22 @@ std::vector<std::uint8_t> renderAndReadPixel(const render::VolumeScene& scene,
                                              RenderedTarget& target,
                                              std::uint32_t x,
                                              std::uint32_t y) {
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-    auto result = renderer.render(scene, camera, rt);
+    (void)target;
+    auto ptr = std::make_shared<render::VolumeRenderer>(renderer.assets());
+    render::View view(render::ViewRect{0,0,static_cast<int>(kTargetWidth),static_cast<int>(kTargetHeight)}, glm::vec4(0,0,0,0));
+    view.setCamera(camera);
+    view.addItem(scene, ptr);
+    auto result = view.renderWithEnsure();
     EXPECT_TRUE(result.ok()) << result.error().message;
-
+    EXPECT_NE(view.target(), nullptr);
+    if (!view.target()) return {};
+    view.target()->framebuffer().bind();
     std::vector<std::uint8_t> pixels;
     utils::PixelReader reader;
     auto read = reader.read(x, y, 1u, 1u, pixels);
     EXPECT_TRUE(read.ok()) << read.error().message;
     EXPECT_EQ(pixels.size(), 4u);
+    view.target()->framebuffer().unbind();
     return pixels;
 }
 
@@ -191,14 +195,17 @@ std::vector<std::uint8_t> renderAndReadPixel(const render::PlaneScene& scene,
                                              RenderedTarget& target,
                                              std::uint32_t x,
                                              std::uint32_t y) {
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-    auto result = renderer.renderForTest(scene, camera, rt);
+    (void)target;
+    (void)renderer;
+    auto ptr = std::make_shared<render::PlaneRenderer>();
+    render::View view(render::ViewRect{0,0,static_cast<int>(kTargetWidth),static_cast<int>(kTargetHeight)}, glm::vec4(0,0,0,0));
+    view.setCamera(camera);
+    view.addItem(scene, ptr);
+    auto result = view.renderWithEnsure();
     EXPECT_TRUE(result.ok()) << result.error().message;
-
+    EXPECT_NE(view.target(), nullptr);
+    if (!view.target()) return {};
+    view.target()->framebuffer().bind();
     std::vector<std::uint8_t> pixels;
     utils::PixelReader reader;
     auto read = reader.read(x, y, 1u, 1u, pixels);

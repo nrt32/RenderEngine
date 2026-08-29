@@ -117,7 +117,7 @@ data::Result<void> VolumeSliceRenderer::drawOne(
                          static_cast<float>(instance.dataset->sizeZ()));
 
     // RI5: uInvViewProj is hoisted to a single CPU uniform per frame (set once
-    // before the instance loop in render()/drawLayer()) so the fragment shader
+    // before the instance loop in drawLayer()) so the fragment shader
     // never computes inverse() per pixel — keep per-instance work to model-only
     // uniforms here.
     program->setUniformMat4("uInvModel", invModel);
@@ -131,83 +131,6 @@ data::Result<void> VolumeSliceRenderer::drawOne(
                                    kQuadTriangleIndices.size());
     if (draw.failed()) {
         return draw;
-    }
-    return data::Result<void>(data::value);
-}
-
-data::Result<void> VolumeSliceRenderer::render(const VolumeSliceScene& scene,
-                                               const Camera& camera,
-                                               const RenderTarget& target) {
-    if (assets_ == nullptr) {
-        // Constructed with a null store (member-init-order safety): fail with
-        // a typed error instead of dereferencing.
-        return data::makeError<void>(4,
-                                     "VolumeSliceRenderer: no shared asset "
-                                     "store");
-    }
-    if (target.width == 0u || target.height == 0u) {
-        return data::makeError<void>(1,
-                                     "VolumeSliceRenderer: invalid target "
-                                     "size");
-    }
-
-    for (const VolumeSliceInstance& instance : scene.slices) {
-        if (!instance.dataset) {
-            // A null dataset would silently render an empty layer — visually
-            // indistinguishable from an empty viewport — so it is rejected
-            // instead of skipped (typed error code 1, SPEC-style no-crash
-            // diagnostics).
-            return data::makeError<void>(
-                1, "VolumeSliceRenderer: null dataset in slice instance");
-        }
-        if (instance.transferFunction.size() > kMaxTfPoints) {
-            return data::makeError<void>(
-                1, "VolumeSliceRenderer: transfer function has more than " +
-                       std::to_string(kMaxTfPoints) +
-                       " control points");
-        }
-    }
-
-    auto programResult = sliceProgram();
-    if (programResult.failed()) {
-        return data::makeError<void>(programResult.error().code,
-                                     programResult.error().message);
-    }
-    core::ShaderProgram* program = *programResult;
-
-    // Ensure the shared full-screen quad exists; drawOne issues the indexed
-    // draw through the renderer-owned vertex array.
-    auto quadResult = screenQuad();
-    if (quadResult.failed()) {
-        return data::makeError<void>(quadResult.error().code,
-                                     quadResult.error().message);
-    }
-
-    // Begin the pass through the ONE shared prologue (bind target → viewport
-    // → clear → depth state → blend off). A null framebuffer selects the
-    // window's on-screen default framebuffer; otherwise the offscreen FBO is
-    // bound. Direct single-scene renders keep the deterministic depth-off
-    // painter's-order pass (a target's optional depth attachment is consumed
-    // only via the per-view opt-in), so the depth test stays off; blending
-    // stays off because the shader already writes the final straight-RGBA
-    // slice color (and transparent black where the plane misses the volume).
-    auto& ctx = core::REContext::current();
-    ctx.beginPass(target.framebuffer, target.width, target.height,
-                  target.clearColor.r, target.clearColor.g,
-                  target.clearColor.b, target.clearColor.a);
-
-    program->use();
-    // RI5: hoist inverse(viewProj) to a single CPU uniform per frame — the
-    // fragment shader receives uInvViewProj and never computes inverse per
-    // pixel. One uniform upload before the loop, then per-instance model-only
-    // uniforms inside drawOne.
-    const glm::mat4 invViewProj = glm::inverse(camera.proj * camera.view);
-    program->setUniformMat4("uInvViewProj", invViewProj);
-    for (const VolumeSliceInstance& instance : scene.slices) {
-        auto drawn = drawOne(instance, camera, program);
-        if (drawn.failed()) {
-            return drawn;
-        }
     }
     return data::Result<void>(data::value);
 }

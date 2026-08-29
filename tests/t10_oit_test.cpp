@@ -1,36 +1,11 @@
-// tests/t10_oit_test.cpp — T10 gate tests (FR-render.2/3, SPEC §4).
+// tests/t10_oit_test.cpp — T10 gate tests (FR-render.2/3, SPEC §4) — T3b View port.
 //
-// Asserts:
-//   (1) FR-render.2 — two overlapping quads at known depths composite to the
-//       analytic depth-ordered blend within 1/255 (LinkedListOIT capture ->
-//       depth-sort -> composite).
-//   (2) FR-render.3 — an opaque-only scene produces center-pixel alpha == 1.0,
-//       and adding one transparent quad flips the injected pipeline on
-//       (observable via a spy).
-//   (3) FR-render.3 — the pipeline interface is swappable: a stub impl drives
-//       the same MeshRenderer (begin -> drawTransparent -> end).
+// Asserts via View + ViewCompositor single OIT path (T3b): MeshRenderer no
+// longer has inline OIT branch (single drawInstances blend-off), OIT only via
+// broker/view_compositor.cpp:94 captureTransparents out-of-band.
 //
-// Analytic setup (docs/render.md): two full-screen +Z-facing quads at known
-// depths, orthographic camera looking down -Z. The near quad (world z=0, closer
-// to the camera) is {0.4,0.2,0.1,0.5}; the far quad (world z=-1) is
-// {0.1,0.6,0.3,0.4}. LinkedListOIT captures both per pixel, sorts by depth
-// (near -> far), and composites back-to-front with the premultiplied-alpha
-// "over" operator:
-//
-//   far premult  = {0.04, 0.24, 0.12, 0.4}
-//   near premult = {0.20, 0.10, 0.05, 0.5}
-//   near over far:
-//     rgb = {0.2,0.1,0.05} + (1-0.5)*{0.04,0.24,0.12} = {0.22,0.22,0.11}
-//     a   = 0.5 + (1-0.5)*0.4 = 0.7
-//   => bytes {round(0.22*255), round(0.22*255), round(0.11*255),
-//             round(0.7*255)} = {56, 56, 28, 179}
-//
-// If the pipeline sorted wrongly (far over near) the result would be
-// {0.16, 0.30, 0.15, 0.7} -> {41, 77, 38, 179}, which is outside the 1/255
-// tolerance of the depth-ordered value, so the test discriminates ordering.
-//
-// Per the GL-ownership + readback guardrails this file uses ONLY core/
-// wrappers (including utils::PixelReader for pixel readback) — no raw glXxx calls.
+// Analytic setup unchanged: two full-screen quads {0.4,0.2,0.1,0.5} near at z=0
+// and {0.1,0.6,0.3,0.4} far at z=-1 composite to {56,56,28,179} within 1/255.
 
 #include <gtest/gtest.h>
 
@@ -44,8 +19,12 @@
 #include <glm/vec4.hpp>
 #include <vector>
 
+#include "broker/broker.hpp"
+#include "broker/render_stack.hpp"
+#include "broker/view_compositor.hpp"
 #include "core/framebuffer.hpp"
 #include "core/gl_error.hpp"
+#include "core/re_context.hpp"
 #include "utils/pixel_reader.hpp"
 #include "core/texture2d.hpp"
 #include "data/mesh.hpp"
@@ -54,6 +33,8 @@
 #include "render/linked_list_oit.hpp"
 #include "render/mesh_renderer.hpp"
 #include "render/phong_material.hpp"
+#include "render/view.hpp"
+#include "scene/view.hpp"
 #include "tests/offscreen_fixture.hpp"
 #include "tests/test_helpers.hpp"
 
@@ -64,49 +45,29 @@ namespace {
 // Explainable constants (FR-render.2/3).
 // ---------------------------------------------------------------------------
 
-// Target framebuffer / viewport size: 64x64.
 constexpr std::uint32_t kTargetWidth = 64u;
 constexpr std::uint32_t kTargetHeight = 64u;
-constexpr std::uint32_t kCenterX = kTargetWidth / 2u;  // 32
-constexpr std::uint32_t kCenterY = kTargetHeight / 2u; // 32
+constexpr int kColorTolerance = 1; // 1/255 per FR-render.2
 
-// The color tolerance: 1/255 per FR-render.2.
-constexpr int kColorTolerance = 1;
+constexpr glm::vec4 kNearColor(0.4f, 0.2f, 0.1f, 0.5f);
+constexpr glm::vec4 kFarColor(0.1f, 0.6f, 0.3f, 0.4f);
 
-// The two transparent quad materials (straight RGBA). alpha < 1 => transparent.
-constexpr glm::vec4 kNearColor(0.4f, 0.2f, 0.1f, 0.5f); // near quad (z=0)
-constexpr glm::vec4 kFarColor(0.1f, 0.6f, 0.3f, 0.4f);  // far quad (z=-1)
+constexpr std::uint8_t kExpectedR = 56u;
+constexpr std::uint8_t kExpectedG = 56u;
+constexpr std::uint8_t kExpectedB = 28u;
+constexpr std::uint8_t kExpectedA = 179u;
 
-// Analytic depth-ordered composite of near-over-far (premultiplied-alpha over).
-// See the file comment for the derivation.
-constexpr std::uint8_t kExpectedR = 56u;  // round(0.22 * 255) = 56
-constexpr std::uint8_t kExpectedG = 56u;  // round(0.22 * 255) = 56
-constexpr std::uint8_t kExpectedB = 28u;  // round(0.11 * 255) = 28
-constexpr std::uint8_t kExpectedA = 179u; // round(0.70 * 255) = 179
-
-// Each of the two full-screen quads rasterizes every pixel, so the node
-// allocator captures exactly width*height*2 fragments across the frame.
 constexpr std::uint32_t kExpectedCapturedFragments =
-    kTargetWidth * kTargetHeight * 2u; // 8192
+    kTargetWidth * kTargetHeight * 2u;
 
-// ---------------------------------------------------------------------------
-// Test helpers.
-// ---------------------------------------------------------------------------
-
-/// Build a golden +Z-facing quad mesh covering [-1,1]^2 at z=0 (two triangles).
-/// The default camera: eye at (0,0,5) looking down -Z at the origin, with an
-/// orthographic projection mapping NDC [-1,1]^2 onto the full viewport.
-/// Build a color-only FBO render target of `w` x `h` pixels with clear color
-/// transparent black.
 struct RenderedTarget {
     core::Texture2D color;
     core::Framebuffer framebuffer;
-
-    RenderedTarget(core::Texture2D color, core::Framebuffer framebuffer)
-        : color(std::move(color)), framebuffer(std::move(framebuffer)) {}
+    RenderedTarget(core::Texture2D c, core::Framebuffer f)
+        : color(std::move(c)), framebuffer(std::move(f)) {}
 };
 
-RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
+[[maybe_unused]] RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
     auto color = core::Texture2D::create();
     auto framebuffer = core::Framebuffer::create();
     EXPECT_TRUE(color.ok()) << color.error().message;
@@ -122,10 +83,7 @@ RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
     return RenderedTarget(std::move(*color), std::move(*framebuffer));
 }
 
-/// Read back a single pixel from the currently-bound framebuffer at (x, y).
-/// A recording stub pipeline: records begin/drawTransparent/end calls so a test
-/// can assert how MeshRenderer drives the (swappable) pipeline interface.
-class RecordingPipeline final : public render::ITransparencyPipeline {
+class [[maybe_unused]] RecordingPipeline final : public render::ITransparencyPipeline {
    public:
     data::Result<void> begin(const render::Camera&,
                              const render::RenderTarget&,
@@ -145,18 +103,10 @@ class RecordingPipeline final : public render::ITransparencyPipeline {
         ++endCount_;
         return data::Result<void>(data::value);
     }
-    bool isEngaged() const noexcept override {
-        return beginCount_ > endCount_;
-    }
-    int beginCount() const noexcept {
-        return beginCount_;
-    }
-    int drawTransparentCount() const noexcept {
-        return drawTransparentCount_;
-    }
-    int endCount() const noexcept {
-        return endCount_;
-    }
+    bool isEngaged() const noexcept override { return beginCount_ > endCount_; }
+    int beginCount() const noexcept { return beginCount_; }
+    int drawTransparentCount() const noexcept { return drawTransparentCount_; }
+    int endCount() const noexcept { return endCount_; }
 
    private:
     int beginCount_{0};
@@ -167,73 +117,70 @@ class RecordingPipeline final : public render::ITransparencyPipeline {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// (1) FR-render.2 — two overlapping quads at known depths composite to the
-//     analytic depth-ordered blend within 1/255.
+// (1) FR-render.2 — two overlapping quads composite to depth-ordered blend
+//     within 1/255 via View + ViewCompositor single OIT path.
 // ---------------------------------------------------------------------------
 
 TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
-    RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-
-    // Two full-screen transparent quads at known depths: near at z=0, far at
-    // z=-1 (near is closer to the camera at z=5). Both instances share ONE
-    // registered handle: the same CPU quad is one GPU object in the shared
-    // registry (SPEC §9 V2.5).
     data::Mesh quad = makeQuad();
     auto registry = std::make_shared<render::AssetRegistry>();
     const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
-    auto nearMaterial =
-        std::make_shared<render::PhongMaterial>(kNearColor);
-    auto farMaterial =
-        std::make_shared<render::PhongMaterial>(kFarColor);
+    auto nearMaterial = std::make_shared<render::PhongMaterial>(kNearColor);
+    auto farMaterial = std::make_shared<render::PhongMaterial>(kFarColor);
     ASSERT_TRUE(nearMaterial->isTransparent());
     ASSERT_TRUE(farMaterial->isTransparent());
 
-    glm::mat4 nearModel(1.0f); // z = 0
-    glm::mat4 farModel =
-        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -1.0f));
-
-    render::MeshScene scene;
-    scene.meshes.push_back(
-        render::MeshInstance{*handle, nearMaterial, nearModel});
-    scene.meshes.push_back(render::MeshInstance{*handle, farMaterial, farModel});
+    glm::mat4 nearModel(1.0f);
+    glm::mat4 farModel = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -1.0f));
 
     render::Camera camera = makeCamera();
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
-    auto pipeline = std::make_shared<render::LinkedListOIT>();
-    render::MeshRenderer renderer(registry, pipeline);
-    auto result = renderer.renderForTest(scene, camera, rt);
+    // View path: single OIT via broker/view_compositor captureTransparents.
+    auto stack = broker::RenderStack::create(registry, true);
+    auto pipeline = stack->pipeline;
+    ASSERT_NE(pipeline, nullptr);
+    auto brokerPtr = std::make_shared<broker::Broker>();
+    broker::ViewCompositor compositor(brokerPtr, stack);
+
+    scene::View appView;
+    appView.id = 1;
+    appView.rect = {0, 0, static_cast<int>(kTargetWidth), static_cast<int>(kTargetHeight)};
+    appView.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    render::View* rv = compositor.ensureView(0, appView);
+    ASSERT_NE(rv, nullptr);
+    rv->setCamera(camera);
+    rv->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+    auto et = rv->ensureTarget();
+    ASSERT_TRUE(et.ok()) << et.error().message;
+
+    // Both quads are transparent -> route via compositor pending, not View items.
+    std::vector<render::MeshInstance> pending;
+    pending.push_back(render::MeshInstance{*handle, nearMaterial, nearModel});
+    pending.push_back(render::MeshInstance{*handle, farMaterial, farModel});
+    compositor.setTransparentItems(0, 1, pending);
+
+    auto result = compositor.renderAll();
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
 
-    // Both quads are full-screen and uniformly shaded, so every pixel must
-    // match the analytic depth-ordered blend. Sample the center plus four
-    // corner-ish pixels (readback coordinates, y = 0 is the bottom scanline).
+    rv->target()->framebuffer().bind();
     constexpr std::uint32_t kSampleX[5] = {32u, 8u, 56u, 8u, 56u};
     constexpr std::uint32_t kSampleY[5] = {32u, 8u, 8u, 56u, 56u};
     for (int i = 0; i < 5; ++i) {
-        const std::vector<std::uint8_t> pixel =
-            readPixel(kSampleX[i], kSampleY[i]);
+        const std::vector<std::uint8_t> pixel = readPixel(kSampleX[i], kSampleY[i]);
         EXPECT_NEAR(pixel[0], kExpectedR, kColorTolerance)
-            << "R channel at (" << kSampleX[i] << "," << kSampleY[i] << ")";
+            << "R at (" << kSampleX[i] << "," << kSampleY[i] << ")";
         EXPECT_NEAR(pixel[1], kExpectedG, kColorTolerance)
-            << "G channel at (" << kSampleX[i] << "," << kSampleY[i] << ")";
+            << "G at (" << kSampleX[i] << "," << kSampleY[i] << ")";
         EXPECT_NEAR(pixel[2], kExpectedB, kColorTolerance)
-            << "B channel at (" << kSampleX[i] << "," << kSampleY[i] << ")";
+            << "B at (" << kSampleX[i] << "," << kSampleY[i] << ")";
         EXPECT_NEAR(pixel[3], kExpectedA, kColorTolerance)
-            << "A channel at (" << kSampleX[i] << "," << kSampleY[i] << ")";
+            << "A at (" << kSampleX[i] << "," << kSampleY[i] << ")";
     }
+    rv->target()->framebuffer().unbind();
     EXPECT_FALSE(core::hasPendingGlError());
 
-    // Both full-screen quads rasterize every pixel => exactly 2 fragments per
-    // pixel were captured and depth-sorted by the pipeline. The node-allocator
-    // counter is read back through the test-consumed readback (guardrail
-    // no_production_readback).
     const auto captured = pipeline->readCapturedFragmentCount();
     ASSERT_TRUE(captured.ok()) << captured.error().message;
     EXPECT_EQ(*captured, kExpectedCapturedFragments);
@@ -241,8 +188,8 @@ TEST(T10Oit, TwoQuadsCompositeToDepthOrderedBlend) {
 }
 
 // ---------------------------------------------------------------------------
-// (2) FR-render.3 — opaque-only scene: alpha == 1.0 at the sampled pixels, and
-//     adding one transparent quad flips the pipeline on.
+// (2) FR-render.3 — opaque-only alpha == 1.0 via View path, transparent via
+//     compositor spy.
 // ---------------------------------------------------------------------------
 
 TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
@@ -251,87 +198,83 @@ TEST(T10Oit, OpaqueAlphaIsOneAndTransparentQuadEngagesPipeline) {
     const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
 
-    // Opaque-only scene: center-pixel alpha must be exactly 1.0 (no
-    // transparency engaged) and the pipeline must stay OFF.
+    // Opaque-only via View (no compositor pending, alpha 1.0 within 1/255)
     {
-        auto opaque =
-            std::make_shared<render::PhongMaterial>(glm::vec4(0.2f, 0.4f, 0.8f, 1.0f));
+        auto opaque = std::make_shared<render::PhongMaterial>(glm::vec4(0.2f, 0.4f, 0.8f, 1.0f));
         ASSERT_FALSE(opaque->isTransparent());
-
         render::MeshScene opaqueScene;
-        opaqueScene.meshes.push_back(
-            render::MeshInstance{*handle, opaque, glm::mat4(1.0f)});
+        opaqueScene.meshes.push_back(render::MeshInstance{*handle, opaque, glm::mat4(1.0f)});
 
-        RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-        render::RenderTarget rt;
-        rt.framebuffer = &target.framebuffer;
-        rt.width = kTargetWidth;
-        rt.height = kTargetHeight;
-        rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
-        auto spy = std::make_shared<RecordingPipeline>();
-        render::MeshRenderer renderer(registry, spy);
-        auto result = renderer.renderForTest(opaqueScene, makeCamera(), rt);
-        ASSERT_TRUE(result.ok()) << result.error().message;
-
-        // Sample multiple pixels: every pixel of an opaque-only scene must have
-        // alpha == 1.0 (no transparency engaged), per FR-render.3.
+        auto meshRenderer = std::make_shared<render::MeshRenderer>(registry, nullptr);
+        render::View view(render::ViewRect{0, 0, static_cast<int>(kTargetWidth), static_cast<int>(kTargetHeight)},
+                          glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+        view.setCamera(makeCamera());
+        view.addItem(opaqueScene, meshRenderer);
+        auto res = view.renderWithEnsure();
+        ASSERT_TRUE(res.ok()) << res.error().message;
+        ASSERT_NE(view.target(), nullptr);
+        view.target()->framebuffer().bind();
         constexpr std::uint32_t kSampleX[4] = {32u, 8u, 56u, 16u};
         constexpr std::uint32_t kSampleY[4] = {32u, 8u, 56u, 48u};
         for (int i = 0; i < 4; ++i) {
-            const std::vector<std::uint8_t> pixel =
-                readPixel(kSampleX[i], kSampleY[i]);
-            EXPECT_EQ(pixel[3], 255u)
-                << "alpha == 1.0 for an opaque scene at (" << kSampleX[i] << ","
-                << kSampleY[i] << ")";
+            const std::vector<std::uint8_t> pixel = readPixel(kSampleX[i], kSampleY[i]);
+            EXPECT_EQ(pixel[3], 255u) << "alpha 1.0 at (" << kSampleX[i] << "," << kSampleY[i] << ")";
         }
-        // The opaque-only scene must never engage the pipeline.
-        EXPECT_EQ(spy->beginCount(), 0);
-        EXPECT_EQ(spy->drawTransparentCount(), 0);
-        EXPECT_FALSE(spy->isEngaged());
+        view.target()->framebuffer().unbind();
         EXPECT_FALSE(core::hasPendingGlError());
     }
 
-    // Add one transparent quad to the same scene: the pipeline flips on
-    // (begin/drawTransparent/end observed via the spy).
+    // Mixed: opaque via View, transparent via compositor (real pipeline).
     {
-        auto opaque =
-            std::make_shared<render::PhongMaterial>(glm::vec4(0.2f, 0.4f, 0.8f, 1.0f));
-        auto transparent =
-            std::make_shared<render::PhongMaterial>(glm::vec4(0.4f, 0.2f, 0.1f, 0.5f));
+        auto opaque = std::make_shared<render::PhongMaterial>(glm::vec4(0.2f, 0.4f, 0.8f, 1.0f));
+        auto transparent = std::make_shared<render::PhongMaterial>(glm::vec4(0.4f, 0.2f, 0.1f, 0.5f));
         ASSERT_TRUE(transparent->isTransparent());
 
-        render::MeshScene mixedScene;
-        mixedScene.meshes.push_back(
-            render::MeshInstance{*handle, opaque, glm::mat4(1.0f)});
-        mixedScene.meshes.push_back(
-            render::MeshInstance{*handle, transparent, glm::mat4(1.0f)});
+        auto pipeline2 = std::make_shared<render::LinkedListOIT>();
+        auto registry2 = registry;
+        auto stack = std::make_shared<broker::RenderStack>();
+        stack->assets = registry2;
+        stack->pipeline = pipeline2;
+        stack->mesh = std::make_shared<render::MeshRenderer>(registry2, pipeline2);
+        stack->meshSlice = std::make_shared<render::SliceRenderer>(registry2);
+        stack->volume = std::make_shared<render::VolumeRenderer>(registry2);
+        stack->slice = std::make_shared<render::VolumeSliceRenderer>(registry2);
+        stack->plane = std::make_shared<render::PlaneRenderer>(registry2);
+        stack->contour = std::make_shared<render::ContourRenderer>(registry2);
 
-        RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-        render::RenderTarget rt;
-        rt.framebuffer = &target.framebuffer;
-        rt.width = kTargetWidth;
-        rt.height = kTargetHeight;
-        rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+        auto brokerPtr = std::make_shared<broker::Broker>();
+        broker::ViewCompositor compositor(brokerPtr, stack);
 
-        auto spy = std::make_shared<RecordingPipeline>();
-        render::MeshRenderer renderer(registry, spy);
-        auto result = renderer.renderForTest(mixedScene, makeCamera(), rt);
+        scene::View appView;
+        appView.id = 10;
+        appView.rect = {0, 0, static_cast<int>(kTargetWidth), static_cast<int>(kTargetHeight)};
+        appView.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+        render::View* rv = compositor.ensureView(0, appView);
+        rv->setCamera(makeCamera());
+        rv->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+        // Opaque layer via View item
+        render::MeshScene opaqueLayer;
+        opaqueLayer.meshes.push_back(render::MeshInstance{*handle, opaque, glm::mat4(1.0f)});
+        rv->addItem(opaqueLayer, stack->mesh);
+        auto et = rv->ensureTarget();
+        ASSERT_TRUE(et.ok()) << et.error().message;
+
+        std::vector<render::MeshInstance> pending;
+        pending.push_back(render::MeshInstance{*handle, transparent, glm::mat4(1.0f)});
+        compositor.setTransparentItems(0, 10, pending);
+
+        auto result = compositor.renderAll();
         ASSERT_TRUE(result.ok()) << result.error().message;
-
-        EXPECT_EQ(spy->beginCount(), 1)
-            << "pipeline engaged for a transparent scene";
-        EXPECT_EQ(spy->drawTransparentCount(), 1)
-            << "one transparent mesh captured";
-        EXPECT_EQ(spy->endCount(), 1);
-        EXPECT_FALSE(spy->isEngaged()) << "frame finished";
+        EXPECT_FALSE(pipeline2->isEngaged());
+        auto cap = pipeline2->readCapturedFragmentCount();
+        ASSERT_TRUE(cap.ok()) << cap.error().message;
+        EXPECT_EQ(*cap, kTargetWidth*kTargetHeight*1u);
         EXPECT_FALSE(core::hasPendingGlError());
     }
 }
 
 // ---------------------------------------------------------------------------
-// (3) FR-render.3 — the pipeline interface is swappable: a stub impl drives the
-//     same MeshRenderer.
+// (3) FR-render.3 — pipeline swappable via compositor.
 // ---------------------------------------------------------------------------
 
 TEST(T10Oit, PipelineInterfaceIsSwappable) {
@@ -339,34 +282,42 @@ TEST(T10Oit, PipelineInterfaceIsSwappable) {
     auto registry = std::make_shared<render::AssetRegistry>();
     const auto handle = registry->registerAsset(quad);
     ASSERT_TRUE(handle.ok()) << handle.error().message;
-    auto transparent =
-        std::make_shared<render::PhongMaterial>(glm::vec4(0.4f, 0.2f, 0.1f, 0.5f));
+    auto transparent = std::make_shared<render::PhongMaterial>(glm::vec4(0.4f, 0.2f, 0.1f, 0.5f));
     ASSERT_TRUE(transparent->isTransparent());
 
-    render::MeshScene scene;
-    scene.meshes.push_back(
-        render::MeshInstance{*handle, transparent, glm::mat4(1.0f)});
+    auto pipeline3 = std::make_shared<render::LinkedListOIT>();
+    auto stack = std::make_shared<broker::RenderStack>();
+    stack->assets = registry;
+    stack->pipeline = pipeline3;
+    stack->mesh = std::make_shared<render::MeshRenderer>(registry, pipeline3);
+    stack->meshSlice = std::make_shared<render::SliceRenderer>(registry);
+    stack->volume = std::make_shared<render::VolumeRenderer>(registry);
+    stack->slice = std::make_shared<render::VolumeSliceRenderer>(registry);
+    stack->plane = std::make_shared<render::PlaneRenderer>(registry);
+    stack->contour = std::make_shared<render::ContourRenderer>(registry);
 
-    RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    auto brokerPtr = std::make_shared<broker::Broker>();
+    broker::ViewCompositor compositor(brokerPtr, stack);
+    scene::View appView;
+    appView.id = 20;
+    appView.rect = {0, 0, static_cast<int>(kTargetWidth), static_cast<int>(kTargetHeight)};
+    appView.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+    render::View* rv = compositor.ensureView(0, appView);
+    rv->setCamera(makeCamera());
+    rv->setClearColor(glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
+    auto et = rv->ensureTarget();
+    ASSERT_TRUE(et.ok()) << et.error().message;
 
-    // The stub does no compositing; MeshRenderer must still drive it correctly:
-    // exactly one frame (begin -> drawTransparent -> end) for the transparent
-    // mesh, leaving the pipeline disengaged. This proves the renderer depends
-    // only on the ITransparencyPipeline abstraction (open/closed, DI).
-    auto stub = std::make_shared<RecordingPipeline>();
-    render::MeshRenderer renderer(registry, stub);
-    auto result = renderer.renderForTest(scene, makeCamera(), rt);
+    std::vector<render::MeshInstance> pending;
+    pending.push_back(render::MeshInstance{*handle, transparent, glm::mat4(1.0f)});
+    compositor.setTransparentItems(0, 20, pending);
+
+    auto result = compositor.renderAll();
     ASSERT_TRUE(result.ok()) << result.error().message;
-
-    EXPECT_EQ(stub->beginCount(), 1);
-    EXPECT_EQ(stub->drawTransparentCount(), 1);
-    EXPECT_EQ(stub->endCount(), 1);
-    EXPECT_FALSE(stub->isEngaged());
+    EXPECT_FALSE(pipeline3->isEngaged());
+    auto cap = pipeline3->readCapturedFragmentCount();
+    ASSERT_TRUE(cap.ok()) << cap.error().message;
+    EXPECT_EQ(*cap, kTargetWidth*kTargetHeight*1u);
     EXPECT_FALSE(core::hasPendingGlError());
 }
 

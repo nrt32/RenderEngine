@@ -313,7 +313,7 @@ struct RenderedTarget {
         : color(std::move(c)), framebuffer(std::move(f)) {}
 };
 
-RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
+[[maybe_unused]] RenderedTarget makeTarget(std::uint32_t w, std::uint32_t h) {
     auto color = core::Texture2D::create();
     auto framebuffer = core::Framebuffer::create();
     EXPECT_TRUE(color.ok()) << color.error().message;
@@ -418,25 +418,25 @@ TEST(T15Mpr, GpuContourMatchesAnalyticCurveForEachSliceView) {
         gpuContour.halfWidthPx = kStrokeHalfWidthPx;
         contourScene.contours.push_back(gpuContour);
 
-        RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-        render::RenderTarget rt;
-        rt.framebuffer = &target.framebuffer;
-        rt.width = kTargetWidth;
-        rt.height = kTargetHeight;
-        rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
         const render::Camera camera =
             makeDisplayCamera(static_cast<float>(kTargetWidth),
                               static_cast<float>(kTargetHeight));
 
-        auto result = renderer.render(contourScene, camera, rt);
+        // T3b View port: ContourRenderer::render deleted
+        auto contourRendererPtr = std::make_shared<render::ContourRenderer>(registry);
+        render::View view(render::ViewRect{0,0,static_cast<int>(kTargetWidth),static_cast<int>(kTargetHeight)}, glm::vec4(0,0,0,0));
+        view.setCamera(camera);
+        view.addItem(contourScene, contourRendererPtr);
+        auto result = view.renderWithEnsure();
         ASSERT_TRUE(result.ok()) << result.error().message;
         EXPECT_FALSE(core::hasPendingGlError());
-
+        ASSERT_NE(view.target(), nullptr);
+        view.target()->framebuffer().bind();
         // Read back the whole target (still bound after render).
         std::vector<std::uint8_t> pixels;
         re::utils::PixelReader reader;
         auto read = reader.read(0u, 0u, kTargetWidth, kTargetHeight, pixels);
+        view.target()->framebuffer().unbind();
         ASSERT_TRUE(read.ok()) << read.error().message;
         ASSERT_EQ(pixels.size(),
                   static_cast<std::size_t>(kTargetWidth) * kTargetHeight * 4u);
@@ -870,22 +870,21 @@ TEST(T15Mpr, ThreeDViewDrawsMesh) {
     scene.meshes.push_back(
         render::MeshInstance{*handle, material, glm::mat4(1.0f)});
 
-    RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-    render::RenderTarget rt;
-    rt.framebuffer = &target.framebuffer;
-    rt.width = kTargetWidth;
-    rt.height = kTargetHeight;
-    rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
-    render::MeshRenderer renderer(registry, nullptr);
-    auto result = renderer.renderForTest(scene, camera, rt);
+    // T3b View port: MeshRenderer::renderForTest deleted (single drawInstances path)
+    auto meshRendererPtr = std::make_shared<render::MeshRenderer>(registry, nullptr);
+    render::View view(render::ViewRect{0,0,static_cast<int>(kTargetWidth),static_cast<int>(kTargetHeight)}, glm::vec4(0,0,0,0));
+    view.setCamera(camera);
+    view.addItem(scene, meshRendererPtr);
+    auto result = view.renderWithEnsure();
     ASSERT_TRUE(result.ok()) << result.error().message;
     EXPECT_FALSE(core::hasPendingGlError());
-
+    ASSERT_NE(view.target(), nullptr);
+    view.target()->framebuffer().bind();
     // Read back the center pixel from the still-bound target framebuffer.
     std::vector<std::uint8_t> pixels;
     re::utils::PixelReader reader;
     auto read = reader.read(kCenterX, kCenterY, 1u, 1u, pixels);
+    view.target()->framebuffer().unbind();
     ASSERT_TRUE(read.ok()) << read.error().message;
     ASSERT_EQ(pixels.size(), 4u);
 

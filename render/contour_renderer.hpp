@@ -21,7 +21,7 @@
 // broker library's ContourMapper, a specialization of the generic mapper
 // interface over (scene::ContourObject, render::ContourObject) — SPEC §11.
 //
-// Stateless rendering: render()/drawLayer() receive all of their data per
+// Stateless rendering: drawLayer() receives all of its data per (T3b render() deleted)
 // call; the renderer owns only GL resources (its cached shader program). GPU
 // geometry is owned by the shared AssetRegistry and resolved per draw, shared
 // with MeshRenderer/SliceRenderer. No OIT (contours are opaque overlay
@@ -89,16 +89,6 @@ class ContourRenderer {
 
     ContourRenderer(const ContourRenderer&) = delete;
     ContourRenderer& operator=(const ContourRenderer&) = delete;
-
-    /// Render `scene`'s contour outlines into `target` from `camera`: binds
-    /// the target framebuffer, sets the viewport via the target size, clears
-    /// to the target clear color, disables depth test and blending (exact
-    /// color), then draws every object's outline. On success the target
-    /// framebuffer is left bound (so tests can read it back). Returns a typed
-    /// error if the shader fails to build, an object's handle fails to
-    /// resolve (stale/dangling/null), or a draw cannot be issued.
-    data::Result<void> render(const ContourScene& scene, const Camera& camera,
-                              const RenderTarget& target);
 
     /// Draw ONE contour object into the currently-bound framebuffer (ReView's
     /// ViewTarget), assuming ReView already performed bind+viewport+clear via

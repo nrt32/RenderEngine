@@ -29,6 +29,7 @@
 #include "tests/offscreen_fixture.hpp"
 #include "utils/pixel_reader.hpp"
 #include "volume/transfer_function.hpp"
+#include "tests/t3b_compat.hpp"
 
 namespace re::tests {
 
@@ -117,9 +118,9 @@ TEST(T7OwnerDrivenHandles, HashSpyZeroAcross60Frames) {
     auto camP = makePlaneCamera();
     // Warm-up renders (handles already registered, so no hashing)
     data::resetContentHashCallCount();
-    auto r1 = volRenderer.render(vScene, camV, rt);
+    auto r1 = renderVolumeViaView(volRenderer, vScene, camV, rt);
     ASSERT_TRUE(r1.ok()) << r1.error().message;
-    auto r2 = planeRenderer.renderForTest(pScene, camP, rt);
+    auto r2 = renderPlaneViaView(planeRenderer, pScene, camP, rt);
     ASSERT_TRUE(r2.ok()) << r2.error().message;
     // After warm-up, reset spy to measure steady-state
     data::resetContentHashCallCount();
@@ -140,7 +141,7 @@ TEST(T7OwnerDrivenHandles, HashSpyZeroAcross60Frames) {
     // Re-render to readback
     auto target2 = makeTarget();
     render::RenderTarget rt2{&target2.fb, kW, kH, glm::vec4(0)};
-    auto rf = volRenderer.render(vScene, camV, rt2);
+    auto rf = renderVolumeViaView(volRenderer, vScene, camV, rt2);
     ASSERT_TRUE(rf.ok());
     std::vector<uint8_t> px; utils::PixelReader reader;
     auto read = reader.read(kW/2,kH/2,1,1,px);
@@ -163,7 +164,7 @@ TEST(T7OwnerDrivenHandles, SlotCountConstantAcross1000DistinctImages) {
     ASSERT_TRUE(h0.ok());
     render::PlaneInstance inst0{geom, *h0, img0, glm::mat4(1.0f)};
     render::PlaneScene scene0; scene0.planes.push_back(inst0);
-    auto r0 = renderer.renderForTest(scene0, cam, rt);
+    auto r0 = renderPlaneViaView(renderer, scene0, cam, rt);
     ASSERT_TRUE(r0.ok());
     size_t countAfterWarm = registry->imageSlotCount();
     EXPECT_EQ(countAfterWarm, 1u) << "one distinct image → one slot (explainable)";
@@ -213,9 +214,9 @@ TEST(T7OwnerDrivenHandles, SameVolumeThroughTwoRenderersYieldsOneTexture3D) {
     render::RenderTarget rt1{&t1.fb,kW,kH,glm::vec4(0)};
     render::RenderTarget rt2{&t2.fb,kW,kH,glm::vec4(0)};
     auto cam = makeVolCamera();
-    auto res1 = r1.render(scene, cam, rt1);
+    auto res1 = renderVolumeViaView(r1, scene, cam, rt1);
     ASSERT_TRUE(res1.ok()) << res1.error().message;
-    auto res2 = r2.render(scene, cam, rt2);
+    auto res2 = renderVolumeViaView(r2, scene, cam, rt2);
     ASSERT_TRUE(res2.ok()) << res2.error().message;
 
     // One GPU object behind both renderers

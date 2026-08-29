@@ -229,48 +229,6 @@ data::Result<void> VolumeRenderer::drawInstances(const VolumeScene& scene,
     return data::Result<void>(data::value);
 }
 
-data::Result<void> VolumeRenderer::render(const VolumeScene& scene,
-                                          const Camera& camera,
-                                          const RenderTarget& target) {
-    if (assets_ == nullptr) {
-        // Constructed with a null store (member-init-order safety): fail with
-        // a typed error instead of dereferencing (mirrors MeshRenderer).
-        return data::makeError<void>(4, "VolumeRenderer: no shared asset store");
-    }
-    if (target.width == 0u || target.height == 0u) {
-        return data::makeError<void>(1, "VolumeRenderer: invalid target size");
-    }
-
-    auto programResult = rayCastProgram();
-    if (programResult.failed()) {
-        return data::makeError<void>(programResult.error().code,
-                                     programResult.error().message);
-    }
-    core::ShaderProgram* program = *programResult;
-
-    auto quadResult = screenQuad();
-    if (quadResult.failed()) {
-        return data::makeError<void>(quadResult.error().code,
-                                     quadResult.error().message);
-    }
-    core::VertexArray* quadVao = *quadResult;
-
-    // Begin the pass through the ONE shared prologue (bind target → viewport
-    // → clear → depth state → blend off). A null framebuffer selects the
-    // window's on-screen default framebuffer; otherwise the offscreen FBO is
-    // bound. Direct single-scene renders keep the deterministic depth-off
-    // painter's-order pass (a target's optional depth attachment is consumed
-    // only via the per-view opt-in), so the depth test is left off; blending
-    // is off because the shader already writes the final premultiplied
-    // composited color.
-    auto& ctx = core::REContext::current();
-    ctx.beginPass(target.framebuffer, target.width, target.height,
-                  target.clearColor.r, target.clearColor.g,
-                  target.clearColor.b, target.clearColor.a);
-
-    return drawInstances(scene, camera, program, quadVao);
-}
-
 data::Result<void> VolumeRenderer::drawLayer(const VolumeScene& scene, const Camera& camera) {
     // ReView already bind+viewport+clear via ctx; does not clear between layers.
     // T2: (void)ctx removed — REContext::current() is the global per-GL-context single writer

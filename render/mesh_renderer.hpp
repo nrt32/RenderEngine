@@ -3,7 +3,8 @@
 // render/mesh_renderer.hpp — MeshRenderer: opaque forward pass + auto-engaged
 // OIT (SPEC §3, FR-render.1/3).
 //
-// Stateless rendering: MeshRenderer::render(scene, camera, target) receives
+// Stateless rendering: MeshRenderer::drawLayer(scene, camera) receives (T3b
+// render() deleted — single OIT via broker/view_compositor.cpp:94);
 // all of its data per call; the renderer owns only GL resources (its cached
 // opaque shader program). GPU geometry is owned by the shared AssetRegistry
 // (SPEC §9 V2.5): scenes carry AssetHandles instead of raw `const data::Mesh*`
@@ -92,14 +93,6 @@ class MeshRenderer {
     /// stale handle or draw failure.
     data::Result<void> drawLayer(const MeshScene& scene, const Camera& camera);
 
-    /// Test-only direct OIT path kept for T3a suite-green (FR-render.2/3 OIT
-    /// tests still use direct pipeline). Will be removed at T3b when OIT
-    /// collapses to ViewCompositor single path. Name deliberately not
-    /// `render (` so grep stays 0 for T3a (two spaces avoid pattern).
-    data::Result<void> renderForTest(const MeshScene& scene,
-                                     const Camera& camera,
-                                     const RenderTarget& target);
-
     /// The injected transparency pipeline (may be null). The returned
     /// shared_ptr is a non-owning OBSERVER handle in spirit — it shares the
     /// same ownership the renderer has (no exclusive claim).
@@ -129,17 +122,6 @@ class MeshRenderer {
     data::Result<void> drawInstances(const MeshScene& scene,
                                      const Camera& camera,
                                      core::ShaderProgram* program);
-
-    /// Draw only opaque mesh instances (used by the direct render OIT path:
-    /// opaque go directly, transparent are captured via the pipeline).
-    data::Result<void> drawOpaque(const MeshScene& scene, const Camera& camera,
-                                  const RenderTarget& target);
-
-    /// Capture every transparent mesh instance through the engaged
-    /// transparency pipeline (FR-render.3). Returns a typed error if a geometry
-    /// resolution or pipeline capture cannot be issued (SPEC §5).
-    data::Result<void> drawTransparent(const MeshScene& scene,
-                                       const Camera& camera);
 
     std::shared_ptr<AssetRegistry> registry_;
     std::shared_ptr<ITransparencyPipeline> transparency_;

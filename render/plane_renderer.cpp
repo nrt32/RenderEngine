@@ -208,32 +208,6 @@ data::Result<void> PlaneRenderer::drawInstances(const PlaneScene& scene,
     return data::Result<void>(data::value);
 }
 
-data::Result<void> PlaneRenderer::renderForTest(const PlaneScene& scene,
-                                             const Camera& camera,
-                                             const RenderTarget& target) {
-    if (assets_ == nullptr) {
-        return data::makeError<void>(4, "PlaneRenderer: no shared asset store");
-    }
-    if (target.width == 0u || target.height == 0u) {
-        return data::makeError<void>(1, "PlaneRenderer: invalid target size");
-    }
-    auto programResult = planeProgram();
-    if (programResult.failed()) {
-        return data::makeError<void>(programResult.error().code, programResult.error().message);
-    }
-    core::ShaderProgram* program = *programResult;
-    auto quadResult = quadGeometry();
-    if (quadResult.failed()) {
-        return data::makeError<void>(quadResult.error().code, quadResult.error().message);
-    }
-    core::VertexArray* quadVao = *quadResult;
-    auto& ctx = core::REContext::current();
-    ctx.beginPass(target.framebuffer, target.width, target.height,
-                  target.clearColor.r, target.clearColor.g,
-                  target.clearColor.b, target.clearColor.a);
-    return drawInstances(scene, camera, program, quadVao);
-}
-
 data::Result<void> PlaneRenderer::drawLayer(const PlaneScene& scene, const Camera& camera) {
     // ReView already bind+viewport+clear via ctx; does not clear between layers.
     // T2: (void)ctx removed — REContext::current() is the global per-GL-context single writer

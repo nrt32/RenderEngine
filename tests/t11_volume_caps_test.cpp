@@ -42,6 +42,7 @@
 #include "volume/color.hpp"
 #include "volume/ray_caster.hpp"
 #include "volume/transfer_function.hpp"
+#include "tests/t3b_compat.hpp"
 
 namespace re::tests {
 namespace {
@@ -156,7 +157,7 @@ TEST(T11VolumeCaps, Load256TiledWithin1_255_OfReference) {
     render::RenderTarget rt; rt.framebuffer=&*fb; rt.width=W; rt.height=H; rt.clearColor=glm::vec4(0,0,0,0);
     render::Camera cam = makeCamera();
     render::VolumeRenderer renderer;
-    auto ok = renderer.render(scene, cam, rt);
+    auto ok = renderVolumeViaView(renderer, scene, cam, rt);
     ASSERT_TRUE(ok.ok()) << ok.error().message;
     // Read center pixel via PixelReader (REContext::readRgba8)
     std::vector<std::uint8_t> pix;

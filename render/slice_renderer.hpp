@@ -10,7 +10,7 @@
 // like MeshRenderer, and does NOT use OIT in v1 (SPEC §3 "Slicing is geometry,
 // not compositing").
 //
-// Stateless rendering: render()/captureCrossSection() receive all of their data
+// Stateless rendering: drawLayer()/captureCrossSection() receive all of their data (T3b render() deleted)
 // per call; the renderer owns only GL resources (its cached clip shader
 // program and its transform-feedback capture program + object). GPU geometry
 // is owned by the shared AssetRegistry (SPEC §9 V2.5): scenes carry
@@ -85,12 +85,6 @@ class SliceRenderer {
     SliceRenderer(const SliceRenderer&) = delete;
     SliceRenderer& operator=(const SliceRenderer&) = delete;
 
-    /// Test-only direct path kept for suite-green (will be removed at T3b).
-    /// Name not `render(` so T3a grep stays 0.
-    data::Result<void> renderForTest(const SliceScene& scene, const Camera& camera,
-                                     const ClipPlane& plane,
-                                     const RenderTarget& target);
-
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
     /// assuming ReView already performed bind+viewport+clear via REContext::current()
     /// (T2 global per-GL-context, 2 layers sharing viewport issue 1 glViewport).
@@ -134,8 +128,7 @@ class SliceRenderer {
     /// returning a pointer to the transform-feedback object.
     data::Result<core::TransformFeedback*> captureFeedback();
 
-    /// The ONE shared clip loop behind both entry points (render() after its
-    /// pass prologue, drawLayer() as a View layer): installs `program` and
+    /// The ONE shared clip loop for drawLayer(): installs `program` and
     /// draws every resolvable instance of `scene` clipped against `plane`
     /// (single copy of the uniform + draw sequence). Slicing deliberately has
     /// NO transparency path in v1 — see the note in the .cpp loop.

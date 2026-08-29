@@ -3,7 +3,7 @@
 // render/volume_renderer.hpp — VolumeRenderer: ray-cast GL draw pass (SPEC §3,
 // FR-render.6).
 //
-// Stateless rendering: VolumeRenderer::render(scene, camera, target) receives
+// Stateless rendering: VolumeRenderer::drawLayer(scene, camera) receives (T3b render() deleted)
 // all of its data per call; the renderer owns only GL resources (its cached
 // ray-cast shader program and one shared full-screen quad VAO/VBO). GPU 3D
 // textures live in the SHARED asset store (`render::AssetRegistry`, SPEC §7
@@ -141,13 +141,6 @@ class VolumeRenderer {
     explicit VolumeRenderer(
         std::shared_ptr<AssetRegistry> assets = AssetRegistry::shared());
 
-    /// Render `scene` into `target` from `camera`. On success the target
-    /// framebuffer is left bound (so tests can read it back). Returns a typed
-    /// error if the shader fails to build, a texture upload fails, or a draw
-    /// cannot be issued.
-    data::Result<void> render(const VolumeScene& scene, const Camera& camera,
-                              const RenderTarget& target);
-
     /// Draw one layer into the currently-bound framebuffer (ReView's ViewTarget),
     /// assuming ReView already performed bind+viewport+clear via REContext::current()
     /// (T2 global per-GL-context, 2 layers sharing viewport issue 1 glViewport).
@@ -178,8 +171,7 @@ class VolumeRenderer {
     /// screenQuad_ `optional<>` member) — valid while this renderer is.
     data::Result<core::VertexArray*> screenQuad();
 
-    /// The ONE shared instance-draw loop behind both entry points (render()
-    /// after its pass prologue, drawLayer() as a View layer): installs
+    /// The ONE shared instance-draw loop for drawLayer(): installs
     /// `program`, binds each instance's store-owned 3D texture via direct
     /// handle resolve (no per-renderer map, O(1) shared store), uploads the
     /// slab/uniform block (single copy of that math), and issues one

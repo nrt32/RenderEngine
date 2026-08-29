@@ -74,6 +74,7 @@
 #include "render/slice_renderer.hpp"
 #include "tests/offscreen_fixture.hpp"
 #include "tests/test_helpers.hpp"
+#include "tests/t3b_compat.hpp"
 
 namespace re::tests {
 namespace {
@@ -227,38 +228,39 @@ TEST(T3V2AssetRegistry, MeshAndSliceRenderersShareOneGpuObject) {
     render::MeshRenderer meshRenderer(registry);
     render::SliceRenderer sliceRenderer(registry);
 
-    // MeshRenderer: FR-render.1 center pixel {51, 102, 204}.
+    // MeshRenderer: FR-render.1 center pixel {51, 102, 204}. T3b View port (single OIT via compositor, drawLayer blend-off).
     {
-        RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-        render::RenderTarget rt;
-        rt.framebuffer = &target.framebuffer;
-        rt.width = kTargetWidth;
-        rt.height = kTargetHeight;
-        rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
-        const auto result = meshRenderer.renderForTest(meshScene, makeCamera(), rt);
+        auto meshPtr = std::make_shared<render::MeshRenderer>(registry);
+        render::View view(render::ViewRect{0,0,static_cast<int>(kTargetWidth),static_cast<int>(kTargetHeight)}, glm::vec4(0,0,0,0));
+        view.setCamera(makeCamera());
+        view.addItem(meshScene, meshPtr);
+        auto result = view.renderWithEnsure();
         ASSERT_TRUE(result.ok()) << result.error().message;
+        ASSERT_NE(view.target(), nullptr);
+        view.target()->framebuffer().bind();
         expectBaseColor(readPixel(kCenterX, kCenterY),
                         "mesh path center (32, 32)");
+        view.target()->framebuffer().unbind();
         EXPECT_FALSE(core::hasPendingGlError());
     }
 
     // SliceRenderer: the same quad sliced at z=0 lies entirely on the plane
     // (all signed distances 0), so the clip keeps all triangles and the full
-    // quad renders at {51, 102, 204} (FR-render.4 analytic setup above).
+    // quad renders at {51, 102, 204} (FR-render.4 analytic setup above). T3b View port.
     {
-        RenderedTarget target = makeTarget(kTargetWidth, kTargetHeight);
-        render::RenderTarget rt;
-        rt.framebuffer = &target.framebuffer;
-        rt.width = kTargetWidth;
-        rt.height = kTargetHeight;
-        rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
-
-        const auto result = sliceRenderer.renderForTest(sliceScene, makeCamera(),
-                                                 sliceScene.plane, rt);
+        auto slicePtr = std::make_shared<render::SliceRenderer>(registry);
+        render::SliceScene sceneWithPlane = sliceScene;
+        sceneWithPlane.plane = sliceScene.plane;
+        render::View view(render::ViewRect{0,0,static_cast<int>(kTargetWidth),static_cast<int>(kTargetHeight)}, glm::vec4(0,0,0,0));
+        view.setCamera(makeCamera());
+        view.addItem(sceneWithPlane, slicePtr);
+        auto result = view.renderWithEnsure();
         ASSERT_TRUE(result.ok()) << result.error().message;
+        ASSERT_NE(view.target(), nullptr);
+        view.target()->framebuffer().bind();
         expectBaseColor(readPixel(kCenterX, kCenterY),
                         "slice path center (32, 32)");
+        view.target()->framebuffer().unbind();
         EXPECT_FALSE(core::hasPendingGlError());
     }
 
@@ -419,7 +421,7 @@ TEST(T3V2AssetRegistry, RendererPropagatesStaleHandleError) {
     rt.clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     render::MeshRenderer renderer(registry);
-    const auto result = renderer.renderForTest(scene, makeCamera(), rt);
+    const auto result = renderMeshViaView(renderer, scene, makeCamera(), rt);
     EXPECT_TRUE(result.failed());
     EXPECT_NE(result.error().message.find("stale"), std::string::npos);
     EXPECT_FALSE(core::hasPendingGlError());

@@ -41,6 +41,7 @@
 #include "tests/offscreen_fixture.hpp"
 #include "utils/pixel_reader.hpp"
 #include "volume/transfer_function.hpp"
+#include "tests/t3b_compat.hpp"
 
 namespace re::tests {
 namespace {
@@ -344,7 +345,7 @@ TEST(T8Layer, Contour90Within2PxPreserved) {
     cam.position = glm::vec3(32,32,50);
     cam.view = glm::lookAt(cam.position, glm::vec3(32,32,0), glm::vec3(0,1,0));
     cam.proj = glm::ortho(-32.f,32.f,-32.f,32.f,0.1f,100.f);
-    auto res = renderer.render(cs, cam, rt);
+    auto res = renderContourViaView(renderer, cs, cam, rt);
     ASSERT_TRUE(res.ok()) << res.error().message;
     fb->bind();
     std::vector<uint8_t> pixels;
