@@ -34,7 +34,8 @@ class ContourObject : public ObjectBase<ContourObject> {
     glm::mat4 transform{1.0f};
     PlaneDesc plane{};
     glm::vec4 color{1.0f, 0.0f, 0.0f, 1.0f};
-    Layer layer{Layer::Contour};
+    Layer layer{Layer::LAYER_0};
+    int32_t priority{0};
     uint64_t generation{0};
 
     void setPlane(PlaneDesc p) noexcept {

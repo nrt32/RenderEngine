@@ -33,7 +33,8 @@ class PlaneObject : public ObjectBase<PlaneObject> {
     AssetRef<data::Image> image{};
     glm::mat4 transform{1.0f};
     MeshMaterialDesc presentation{};
-    Layer layer{Layer::Plane};
+    Layer layer{Layer::LAYER_0};
+    int32_t priority{0};
     uint64_t generation{0};
 };
 

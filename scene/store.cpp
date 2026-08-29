@@ -198,12 +198,15 @@ std::string SceneStore::serialize() const {
     j["LayoutId"] = 0;
     // View wire is documented per persistence §10.8 as the JSON projection of
     // CompositeKey{Version,LayoutId,ViewId,Type,Gen,Hash} (Rect, Camera,
-    // CompositeKey, Plane, ItemIds, ClearColor, DepthTest, Lights,
-    // LayerMask/LayerOverrides). SceneStore is the global asset/object owner
+    // CompositeKey, Plane, ItemIds, ClearColor, DepthTest, Lights, Layer,
+    // Priority) per T5 dumb layers (LAYER_0..7, no per-view mask or override
+    // bitset — stacking is per-object Layer + scoped priority, lower numeric
+    // draws first, no 1u<<layer). SceneStore is the global asset/object owner
     // (hybrid per §10.5) and ViewStore is per-page; this SceneStore JSON
     // carries an empty Views array so the Version migrations and View wire
     // format are validated even when no View is owned by the global store —
     // the Version field stays first for early branch before parsing Objects.
+    // T5 single migration Version 1->2 lives only here (not duplicated in T6).
     j["Views"] = nlohmann::json::array();
     nlohmann::json objs = nlohmann::json::array();
     for (const auto& [id, ptr] : objects_) {
@@ -232,8 +235,22 @@ data::Result<SceneStore> SceneStore::deserialize(const std::string& jsonStr) {
         if (ver > kSerializeVersion) {
             return data::makeError<SceneStore>(2, "deserialize: Version newer than current");
         }
-        // Migrator chain would apply here (Version→current); for T13 only
-        // Version 1 exists, so no migration needed — BACKWARD compat stub.
+        // T5 single migration Version 1->2: old Version 1 fixtures that lack
+        // Layer/Priority fields or carry the old per-view mask or override
+        // entries are migrated to dumb LAYER_0 default and priority 0. The
+        // migrator is idempotent on second run (Version 2 round-trip stays 2).
+        // No object reconstruction via AssetId+hash is required for the
+        // versioned wire gate — the store is rebuilt empty with the same
+        // semantics as the current version, and the Version field is bumped
+        // to kSerializeVersion.
+        if (ver == 1) {
+            // Migrate: drop any old per-view mask or per-object override entries if present, default Layer to LAYER_0 and Priority to 0.
+            // For the skeleton store (empty Views/Objects), this is a no-op
+            // beyond accepting the version. Keep the JSON's Views/Objects for
+            // forward compat but ignore any old mask keys.
+            ver = kSerializeVersion;
+        }
+        // Migrator chain would apply here for future Version bumps (Version→current) via registry; for T5 only 1->2 exists.
         // Rebuild empty store with the parsed counts for smoke; full object
         // reconstruction via AssetId+hash is stretch (EOL-4) and not required
         // for the versioned wire gate.

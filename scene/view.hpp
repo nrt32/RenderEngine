@@ -6,7 +6,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <unordered_map>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -63,9 +62,6 @@ struct View {
     /// Non-empty vector is translated via LightMapper → ReLight before the
     /// drawLayer loop (one upload per view, not per item). T19 stretch.
     std::vector<Light> lights{};
-    /// Visual stacking control — per-view bitmask and per-object override map that together replace insertion-order painting with deterministic (layer, techniquePriority) grouping. The mask hides whole layers without removing objects; the map reassigns a single object's effective layer for this view only. Both bump layerGen so the synchronizer re-groups.
-    LayerMask layerMask{0xFFu};
-    std::unordered_map<uint64_t, Layer> layerOverrides;
 
     /// Set rect and bump rectGen.
     void setRect(Rect r) noexcept {
@@ -138,14 +134,7 @@ struct View {
             ++generation;
         }
     }
-    /// Replace the per-view layer visibility mask and bump layerGen. Bits correspond to 1u shifted by layer index; the default covers the eight initial layers. A cleared bit hides every object whose effective layer maps to that bit without touching store generation.
-    void setLayerMask(LayerMask m) noexcept;
-    /// Assign a per-view override for one object id — its effective layer in this view becomes the supplied layer regardless of its global layer value; the override table is an O(1) unordered_map. Bumps layerGen.
-    void setOverride(uint64_t id, Layer l);
-    /// Remove a single per-view override entry; bumps layerGen if the entry existed.
-    void clearOverride(uint64_t id) noexcept;
-    /// Remove all per-view overrides; bumps layerGen if any existed.
-    void clearAllOverrides() noexcept;
+
 };
 
 } // namespace re::scene

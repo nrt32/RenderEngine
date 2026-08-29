@@ -54,7 +54,8 @@ class MeshObject : public ObjectBase<MeshObject> {
     glm::mat4 transform{1.0f};
     MeshMaterialDesc presentation{};
     GeometryKind geometryKind{GeometryKind::Mesh};
-    Layer layer{Layer::Mesh};
+    Layer layer{Layer::LAYER_0};
+    int32_t priority{0};
     uint64_t generation{0};
 
     void setPresentation(MeshMaterialDesc p) noexcept {

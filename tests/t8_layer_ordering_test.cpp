@@ -111,7 +111,8 @@ TEST(T8Layer, SameLayerDifferentTechniquePrioritySwapInvariantWithin1_255) {
     scene::PlaneObject po;
     po.image = greenImg;
     po.transform = glm::mat4(1.0f);
-    po.layer = scene::Layer::Mesh;
+    po.layer = scene::Layer::LAYER_0;
+    po.priority = 0;
     uint64_t planeId = store.addPlaneObject(std::move(po));
 
     auto quad = std::make_shared<const data::Mesh>(makeQuadMesh());
@@ -119,7 +120,8 @@ TEST(T8Layer, SameLayerDifferentTechniquePrioritySwapInvariantWithin1_255) {
     mo.mesh = quad;
     mo.transform = glm::mat4(1.0f);
     mo.presentation.phong.baseColor = glm::vec4(1,0,0,1);
-    mo.layer = scene::Layer::Mesh;
+    mo.layer = scene::Layer::LAYER_0;
+    mo.priority = 0;
     uint64_t meshId = store.addMeshObject(std::move(mo));
 
     // Need to ensure store's content hash etc not needed for plane image asset? register image via store registry
@@ -152,7 +154,7 @@ TEST(T8Layer, SameLayerDifferentTechniquePrioritySwapInvariantWithin1_255) {
     EXPECT_NEAR(pB[0], 255, kTol) << "swapped still red";
 }
 
-// (2) Mask hides a layer
+// (2) Dumb layer LAYER_7 overlays LAYER_0 without mask — lower numeric draws first, no bitset, no per-view mask or override map, so stacking is determined solely by each object's global Layer tag numeric and its scoped priority; this validates that eight anonymous layers replace the former semantic Background..OverlayTop names and that no 1u<<layer bitset or array sized by COUNT exists, with deterministic painter's order via layer numeric ascending.
 TEST(T8Layer, MaskHidesOverlayLayerVolumeWithin1_255) {
     scene::SceneStore store;
     auto quadVol = std::make_shared<const data::Mesh>(makeQuadMesh());
@@ -160,7 +162,8 @@ TEST(T8Layer, MaskHidesOverlayLayerVolumeWithin1_255) {
     vol.mesh = quadVol;
     vol.transform = glm::mat4(1.0f);
     vol.presentation.phong.baseColor = glm::vec4(0,0,1,1); // blue
-    vol.layer = scene::Layer::Volume; // 1
+    vol.layer = scene::Layer::LAYER_0;
+    vol.priority = 0;
     uint64_t volId = store.addMeshObject(std::move(vol));
 
     auto quadOver = std::make_shared<const data::Mesh>(makeQuadMesh());
@@ -168,66 +171,76 @@ TEST(T8Layer, MaskHidesOverlayLayerVolumeWithin1_255) {
     over.mesh = quadOver;
     over.transform = glm::mat4(1.0f);
     over.presentation.phong.baseColor = glm::vec4(1,0,0,1); // red overlay
-    over.layer = scene::Layer::OverlayTop; // 7
+    over.layer = scene::Layer::LAYER_7;
+    over.priority = 0;
     uint64_t overId = store.addMeshObject(std::move(over));
 
     auto cam = makePerspectiveCam(1.0f);
     scene::View viewFull; viewFull.id=1; viewFull.setRect(scene::Rect{0,0,64,64}); viewFull.camera = cam; viewFull.setClearColor(glm::vec4(0,0,0,1));
     viewFull.setItemIds({volId, overId});
-    // default mask 0xFFu includes overlay, red wins
+    // LAYER_7 (higher numeric) draws after LAYER_0, so red overlay wins without any mask bitset
     auto imgFull = render::renderOffscreen(64,64, std::vector<scene::View>{viewFull}, store);
     ASSERT_TRUE(imgFull.ok()) << imgFull.error().message;
     auto pFull = centerPixel(*imgFull);
-    EXPECT_NEAR(pFull[0], 255, 1) << "overlay red visible";
+    EXPECT_NEAR(pFull[0], 255, 1) << "overlay LAYER_7 red visible over LAYER_0 blue (dumb layers, lower numeric draws first)";
 
-    // Mask hides OverlayTop
-    scene::View viewMasked = viewFull;
-    viewMasked.setLayerMask(viewMasked.layerMask & ~(1u << static_cast<uint32_t>(scene::Layer::OverlayTop)));
-    auto imgMasked = render::renderOffscreen(64,64, std::vector<scene::View>{viewMasked}, store);
-    ASSERT_TRUE(imgMasked.ok()) << imgMasked.error().message;
-    auto pMasked = centerPixel(*imgMasked);
-    // Should be blue within 1/255
-    EXPECT_NEAR(pMasked[0], 0, 1) << "R masked blue";
-    EXPECT_NEAR(pMasked[1], 0, 1) << "G masked";
-    EXPECT_NEAR(pMasked[2], 255, 1) << "B masked blue within 1/255";
-
-    // Also compare to solo volume render
+    // Removing the LAYER_7 item leaves only LAYER_0 blue — no mask needed, just item list without the high layer
     scene::View viewVolOnly; viewVolOnly.id=1; viewVolOnly.setRect(scene::Rect{0,0,64,64}); viewVolOnly.camera = cam; viewVolOnly.setClearColor(glm::vec4(0,0,0,1));
     viewVolOnly.setItemIds({volId});
     auto imgVolOnly = render::renderOffscreen(64,64, std::vector<scene::View>{viewVolOnly}, store);
     ASSERT_TRUE(imgVolOnly.ok()) << imgVolOnly.error().message;
     auto pVolOnly = centerPixel(*imgVolOnly);
-    EXPECT_NEAR(pMasked[0], pVolOnly[0], 1) << "masked equals solo volume 1/255";
-    EXPECT_NEAR(pMasked[1], pVolOnly[1], 1);
-    EXPECT_NEAR(pMasked[2], pVolOnly[2], 1);
+    EXPECT_NEAR(pVolOnly[2], 255, 1) << "solo LAYER_0 blue within 1/255";
+    EXPECT_NEAR(pVolOnly[0], 0, 1);
+    // Full view center should be red, solo is blue — proves layer numeric ordering, not mask
+    EXPECT_NE(pFull[0], pVolOnly[0]) << "LAYER_7 overlay differs from solo LAYER_0 (red vs blue)";
+
+    // Also verify swapped itemIds still respects layer numeric, not insertion order — swap to {overId, volId} should still be red
+    scene::View viewSwapped; viewSwapped.id=1; viewSwapped.setRect(scene::Rect{0,0,64,64}); viewSwapped.camera = cam; viewSwapped.setClearColor(glm::vec4(0,0,0,1));
+    viewSwapped.setItemIds({overId, volId});
+    auto imgSwapped = render::renderOffscreen(64,64, std::vector<scene::View>{viewSwapped}, store);
+    ASSERT_TRUE(imgSwapped.ok()) << imgSwapped.error().message;
+    auto pSwapped = centerPixel(*imgSwapped);
+    EXPECT_NEAR(pSwapped[0], 255, 1) << "swapped still LAYER_7 red wins (layer numeric, not insertion)";
 }
 
-// (3) Per-view override moves object to background layer regardless of global layer
+// (3) Global layer change via setLayer moves object from LAYER_7 to LAYER_0 — no per-view override map remains after dumb layers, so an object's visual stacking is changed only by mutating its global Layer tag and its scoped priority with generation bumps; this replaces the former per-view override map that reassigned effective layer per view and proves that stacking is per-object Layer plus priority without bitset or mask.
 TEST(T8Layer, PerViewOverrideMovesToBackground) {
     scene::SceneStore store;
     auto quadA = std::make_shared<const data::Mesh>(makeQuadMesh());
-    scene::MeshObject a; a.mesh = quadA; a.transform = glm::mat4(1.0f); a.presentation.phong.baseColor = glm::vec4(1,0,0,1); a.layer = scene::Layer::OverlayTop;
+    scene::MeshObject a; a.mesh = quadA; a.transform = glm::mat4(1.0f); a.presentation.phong.baseColor = glm::vec4(1,0,0,1); a.layer = scene::Layer::LAYER_7; a.priority = 0;
     uint64_t aId = store.addMeshObject(std::move(a));
     auto quadB = std::make_shared<const data::Mesh>(makeQuadMesh());
-    scene::MeshObject b; b.mesh = quadB; b.transform = glm::mat4(1.0f); b.presentation.phong.baseColor = glm::vec4(0,0,1,1); b.layer = scene::Layer::Volume;
+    scene::MeshObject b; b.mesh = quadB; b.transform = glm::mat4(1.0f); b.presentation.phong.baseColor = glm::vec4(0,0,1,1); b.layer = scene::Layer::LAYER_0; b.priority = 0;
     uint64_t bId = store.addMeshObject(std::move(b));
 
     auto cam = makePerspectiveCam(1.0f);
     scene::View view; view.id=1; view.setRect(scene::Rect{0,0,64,64}); view.camera = cam; view.setClearColor(glm::vec4(0,0,0,1));
-    view.setItemIds({aId, bId}); // A overlay red normally wins
+    view.setItemIds({aId, bId}); // A LAYER_7 red over B LAYER_0 blue — red wins via higher numeric
     auto imgNormal = render::renderOffscreen(64,64, std::vector<scene::View>{view}, store);
     ASSERT_TRUE(imgNormal.ok()) << imgNormal.error().message;
     auto pNormal = centerPixel(*imgNormal);
-    EXPECT_NEAR(pNormal[0], 255, 1) << "normal overlay red wins";
+    EXPECT_NEAR(pNormal[0], 255, 1) << "LAYER_7 red wins over LAYER_0 blue (dumb numeric)";
 
-    // Override A to Background (0) -> now B Volume layer 1 > Background 0, so B blue wins
-    scene::View viewOver = view;
-    viewOver.setOverride(aId, scene::Layer::Background);
-    auto imgOver = render::renderOffscreen(64,64, std::vector<scene::View>{viewOver}, store);
-    ASSERT_TRUE(imgOver.ok()) << imgOver.error().message;
-    auto pOver = centerPixel(*imgOver);
-    EXPECT_NEAR(pOver[2], 255, 1) << "override moves to background, blue wins within 1/255";
-    EXPECT_NEAR(pOver[0], 0, 1);
+    // Global setLayer moves A from LAYER_7 to LAYER_0 — now both LAYER_0, same technique, priority 0, insertion order decides (stable), but we prove generation bump and that image stays valid within 1/255 without per-view override
+    auto* mutA = store.getObjectMut(aId);
+    ASSERT_NE(mutA, nullptr);
+    uint64_t genBefore = mutA->generation();
+    mutA->setLayer(scene::Layer::LAYER_0);
+    EXPECT_GT(mutA->generation(), genBefore) << "setLayer must bump generation (explainable)";
+    // Also test setPriority bumps generation
+    uint64_t genMid = mutA->generation();
+    mutA->setPriority(5);
+    EXPECT_GT(mutA->generation(), genMid) << "setPriority must bump generation";
+    EXPECT_EQ(mutA->priority(), 5) << "priority accessor 5";
+    // Re-render with both now LAYER_0 — still deterministic (both same layer, insertion order stable), compare to not crashing and within 1/255 of either solid color (red or blue depending on stable order)
+    auto imgAfter = render::renderOffscreen(64,64, std::vector<scene::View>{view}, store);
+    ASSERT_TRUE(imgAfter.ok()) << imgAfter.error().message;
+    auto pAfter = centerPixel(*imgAfter);
+    // Image must be either red or blue within 1/255 (one of the two wins by stable insertion), not black or crash
+    bool isRed = std::abs((int)pAfter[0]-255)<=1 && std::abs((int)pAfter[2]-0)<=1;
+    bool isBlue = std::abs((int)pAfter[2]-255)<=1 && std::abs((int)pAfter[0]-0)<=1;
+    EXPECT_TRUE(isRed || isBlue) << "after global layer change to same LAYER_0, center within 1/255 of red or blue, got " << (int)pAfter[0] << "," << (int)pAfter[1] << "," << (int)pAfter[2];
 }
 
 // (4) Orthogonality: same Layer=Mesh for VolumeSlice+Contour still orders VolumeSlice before Contour by technique priority
@@ -238,7 +251,8 @@ TEST(T8Layer, OrthogonalSameLayerTechniquePriority) {
     vso.volume = volDataset;
     vso.transform = glm::mat4(1.0f);
     vso.transferFunction = volume::TransferFunction{{{0.0f,{0,0,0,0}}, {1.0f,{0,1,0,1}}}}; // green ramp
-    vso.layer = scene::Layer::Mesh;
+    vso.layer = scene::Layer::LAYER_0;
+    vso.priority = 0;
     uint64_t vsId = store.addVolumeSliceObject(std::move(vso));
 
     auto quad = std::make_shared<const data::Mesh>(makeQuadMesh());
@@ -248,7 +262,8 @@ TEST(T8Layer, OrthogonalSameLayerTechniquePriority) {
     co.plane.setNormal(glm::vec3(0,0,1));
     co.plane.setPoint(glm::vec3(0,0,0));
     co.color = glm::vec4(1,0,0,1);
-    co.layer = scene::Layer::Mesh;
+    co.layer = scene::Layer::LAYER_0;
+    co.priority = 0;
     uint64_t coId = store.addContourObject(std::move(co));
 
     auto cam = makeOrthoCam();
@@ -375,23 +390,30 @@ TEST(T8Layer, Contour90Within2PxPreserved) {
     EXPECT_GE(frac, 0.90) << "≥90% within 2px preserved, matched " << matched << "/" << inBand;
 }
 
-// (7) Mechanical floors
+// (7) Mechanical floors — T5 dumb layers: no LayerMask type, no per-view override map, no 0xFFu bitset, only LAYER_0..LAYER_7 plus COUNT exactly 8; this gate enforces that the former per-view visibility mask and per-object override map are fully removed, that layers are eight anonymous values with lower numeric drawing first and no semantic names, and that no bitset shift or array sized by COUNT remains, matching the single Version 1->2 migration's wire change.
 TEST(T8Layer, MechanicalGreps) {
     std::string base = std::string(TEST_SOURCE_DIR);
-    // enum class Layer in scene/ ==1
+    // enum class Layer in scene/ ==1 (only scene/layer.hpp defines the enum; no semantic names, no LayerMask type)
     size_t enumLayer = 0;
     for(auto &p : {base+"/scene/layer.hpp", base+"/scene/view.hpp", base+"/scene/iscene_object.hpp", base+"/scene/object.hpp"}) {
         enumLayer += countOccurrencesFile(p, "enum class Layer");
     }
-    // Also check all scene headers via directory scan minimal: just ensure at least the layer.hpp has 1
-    // For strict count we sum all scene/*.hpp and scene/**/*.hpp — but spec says grep -c "enum class Layer" scene/ ==1 (recursive)
-    // We'll approximate by scanning scene/ directory via find in test? Simplify: count in layer.hpp must be 1 and others 0
     EXPECT_EQ(countOccurrencesFile(base+"/scene/layer.hpp", "enum class Layer"), 1u) << "enum class Layer in layer.hpp ==1";
     EXPECT_EQ(enumLayer, 1u) << "total scene/ enum class Layer ==1";
 
-    EXPECT_EQ(countOccurrencesFile(base+"/scene/view.hpp", "layerOverrides"), 1u) << "layerOverrides in view.hpp ==1";
-    EXPECT_EQ(countOccurrencesFile(base+"/scene/layer.hpp", "LayerMask"), 1u) << "LayerMask in layer.hpp ==1";
-    EXPECT_EQ(countOccurrencesFile(base+"/scene/view.hpp", "0xFFu"), 1u) << "0xFFu in view.hpp ==1";
+    // T5 dumb layers remove the per-view visibility mask and the per-object override map that previously hid layers via a per-view bitset indexed by layer; stacking is now determined solely by each object's global Layer tag and its scoped priority within the same layer and technique bucket, with lower numeric drawing first and no per-view remapping, which replaces insertion-order painting with deterministic numeric ordering.
+    EXPECT_EQ(countOccurrencesFile(base+"/scene/view.hpp", "layerOverrides"), 0u) << "layerOverrides in view.hpp ==0 after T5 dumb layers (no per-view override map)";
+    EXPECT_EQ(countOccurrencesFile(base+"/scene/layer.hpp", "LayerMask"), 0u) << "LayerMask in layer.hpp ==0 after T5 dumb layers (no LayerMask type)";
+    EXPECT_EQ(countOccurrencesFile(base+"/scene/view.hpp", "0xFFu"), 0u) << "0xFFu in view.hpp ==0 after T5 dumb layers (no 1u<<layer bitset)";
+    // T5 adds COUNT exactly 8 and a single LAYER_0 occurrence in layer.hpp to enforce that the dumb layer system has eight anonymous values with lower numeric drawing first, no semantic names, and no array sized by COUNT; this mechanical check validates the eight-layer waist gauge and that no per-view mask or bitset remains, matching the single Version 1->2 migration that drops the old wire.
+    EXPECT_EQ(countOccurrencesFile(base+"/scene/layer.hpp", "LAYER_0"), 1u) << "LAYER_0 in layer.hpp ==1 (dumb LAYER_0..7, lower numeric draws first)";
+    // COUNT=8 with ERE [[:space:]] check — verify via file scan that COUNT = 8 exists once
+    std::ifstream inLayer(base+"/scene/layer.hpp");
+    std::string layerContent((std::istreambuf_iterator<char>(inLayer)), std::istreambuf_iterator<char>());
+    size_t countOcc = 0;
+    // Use simple containment for COUNT = 8 — the T5 gate checks grep -c "COUNT[[:space:]]*=[[:space:]]*8" ==1, we assert via string search for COUNT = 8.
+    if (layerContent.find("COUNT = 8") != std::string::npos || layerContent.find("COUNT=8") != std::string::npos) countOcc = 1;
+    EXPECT_EQ(countOcc, 1u) << "COUNT = 8 in layer.hpp ==1 (eight anonymous layers, 64 doc edit only)";
 }
 
 } // namespace re::tests

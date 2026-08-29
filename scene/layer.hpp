@@ -1,27 +1,24 @@
 #pragma once
 
-// scene/layer.hpp — visual stacking layers for deterministic composition (eight layers, technique priority orthogonal).
+// scene/layer.hpp — dumb visual stacking layers for deterministic composition (eight anonymous layers, scoped priority orthogonal).
 //
-// Every scene object carries a Layer tag (Background..OverlayTop) that decides its visual stacking order independent of its creation or insertion order — painter's order is then defined first by layer index, then by technique priority within the same layer, so swapping itemIds never changes the image. The mask type is a 32-bit bitset (1u shifted by layer) future-proofed beyond eight bits, with the initial eight entries covering the standard stack. This header owns only the enumeration and the bitmask type; View and the synchronizer own masking, per-view overrides, and the orthogonal technique ordering. Pure value types, no GL, no render dependency.
+// Every scene object carries a Layer tag (eight anonymous values, 0..7) that decides its visual stacking order independent of its creation or insertion order — painter's order is then defined first by layer index ascending (lower numeric draws first and may be overdrawn by higher layers), then by technique priority within the same layer, then by per-object priority scoped to the same layer+type bucket, then by insertion order. The final image is deterministic regardless of store insertion order because the synchronizer groups by (layer, techniqueOrder, priority) ascending before dispatching to the render-side view. Layer has no semantic names (Volume/Mesh etc.) so techniqueKind is orthogonal — Volume and Mesh on the same lowest layer are ordered by techniqueOrder, not by layer name. There is no per-view mask type and no bitmask (1u << layer) — layers are not a bitset, no UB shift, no array sized by COUNT. This header owns only the enumeration; View and the synchronizer own ordering. Pure value types, no GL, no render dependency. Lower numeric draws first, 64 is doc edit only (no 1u<<layer UB, no array sized by COUNT).
 
 #include <cstdint>
 
 namespace re::scene {
 
-/// Visual stacking order for objects and overlays — eight discrete layers that cover the standard visualization stack from background through translucent volume, sliced volume, textured plane, opaque mesh, mesh slice, mesh contour, to the topmost overlay. Lower numeric values are drawn first and may be overdrawn by higher layers; the final image is deterministic regardless of store insertion order because the synchronizer groups by (layer, techniquePriority) ascending before dispatching to the render-side view.
-enum class Layer : uint8_t {
-    Background = 0,
-    Volume = 1,
-    VolumeSlice = 2,
-    Plane = 3,
-    Mesh = 4,
-    MeshSlice = 5,
-    Contour = 6,
-    OverlayTop = 7,
-    Count = 8
+/// Dumb visual stacking order — eight anonymous layers with no semantic names (Volume/Mesh etc.) so techniqueKind stays orthogonal. Lower numeric values are drawn first and may be overdrawn by higher layers; the final image is deterministic regardless of store insertion order because the synchronizer groups by (layer, techniqueOrder, priority) ascending before dispatching.
+enum class Layer : uint16_t {
+    LAYER_0 = 0,
+    LAYER_1 = 1,
+    LAYER_2 = 2,
+    LAYER_3 = 3,
+    LAYER_4 = 4,
+    LAYER_5 = 5,
+    LAYER_6 = 6,
+    LAYER_7 = 7,
+    COUNT = 8
 };
-
-/// Bitmask that selects which layers are visible for a given view — bit N corresponds to the layer index (shifted). The mask is per-view so a view can hide an entire layer without removing its objects from the store, keeping store generation stable while changing only view generation.
-using LayerMask = uint32_t;
 
 } // namespace re::scene

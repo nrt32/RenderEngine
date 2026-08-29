@@ -99,11 +99,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
         curGen ^= std::hash<uint64_t>{}(v.depthConfigGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.lightsGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
         curGen ^= std::hash<uint64_t>{}(v.layerGen) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
-        curGen ^= std::hash<uint64_t>{}(static_cast<uint64_t>(v.layerMask)) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
-        for (const auto& ov : v.layerOverrides) {
-            curGen ^= std::hash<uint64_t>{}(ov.first) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
-            curGen ^= std::hash<int>{}(static_cast<int>(ov.second)) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
-        }
+        // T5 dumb layers: no LayerMask bitset and no per-view override map — stacking is per-object Layer (LAYER_0..7) + scoped priority, lower numeric draws first, no 1u<<layer UB, no array sized by COUNT. Mask/override hashing removed.
     }
     for (auto& kv : pushDirties_) {
         curGen ^= std::hash<uint64_t>{}(kv.first) + 0x9e3779b97f4a7c15ULL + (curGen << 6) + (curGen >> 2);
@@ -276,7 +272,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
             cache.projGen = av.camera.projGen();
         }
 
-        // Deterministic (layer, techniquePriority) ordering — replaces insertion-order painting. Effective layer is per-view override if present, else the object's global layer; mask culling drops hidden layers without store mutation. Technique priority is orthogonal (Volume→Contour) so same-layer VolumeSlice still sorts before Contour.
+        // T5 dumb layers: deterministic (layer, techniquePriority, scoped priority) ordering — no per-view mask or override map, lower numeric Layer draws first (LAYER_0..7, no semantic names, no LayerMask bitset, no 1u<<layer), no mask culling, no override lookup. Technique priority is orthogonal (Volume→Contour) so same-layer VolumeSlice still sorts before Contour. Scoped priority will be wired fully at T6 (OrderEntry gains priority+insertionIdx); T5 stores Layer LAYER_0 default and priority 0, broker keeps simple layer+prio ordering without mask — pixel parity before broker reorder is via plain layer asc, techniquePriority asc (stable).
         struct OrderEntry { uint64_t oid; scene::Layer effLayer; int prio; };
         std::vector<OrderEntry> order;
         order.reserve(av.itemIds.size());
@@ -284,18 +280,16 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
             // @note lifetime: SceneStore owns the object; borrow valid until next store mutation.
             const scene::ISceneObject* /*borrow*/ obj = scene.getObject(oid);
             if (!obj) {
-                order.push_back({oid, scene::Layer::Background, 99});
+                order.push_back({oid, scene::Layer::LAYER_0, 99});
                 continue;
             }
             scene::Layer eff = obj->layer();
-            auto itOv = av.layerOverrides.find(oid);
-            if (itOv != av.layerOverrides.end()) eff = itOv->second;
-            if ((av.layerMask & (1u << static_cast<uint32_t>(eff))) == 0u) continue;
+            // T5 dumb layers: the per-view override map that previously allowed one view to reassign an object's effective layer is deleted, so eff is the object's global Layer tag only and no per-view remapping lookup occurs; similarly the per-view bitmask that hid whole layers via 1u shifted by layer index is removed, so every layer is visible and no bitset cull is performed — stacking is determined solely by the object's Layer numeric and its scoped priority, which keeps deterministic painter's order without UB shifts or arrays sized by COUNT.
             int prio = techniquePriorityFor(obj->kind());
             order.push_back({oid, eff, prio});
         }
         std::sort(order.begin(), order.end(), [](const OrderEntry& a, const OrderEntry& b) {
-            if (static_cast<uint8_t>(a.effLayer) != static_cast<uint8_t>(b.effLayer)) return static_cast<uint8_t>(a.effLayer) < static_cast<uint8_t>(b.effLayer);
+            if (static_cast<uint16_t>(a.effLayer) != static_cast<uint16_t>(b.effLayer)) return static_cast<uint16_t>(a.effLayer) < static_cast<uint16_t>(b.effLayer);
             return a.prio < b.prio;
         });
         uint64_t orderHash = 1469598103934665603ULL;
@@ -304,9 +298,7 @@ data::Result<void> ViewSynchronizer::sync(std::span<const scene::View> views,
             orderHash ^= std::hash<int>{}(static_cast<int>(e.effLayer)) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
             orderHash ^= std::hash<int>{}(e.prio) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
         }
-        // Include mask/override identity so mask flip changes hash even when filtered set size same (e.g., same count but different visibility)
-        orderHash ^= std::hash<uint64_t>{}(av.layerMask) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
-        orderHash ^= std::hash<size_t>{}(av.layerOverrides.size()) + 0x9e3779b97f4a7c15ULL + (orderHash << 6) + (orderHash >> 2);
+        // T5 dumb layers: the order hash no longer includes any per-view mask or override identity because visibility is now determined solely by each object's global Layer tag and its scoped priority; the hash therefore combines only layer, technique priority, and object id, which ensures that a view's deterministic ordering changes only when an object's Layer or priority or insertion changes, not when a deleted per-view bitset would have flipped.
         bool orderDirty = isNew || cache.layerOrderHash != orderHash || layerDirty || hasPushDirty(av.id, scene::FieldId::Layer);
         bool itemsDirty = isNew || storeItemsDirty ||
                            cache.itemsGen != av.itemsGen ||

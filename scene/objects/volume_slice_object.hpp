@@ -36,7 +36,8 @@ class VolumeSliceObject : public ObjectBase<VolumeSliceObject> {
     VolumeMaterialDesc material{};
     volume::TransferFunction transferFunction{{{0.0f, {0, 0, 0, 0}}, {1.0f, {1, 1, 1, 1}}}};
     float stepLength{0.01f};
-    Layer layer{Layer::VolumeSlice};
+    Layer layer{Layer::LAYER_0};
+    int32_t priority{0};
     uint64_t generation{0};
 
     void setTransferFunction(volume::TransferFunction tf) noexcept {

@@ -232,33 +232,41 @@ class SceneStore {
     data::Result<AssetRegistry<data::Image>::SharedAsset> resolveImageAsset(
         AssetId id) const;
     data::Result<void> unregisterImageAsset(AssetId id);
-     /// Versioned JSON wire format for persistence (T13).
-     ///
-     /// Returns a JSON string with `Version` migrations and the `View` wire
-     /// format `CompositeKey{Version,LayoutId,ViewId,Type,Gen,Hash}` per
-     /// `docs/spec/persistence.md` §10.8. `Version` is the persistence schema
-     /// version that invalidates the broker cache on migration (hierarchical
-     /// `Version:LayoutId:Type:Hash`, `BACKWARD` compat via `SceneMigrator`
-     /// chain per DCS Data Contracts). The JSON is built with `nlohmann/json`
-     /// 3.11.3 (pinned `GIT_TAG v3.11.3`, `CMakeLists.txt:117`) — `MaterialDesc`
-     /// / `LightDesc` stable variant JSON plus the `View` fields (`Rect`,
-     /// `Camera`, `CompositeKey`, `Plane`, `ItemIds`, `ClearColor`, `DepthTest`,
-     /// `Lights`, `LayerMask`, `LayerOverrides`) that were in-memory only before
-     /// T13. `Re*` caches are never serialized (reconstructible via
-     /// `ViewSynchronizer` replay); only stable wire is `SceneStore`
-     /// (`Id+gen+hash` per object), `MaterialDesc`/`LightDesc`, `LayoutSpec`,
-     /// `Camera`. Binary `VolumeDataset` bytes are the NRRD raw `uint16` blob
-     /// beside the JSON plus `SHA-256` `contentHash`.
-     std::string serialize() const;
-     /// Deserialize a JSON string produced by `serialize()`, applying the
-     /// `SceneMigrator` chain from the file's `Version` to the current
-     /// `kSerializeVersion` (`BACKWARD` compat, new reader reads old writer).
-     /// Returns a typed error if the JSON is malformed or the version is
-     /// newer than the current.
-     static data::Result<SceneStore> deserialize(const std::string& jsonStr);
-     /// Current persistence schema version — bump when `Re*` field inventory or
-     /// hash algorithm changes, invalidating every cached `CompositeKey`.
-     static constexpr uint32_t kSerializeVersion = 1;
+      /// Versioned JSON wire format for persistence (T5 dumb layers + T13).
+      ///
+      /// Returns a JSON string with `Version` migrations and the `View` wire
+      /// format `CompositeKey{Version,LayoutId,ViewId,Type,Gen,Hash}` per
+      /// `docs/spec/persistence.md` §10.8. `Version` is the persistence schema
+      /// version that invalidates the broker cache on migration (hierarchical
+      /// `Version:LayoutId:Type:Hash`, `BACKWARD` compat via `SceneMigrator`
+      /// chain per DCS Data Contracts). The JSON is built with `nlohmann/json`
+      /// 3.11.3 (pinned `GIT_TAG v3.11.3`, `CMakeLists.txt:117`) — `MaterialDesc`
+      /// / `LightDesc` stable variant JSON plus the `View` fields (`Rect`,
+      /// `Camera`, `CompositeKey`, `Plane`, `ItemIds`, `ClearColor`, `DepthTest`,
+      /// `Lights`, `Layer`, `Priority`) that were in-memory only before T13.
+      /// T5 drops the per-view mask/override wire (dumb LAYER_0..7,
+      /// no per-view mask or per-object override map — stacking is per-object Layer +
+      /// scoped priority, lower numeric draws first, no 1u<<layer bitset). `Re*`
+      /// caches are never serialized (reconstructible via `ViewSynchronizer`
+      /// replay); only stable wire is `SceneStore` (`Id+gen+hash` per object),
+      /// `MaterialDesc`/`LightDesc`, `LayoutSpec`, `Camera`. Binary
+      /// `VolumeDataset` bytes are the NRRD raw `uint16` blob beside the JSON
+      /// plus `SHA-256` `contentHash`. Single Version 1->2 migration lives here
+      /// only (not duplicated in T6 broker ordering).
+      std::string serialize() const;
+      /// Deserialize a JSON string produced by `serialize()`, applying the
+      /// `SceneMigrator` chain from the file's `Version` to the current
+      /// `kSerializeVersion` (`BACKWARD` compat, new reader reads old writer).
+      /// T5 provides the single Version 1->2 migrator: old Version 1 fixtures
+      /// that lack Layer/Priority or carry the old per-view mask or override
+      /// entries are migrated to LAYER_0 default and priority 0 without error. Returns a typed error
+      /// if the JSON is malformed or the version is newer than the current.
+      static data::Result<SceneStore> deserialize(const std::string& jsonStr);
+      /// Current persistence schema version — bump when `Re*` field inventory or
+      /// hash algorithm changes, invalidating every cached `CompositeKey`. T5
+      /// bumps Version 1->2 for dumb layers (LAYER_0..7 + priority), the single
+      /// migration site (not duplicated in T6).
+      static constexpr uint32_t kSerializeVersion = 2;
      std::size_t meshAssetCount() const noexcept { return meshAssets_.liveCount(); }
     std::size_t meshAssetSlotCount() const noexcept { return meshAssets_.slotCount(); }
     std::size_t volumeAssetCount() const noexcept { return volumeAssets_.liveCount(); }

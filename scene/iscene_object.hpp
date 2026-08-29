@@ -139,6 +139,11 @@ class ISceneObject {
     virtual Layer layer() const noexcept = 0;
     /// Change the stacking layer and bump generation so dirty tracking re-translates the affected view.
     virtual void setLayer(Layer l) noexcept = 0;
+
+    /// Scoped priority within the same layer+type bucket — lower values draw first inside the same layer and techniqueOrder bucket (T5 dumb layers). Higher priority does not escape its layer: a VolumeSlice priority 100 on LAYER_0 still draws before a Contour priority 0 on LAYER_0 when techniqueOrder says VolumeSlice before Contour, and both still draw before any LAYER_1. Every concrete object exposes this as a public int32_t priority field.
+    virtual int32_t priority() const noexcept = 0;
+    /// Change the scoped priority and bump generation so dirty tracking re-translates the affected view (bump uses FieldId::Priority).
+    virtual void setPriority(int32_t p) noexcept = 0;
 };
 
 /// CRTP mixin that implements ISceneObject forwarding for a concrete Derived.
@@ -193,6 +198,17 @@ class ObjectBase : public ISceneObject {
         auto* d = static_cast<Derived*>(this);
         if (d->layer != l) {
             d->layer = l;
+            ++d->generation;
+        }
+    }
+
+    int32_t priority() const noexcept override {
+        return static_cast<const Derived*>(this)->priority;
+    }
+    void setPriority(int32_t p) noexcept override {
+        auto* d = static_cast<Derived*>(this);
+        if (d->priority != p) {
+            d->priority = p;
             ++d->generation;
         }
     }
