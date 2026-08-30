@@ -17,7 +17,7 @@ Each capability ships as:
 - an engine-side implementation module, and
 - one sample application demonstrating how to drive it.
 
-### Core capabilities (v1)
+### Core capabilities (v1 + V7 extensions)
 1. **Mesh rendering** — shaded triangle meshes.
 2. **Volume rendering** — basic ray casting (front-to-back compositing) of a
    volumetric dataset.
@@ -26,6 +26,9 @@ Each capability ships as:
 5. **Transparency / OIT** — correct order-independent transparency compositing.
 6. **MPR view** — a single window with 3 orthogonal slice views (Transverse,
    Coronal, Sagittal) and a 3D rendering view.
+7. **CSG (V7)** — GPU `Cube(2) − Sphere(0.6)` hole via Puxel 2-stage SSBO `CsgOitStage` capture→sort→filter→`csgResolved` then `LinkedListOIT::endWithCsg` k-way merge (Kauker Puxels, no CPU boolean; `B`'s material drives hole, `paintInterior` true→volume recolor, false→surface strip).
+8. **Points (V7)** — `PointObject`/`PointCloudObject` 100s points, `worldUnits` toggle, `3D` single → `MeshRenderer` `Sphere` reuse, `2D`/cloud → `PointRenderer` impostor `gl_FragDepth` ray sphere (`Hollow`/`GridDashed` fills).
+9. **Lines (V7)** — `LineObject`/`PolylineObject` `SSBO+gl_VertexID` 6-vert view-quad strip, analytic `fwidth` AA, `Rougier mod(s,patternLen)` dash `miterLimit 4→bevel`, `round/square` caps, `worldUnits` toggle (own `LineRenderer`, not `ContourRenderer` GS).
 
 ### Materials
 - **Phong** material model for v1, integrated through a **modular material

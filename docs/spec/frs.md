@@ -66,6 +66,11 @@ within **1e-6**, plane-geometry within **ε (1e-4 relative)**.
 - **FR-render.6** VolumeRenderer ray-casts a tiny synthetic volume. *Acceptance:
   center pixel matches analytic ray-cast of that volume within 1/255.*
 
+### render/ — V7 extensions (CSG, Points, Lines)
+- **FR-render.7** CSG via Puxel 2-stage SSBO: `Cube(2) − Sphere(0.6)` centered. *Acceptance: hole center pixel matches `B`'s material within 1/255, `outside A` intact, ray through hole sees `clearColor` within 1/255; `transparent(A α0.5)−B + surrounding Mesh α0.6` k-way `over()` merge within 1/255; `paintInterior` true recolors interior surviving `base` fragments vs false surface strip only within 1/255; `nodeCapacity()=w*h*maxFpp*16 ≤157286400` `152 MB` (`640×480×8×16=39321600` `37.5 MB`) + `readResolvedCount` per-pixel `1` where hole.*
+- **FR-render.8** Points: `PointObject` single + `PointCloudObject` many. *Acceptance: `3D` Perspective sphere center `EXPECT_NEAR(..., MeshObject{GeometryKind::Sphere} oracle, 1.0/255.0)` 1/255 `N>=3`; `2D` `ClipPlane` same points as flat circles 1/255; `worldUnits=false` `10px` constant at `2` camera distances within 1/255; `fill=Hollow` vs `GridDashed` golden `1/255` `N>=3`.*
+- **FR-render.9** Lines: `LineObject`/`PolylineObject` `SSBO+gl_VertexID` 6-vert view-quad. *Acceptance: `640×480` solid red `2px` horizontal across black `≥90%` of geometric `±width/2` band within 1/255 of red (`N>=3`, mirrors `contour` `≥90% within 2px`); dashed `dash 8 gap 4` known pixel `1/255`; `worldUnits=true` attenuates with distance `1/255`; analytic `fwidth` AA + `Rougier mod(s)` + `miterLimit 4→bevel`, `round/square` caps.*
+
 ### app/
 - **FR-app.1** Each capability sample runs, opens a window, and exits cleanly.
   *Acceptance: exit code 0, no sanitizer reports (smoke run with timeout under
@@ -84,3 +89,4 @@ within **1e-6**, plane-geometry within **ε (1e-4 relative)**.
   within 2 px (Euclidean) of the analytic plane∩mesh intersection curve match
   the contour color** — the curve is computed in closed form from the box+plane
   for each slice view's plane; the 3D view draws the mesh.*
+- **FR-app.4** Engine facade exposes `addCsg/addPoint/addLine` through `IViewBridge`. *Acceptance: `Engine` headless `renderOffscreen(640,480)` smoke `1/255` per new kind: `addCsg(Cube−Sphere)` hole `1/255`, `addPointCloud(10)` vs `addLine(2px)` `1/255`; `Engine` `DepthConfig` still `1` via `grep -c "DepthConfig\{true" ==1` `N>=3`; `app` never includes `render/` (`acl_app_render`).*
