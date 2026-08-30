@@ -104,7 +104,7 @@ All 25 tasks (T1..T20 incl. splits T3a/b, T8a/b, T11a/b, T14a/b, T15a/b + T17/T1
 - [x] All 25 task gates green; full suite green on a clean tree at T20 (25 tasks, T1..T20 incl. splits + stretch + hotfixes)
 - [x] `suite green N>=3` where GL-touching, `audit green`, `ASan+UBSan clean`, `LICENSE` per-dir, `R9` doc-map, `R3` regression, `R4` evidence, `comment_tag_context` PASS, `install` reproduces — see `COMPLETED_TASKS.md` V6 for evidence
 
-## V7 backlog — GPU CSG (Puxel 2-stage SSBO) + Points/Lines (10 required + 2 stretch)
+## V7 backlog — GPU CSG (Puxel 2-stage SSBO) + Points/Lines + Samples (13 required + 1 stretch)
 
 > Stack: C++20, CMake >=3.24, GL 4.6 core (glad2 73db193), GLFW 3.4, GLM, Dear ImGui, GTest, spdlog, stb — all pinned via FetchContent `GIT_TAG` 40-char SHA (`tools/audit.rules:deps_pinned`). Build gate `source tools/env.sh && eval "$LOOP_BUILD_TEST_CMD"` (SPEC §8, R15). `AUDIT_SOURCE_DIRS="io data volume scene core broker render app utils test_utils tests"`. Guardrails `tools/audit.rules` + `docs/spec/guardrails.md` §6 binding: `gpu_api_ownership forbid_outside core|\bgl[A-Z]|GL_`, `render_no_glad`, `render_no_window`, `asset_indirection`, `broker_per_type` (one `class.*Mapper` per file, grep -c ==1 at T15b), `isp_mapper_forbid`, `ownership_raw_ptr_*` `Type* /*borrow*/` + `@note lifetime:`, `evidence_analytic 1/255|1e-6`, `comment_tag_context >=120`, `no_per_target_sanitize INTERFACE re_project_sanitizers`, `engine_depth_default DepthConfig{true}` single-site, `no_production_readback forbid_outside core|glReadPixels`.
 
@@ -125,7 +125,9 @@ All 25 tasks (T1..T20 incl. splits T3a/b, T8a/b, T11a/b, T14a/b, T15a/b + T17/T1
 | T9 | docs/render.md, docs/re_scene_inventory.md (ReCsg/RePoint/ReLine) |
 | T10 | tests/t*_csg*, tests/t*_point*, tests/t*_line* + audit green (paint interior) |
 | T11 | (stretch) broker/csg_tree.hpp SOP tree `(A−B)∪C` + abacaba SCS |
-| T12 | (stretch) render/material/shader_table.md + perf 152 MB + N>=3 audit |
+| T12 | app/csg_sample.cpp, app/csg_long.cpp (CSG 2D/3D hole + transparent + paint) |
+| T13 | app/point_sample.cpp, app/point_long.cpp (Point 2D/3D sphere vs circle) |
+| T14 | app/line_sample.cpp, app/line_long.cpp (Line 2D/3D solid + dash) |
 
 ---
 
@@ -217,19 +219,35 @@ All 25 tasks (T1..T20 incl. splits T3a/b, T8a/b, T11a/b, T14a/b, T15a/b + T17/T1
 
 **G** — stretch green when activated.
 
-## T12: (stretch) RHI `IRHIContext::capabilities()` + perf mirror — `core/rhi/gl/` `T17` hardening
+## T12: Samples — CSG 2D/3D (hole + transparent merge + paint via Puxel)
 
-**D** — Deferred EOL `rhi_ownership forbid_outside core/rhi/gl|\bgl` (commented `tools/audit.rules:54` until `T17`) — not required for looping. Keep `core|` anchor `gpu_api_ownership`.
+**D** — Depends on `T3`+`T6`+`T8` (CsgOitStage Puxel + Broker Csg wiring + Engine facade). Create `app/csg_sample.cpp` bounded `RE_SAMPLE_MAX_FRAMES=300` (`kDefaultFrames=300` harness `app/sample_harness.hpp:175`) + `app/csg_long.cpp` interactive `runInteractive` with `CameraController`/`GlfwCameraInteractor` — both demonstrate `Engine::addCsg` flat `CsgObject{base Cube(2), subtractors {Sphere(0.6)}, paints {...}}` in 3D perspective (`Camera::perspective`) and 2D orthographic (`ClipPlane` `Space::World` axial, `Camera::ortho`) views. Hole shows `B` material `1/255`, `transparent(A α0.5)−B + surrounding Mesh α0.6` k-way merge `over()` `1/255`, `paintInterior` true (volume interior recolor) vs false (surface strip) `1/255`. Wire via `AppContext` + `IViewBridge` (no `render/` include in `app/` per `acl_app_render`), harness `run()` discipline, long-lived `EXCLUDE_FROM_ALL`. Docs `docs/samples.md` note `CsgSample 2D/3D`.
 
-**T** — audit `rhi_ownership` still commented, `core/rhi/gl/` absent, `core|` `gl*` PASS.
+**T** — `RE_SAMPLE_MAX_FRAMES=2` smoke `1/255` for `re_sample_csg` bounded + `re_sample_csg_long --help` exists, `grep -c "addCsg" app/csg_sample.cpp >=1` + `grep -c "ClipPlane\|ortho" app/csg_sample.cpp >=1` (2D branch), offscreen `640×480` hole center `B` mat `1/255` via `utils::OffscreenContext` + `REContext::readRgba8` oracle, `N>=3` for readback, `audit green`, `grep -c "1/255" tests/t12*.cpp >=1`.
 
-**G** — (stretch) audit green when activated.
+**G** — suite green `N>=3`, `ASan+UBSan` clean, `audit green`, samples run under `Xvfb`/`GALLIUM_DRIVER=llvmpipe` bounded.
+
+## T13: Samples — Point 2D/3D (sphere impostor vs circle, worldUnits)
+
+**D** — Depends on `T4`+`T7`+`T8` (PointRenderer impostor + Broker Point wiring + Engine facade). Create `app/point_sample.cpp` + `app/point_long.cpp` — 2D `ClipPlane` circles (`PointRenderer` impostor `gl_FragDepth` flat, `fill=Hollow/GridDashed`) vs 3D `Perspective` spheres (`MeshRenderer` delegate for single, `PointRenderer` for cloud) — 10-point cloud, `worldUnits` true→`false` `10px` const, `radius` `worldUnits` toggle demonstrably changes screen size with distance. Use `Engine::addPoint`/`addPointCloud`, `AppContext`, `CameraController` for long-lived.
+
+**T** — `RE_SAMPLE_MAX_FRAMES=2` smoke `1/255` for `re_sample_point`: `3D sphere` vs `Mesh Sphere` oracle `1/255` + `2D circle` `1/255` + `worldUnits 10px` const `1/255` + `fill` variants `1/255`, `grep -c "addPoint" app/point_sample.cpp >=1` + `grep -c "ClipPlane" app/point_sample.cpp >=1`, `N>=3`, `audit green`.
+
+**G** — suite green `N>=3`, audit green, sample smoke green.
+
+## T14: Samples — Line 2D/3D (SSBO strip, dash, joins, worldUnits)
+
+**D** — Depends on `T5`+`T7`+`T8` (LineRenderer SSBO + Broker Line wiring + Engine facade). Create `app/line_sample.cpp` + `app/line_long.cpp` — `LineObject` polyline `2px` solid red across black `≥90%` of `±width/2` band `1/255` + `dash 8 gap 4` `1/255` + `join miter→bevel` `round/square` caps, both `3D` perspective (view-space `SSBO+gl_VertexID` strip) and `2D` orthographic (`ClipPlane` overlay). `worldUnits` true attenuates with distance `1/255`. Use `Engine::addLine`/`addPolyline`, `AppContext`, `CameraController`.
+
+**T** — `RE_SAMPLE_MAX_FRAMES=2` smoke `1/255` for `re_sample_line`: `solid 2px` `≥90%` `1/255` + `dash 8/4` `1/255` + `worldUnits` `1/255`, `grep -c "addLine" app/line_sample.cpp >=1` + `grep -c "DashPattern\|LineCap" app/line_sample.cpp >=1`, `N>=3`, `audit green`.
+
+**G** — suite green `N>=3`, audit green, `≥90% within 2px` analytic via `ReView` readback.
 
 ## Definition of Done — V7
 
-- [ ] All 10 required gates T1..T10 green; full suite green `N>=3` where GL-touching, `audit green` with `AUDIT_SOURCE_DIRS="io data volume scene core broker render app utils test_utils tests"` via `source tools/env.sh` (R15 companion exact `test "$AUDIT_SOURCE_DIRS" = "io ... tests" && test -n "$LOOP_BUILD_TEST_CMD"`).
+- [ ] All 13 required gates T1..T10 + T12..T14 green (T11 stretch not gating); full suite green `N>=3` where GL-touching, `audit green` with `AUDIT_SOURCE_DIRS="io data volume scene core broker render app utils test_utils tests"` via `source tools/env.sh` (R15 companion exact `test "$AUDIT_SOURCE_DIRS" = "io ... tests" && test -n "$LOOP_BUILD_TEST_CMD"`).
 - [ ] `ASan+UBSan` clean, `-Werror` clean, `LICENSE` per-dir `data/meshes/LICENSE` + `data/volumes/LICENSE`, `R9` doc-map above, `R3` regression never weakened, `R4` evidence `1/255|1e-6|BudgetExceeded|152 MB` per-task `grep -c` floors + `evidence_analytic` anchor, `comment_tag_context` ≥120 PASS.
-- [ ] `CsgObject` flat `{base, subtractors[], paints[]}` Puxel 2-stage SSBO `Cube(2)−Sphere(0.6)` hole `B` mat `1/255`, `transparent(A α0.5)−B + surrounding α0.6` k-way merge `1/255`, `paintInterior` true `1/255` vs false strip `1/255`, `Point 3D` vs `Sphere` mesh oracle `1/255` + `2D` circle `1/255` + `worldUnits` `10px` const `1/255`, `Line 2px` `≥90% within 2px` `1/255` + `dash 8/4` `1/255`.
+- [ ] `CsgObject` flat `{base, subtractors[], paints[]}` Puxel 2-stage SSBO `Cube(2)−Sphere(0.6)` hole `B` mat `1/255`, `transparent(A α0.5)−B + surrounding α0.6` k-way merge `1/255`, `paintInterior` true `1/255` vs false strip `1/255`, `Point 3D` vs `Sphere` mesh oracle `1/255` + `2D` circle `1/255` + `worldUnits` `10px` const `1/255`, `Line 2px` `≥90% within 2px` `1/255` + `dash 8/4` `1/255`, plus `CSG/Point/Line` samples `RE_SAMPLE_MAX_FRAMES=2` smoke `1/255` for `re_sample_csg/point/line` 2D/3D `N>=3`.
 
 ## FR → T traceability delta (V7 re-verifies `1/255`/`1e-6` on green tree — full 25 FRs per §22 above)
 
