@@ -40,11 +40,15 @@
 #include "broker/broker.hpp"
 #include "broker/camera_mapper.hpp"
 #include "broker/contour_mapper.hpp"
+#include "broker/csg_object_mapper.hpp"
+#include "broker/line_object_mapper.hpp"
 #include "broker/material_mapper.hpp"
 #include "broker/mesh_object_mapper.hpp"
 #include "broker/mesh_slice_object_mapper.hpp"
 #include "broker/plane_mapper.hpp"
 #include "broker/plane_object_mapper.hpp"
+#include "broker/point_cloud_mapper.hpp"
+#include "broker/point_object_mapper.hpp"
 #include "broker/render_stack.hpp"
 #include "broker/view_bridge.hpp"
 #include "broker/volume_object_mapper.hpp"
@@ -90,6 +94,10 @@ data::Result<data::Image> renderOffscreenImpl(
     brokerPtr->registerMapper(std::make_unique<broker::PlaneMapper>());
     brokerPtr->registerMapper(std::make_unique<broker::PlaneObjectMapper>(assets));
     brokerPtr->registerMapper(std::make_unique<broker::ContourMapper>(assets));
+    brokerPtr->registerMapper(std::make_unique<broker::CsgObjectMapper>(assets));
+    brokerPtr->registerMapper(std::make_unique<broker::PointObjectMapper>());
+    brokerPtr->registerMapper(std::make_unique<broker::PointCloudMapper>());
+    brokerPtr->registerMapper(std::make_unique<broker::LineObjectMapper>());
 
     auto bridge = broker::ViewBridge::create(brokerPtr, stack);
 

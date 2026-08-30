@@ -162,9 +162,9 @@ public:
             return data::Result<void>(data::value);
         }
         if (k == scene::SceneKind::Point) {
-            // PointObject vs PointCloudObject share SceneKind::Point (same technique dispatch, distinct C++ types for Broker pair-key — the store's typed getter distinguishes via dynamic_cast so Kind check alone aliases, but dynamic_cast provides the extra type guard). Try single first, then cloud. (V7 T2)
+            // PointObject vs PointCloudObject share SceneKind::Point (same technique dispatch, distinct C++ types for Broker pair-key — the store's typed getter distinguishes via dynamic_cast so Kind check alone aliases, but dynamic_cast provides the extra type guard). Try single first, then cloud. For this shared Kind the generic base obtained via getByKind(Point) is ambiguous (it may be either mapper depending on registration order), so we bypass the ambiguous base and resolve the correct mapper via the typed getMutable<T>() for each concrete type, keeping the broker_per_type one-class-per-file invariant while avoiding an unsafe static_cast that would misinterpret the vptr. (V7 T2 fix for the Point shared-Kind ambiguity, preserves 1/255 evidence and disposition guardrails)
             if (auto* /*borrow*/ po = scene.getPointObject(oid)) {
-                auto* /*borrow*/ m = base ? static_cast<PointObjectMapper*>(base) : (broker_ ? broker_->getMutable<PointObjectMapper>() : nullptr);
+                auto* /*borrow*/ m = broker_ ? broker_->getMutable<PointObjectMapper>() : nullptr;
                 if (!m) return data::makeError<void>(13, "ViewSynchronizer: no PointObjectMapper registered");
                 auto r = m->mapCached(*po, ctx); if (r.failed()) return data::makeError<void>(r.error().code, r.error().message);
                 bool tr = r->color.a < 1.0f - 1e-6f;
@@ -176,7 +176,7 @@ public:
                 if (!stack_->point) return data::makeError<void>(12, "ViewSynchronizer: no PointRenderer wired in RenderStack");
                 rv->addItem(l, stack_->point); return data::Result<void>(data::value);
             } else if (auto* /*borrow*/ pco = scene.getPointCloudObject(oid)) {
-                auto* /*borrow*/ m = base ? static_cast<PointCloudMapper*>(base) : (broker_ ? broker_->getMutable<PointCloudMapper>() : nullptr);
+                auto* /*borrow*/ m = broker_ ? broker_->getMutable<PointCloudMapper>() : nullptr;
                 if (!m) return data::makeError<void>(13, "ViewSynchronizer: no PointCloudMapper registered");
                 auto r = m->mapCached(*pco, ctx); if (r.failed()) return data::makeError<void>(r.error().code, r.error().message);
                 bool tr = false; for (auto& p : r->points) if (p.color.a < 1.0f - 1e-6f) { tr = true; break; }

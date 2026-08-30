@@ -23,3 +23,6 @@ leak:libxkbcommon
 leak:libX11
 leak:libdecor_frame_commit
 leak:FcFontRenderPrepare
+leak:__sanitizer
+leak:__cxa_demangle
+leak:Symbolizer

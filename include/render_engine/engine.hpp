@@ -32,10 +32,17 @@
 #include "data/result.hpp"
 #include "data/volume_dataset.hpp"
 #include "scene/camera.hpp"
+#include "scene/csg_op.hpp"
 #include "scene/depth_config.hpp"
 #include "scene/light.hpp"
+#include "scene/line_style.hpp"
 #include "scene/material_desc.hpp"
 #include "scene/object.hpp"
+#include "scene/objects/csg_object.hpp"
+#include "scene/objects/line_object.hpp"
+#include "scene/objects/point_cloud_object.hpp"
+#include "scene/objects/point_object.hpp"
+#include "scene/point_fill.hpp"
 #include "scene/store.hpp"
 #include "scene/view.hpp"
 #include "volume/transfer_function.hpp"
@@ -50,6 +57,62 @@ struct ViewDescriptor {
     ::re::scene::Rect rect{0, 0, 800, 600};
     ::re::scene::Camera camera{};
     std::vector<::re::scene::ObjectId> objectIds{};
+};
+
+/// Descriptor for a flat Puxel CSG object — base plus subtractors and paints.
+///
+/// The V7 CSG model is flat multi-subtract/multi-paint per CsgObject: base is the
+/// primary operand whose surviving fragments are kept, subtractors remove interior
+/// fragments, paints recolor. The descriptor mirrors CsgObject fields but stays a
+/// plain value for the facade; the engine builds a CsgObject and delegates to
+/// SceneStore::addCsgObject which assigns a stable ObjectId and bumps generation.
+struct CsgDesc {
+    ::re::scene::AssetRef<::re::data::Mesh> baseMesh{};
+    glm::mat4 baseTransform{1.0f};
+    ::re::scene::MeshMaterialDesc baseMaterial{};
+    std::vector<::re::scene::CsgOperand> subtractors{};
+    std::vector<::re::scene::CsgPaintOperand> paints{};
+    glm::mat4 transform{1.0f};
+    ::re::scene::Layer layer{::re::scene::Layer::LAYER_0};
+    int32_t priority{0};
+};
+
+/// Descriptor for a single point marker.
+struct PointDesc {
+    glm::vec3 position{0.0f, 0.0f, 0.0f};
+    float radius{5.0f};
+    bool worldUnits{true};
+    glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f};
+    ::re::scene::PointFill fill{::re::scene::PointFill::Solid};
+    float fillParam{0.0f};
+    glm::mat4 transform{1.0f};
+    ::re::scene::Layer layer{::re::scene::Layer::LAYER_0};
+    int32_t priority{0};
+};
+
+/// Descriptor for a batched point cloud.
+struct PointCloudDesc {
+    std::vector<::re::scene::PointData> points{};
+    bool worldUnits{true};
+    glm::mat4 transform{1.0f};
+    ::re::scene::Layer layer{::re::scene::Layer::LAYER_0};
+    int32_t priority{0};
+};
+
+/// Descriptor for a polyline / line collection.
+struct LineDesc {
+    std::vector<::re::scene::LineSegment> segments{};
+    glm::vec4 color{1.0f, 0.0f, 0.0f, 1.0f};
+    float width{2.0f};
+    bool worldUnits{false};
+    ::re::scene::LineCap cap{::re::scene::LineCap::Square};
+    ::re::scene::LineJoin join{::re::scene::LineJoin::Miter};
+    float miterLimit{4.0f};
+    ::re::scene::LineStyle style{::re::scene::LineStyle::Solid};
+    ::re::scene::DashPattern dash{};
+    glm::mat4 transform{1.0f};
+    ::re::scene::Layer layer{::re::scene::Layer::LAYER_0};
+    int32_t priority{0};
 };
 
 /// Engine — one-liner facade for visualization consumers (TASKS T1, SPEC §3).
@@ -164,6 +227,147 @@ class Engine {
         return addVolume(std::move(asset), glm::mat4(1.0f), tf);
     }
 
+    // ---- CSG helpers ---------------------------------------------------------
+
+    /// Add a flat Puxel CSG object via descriptor — delegates to SceneStore::addObject.
+    ::re::scene::ObjectId addCsg(const CsgDesc& desc) {
+        ::re::scene::CsgObject obj;
+        obj.transform = desc.transform;
+        obj.layer = desc.layer;
+        obj.priority = desc.priority;
+        ::re::scene::CsgOperand base;
+        base.mesh = desc.baseMesh;
+        base.operandTransform = desc.baseTransform;
+        base.material = desc.baseMaterial;
+        obj.base = std::move(base);
+        obj.subtractors = desc.subtractors;
+        obj.paints = desc.paints;
+        return ctx_.store().addCsgObject(std::move(obj));
+    }
+
+    /// Convenience: base mesh plus subtractors and paints with identity transforms.
+    ::re::scene::ObjectId addCsg(
+        ::re::scene::AssetRef<::re::data::Mesh> base,
+        const std::vector<::re::scene::CsgOperand>& subtractors,
+        const std::vector<::re::scene::CsgPaintOperand>& paints = {}) {
+        CsgDesc d;
+        d.baseMesh = std::move(base);
+        d.subtractors = subtractors;
+        d.paints = paints;
+        return addCsg(d);
+    }
+
+    /// Overload taking a fully formed CsgObject value (advanced).
+    ::re::scene::ObjectId addCsg(::re::scene::CsgObject obj) {
+        return ctx_.store().addCsgObject(std::move(obj));
+    }
+
+    // ---- point helpers -------------------------------------------------------
+
+    /// Add a single point marker via descriptor.
+    ::re::scene::ObjectId addPoint(const PointDesc& desc) {
+        ::re::scene::PointObject obj;
+        obj.position = desc.position;
+        obj.radius = desc.radius;
+        obj.worldUnits = desc.worldUnits;
+        obj.color = desc.color;
+        obj.fill = desc.fill;
+        obj.fillParam = desc.fillParam;
+        obj.transform = desc.transform;
+        obj.layer = desc.layer;
+        obj.priority = desc.priority;
+        return ctx_.store().addPointObject(std::move(obj));
+    }
+
+    /// Convenience: position + radius + color.
+    ::re::scene::ObjectId addPoint(const glm::vec3& pos, float radius,
+                                   const glm::vec4& color, bool worldUnits = true,
+                                   ::re::scene::PointFill fill = ::re::scene::PointFill::Solid) {
+        PointDesc d;
+        d.position = pos;
+        d.radius = radius;
+        d.color = color;
+        d.worldUnits = worldUnits;
+        d.fill = fill;
+        return addPoint(d);
+    }
+
+    /// Add a batched point cloud via descriptor.
+    ::re::scene::ObjectId addPointCloud(const PointCloudDesc& desc) {
+        ::re::scene::PointCloudObject obj;
+        obj.points = desc.points;
+        obj.worldUnits = desc.worldUnits;
+        obj.transform = desc.transform;
+        obj.layer = desc.layer;
+        obj.priority = desc.priority;
+        return ctx_.store().addPointCloudObject(std::move(obj));
+    }
+
+    /// Convenience: vector<PointData> plus shared worldUnits flag.
+    ::re::scene::ObjectId addPointCloud(
+        const std::vector<::re::scene::PointData>& points, bool worldUnits = true) {
+        PointCloudDesc d;
+        d.points = points;
+        d.worldUnits = worldUnits;
+        return addPointCloud(d);
+    }
+
+    /// Overload taking a fully formed PointObject value (advanced).
+    ::re::scene::ObjectId addPoint(::re::scene::PointObject obj) {
+        return ctx_.store().addPointObject(std::move(obj));
+    }
+
+    /// Overload taking a fully formed PointCloudObject value (advanced).
+    ::re::scene::ObjectId addPointCloud(::re::scene::PointCloudObject obj) {
+        return ctx_.store().addPointCloudObject(std::move(obj));
+    }
+
+    // ---- line helpers --------------------------------------------------------
+
+    /// Add a line / polyline via descriptor — delegates to SceneStore::addLineObject.
+    ::re::scene::ObjectId addLine(const LineDesc& desc) {
+        ::re::scene::LineObject obj;
+        obj.segments = desc.segments;
+        obj.color = desc.color;
+        obj.width = desc.width;
+        obj.worldUnits = desc.worldUnits;
+        obj.cap = desc.cap;
+        obj.join = desc.join;
+        obj.miterLimit = desc.miterLimit;
+        obj.style = desc.style;
+        obj.dash = desc.dash;
+        obj.transform = desc.transform;
+        obj.layer = desc.layer;
+        obj.priority = desc.priority;
+        return ctx_.store().addLineObject(std::move(obj));
+    }
+
+    /// Alias for polyline — same descriptor, same storage.
+    ::re::scene::ObjectId addPolyline(const LineDesc& desc) {
+        return addLine(desc);
+    }
+
+    /// Convenience: two-point segment plus styling.
+    ::re::scene::ObjectId addLine(const glm::vec3& a, const glm::vec3& b,
+                                  const glm::vec4& color, float width = 2.0f,
+                                  bool worldUnits = false) {
+        LineDesc d;
+        d.segments.push_back(::re::scene::LineSegment{a, b});
+        d.color = color;
+        d.width = width;
+        d.worldUnits = worldUnits;
+        return addLine(d);
+    }
+
+    /// Overload taking a fully formed LineObject value (advanced).
+    ::re::scene::ObjectId addLine(::re::scene::LineObject obj) {
+        return ctx_.store().addLineObject(std::move(obj));
+    }
+
+    ::re::scene::ObjectId addPolyline(::re::scene::LineObject obj) {
+        return ctx_.store().addLineObject(std::move(obj));
+    }
+
     // ---- view helpers -------------------------------------------------------
 
     /// Install a single view from a plain descriptor (rect + camera + ids).
@@ -179,7 +383,7 @@ class Engine {
         v.camera = desc.camera;
         v.setItemIds(desc.objectIds);
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
-        v.setDepthConfig(::re::scene::DepthConfig{true});
+        applyDepthDefault(v);
         views_.clear();
         views_.push_back(std::move(v));
     }
@@ -231,7 +435,7 @@ class Engine {
         v.camera = camera;
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         v.setItemIds(ids);
-        v.setDepthConfig(::re::scene::DepthConfig{true});
+        applyDepthDefault(v);
         return v;
     }
 
@@ -261,7 +465,7 @@ class Engine {
         v.camera = std::move(camera);
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         v.setItemIds(ids);
-        v.setDepthConfig(::re::scene::DepthConfig{true});
+        applyDepthDefault(v);
         return v;
     }
 
@@ -283,7 +487,7 @@ class Engine {
         v.camera = std::move(camera);
         v.setClearColor(glm::vec4(0.10f, 0.10f, 0.12f, 1.0f));
         v.setItemIds(ids);
-        v.setDepthConfig(::re::scene::DepthConfig{true});
+        applyDepthDefault(v);
         return v;
     }
 
@@ -345,7 +549,7 @@ class Engine {
     }
 
    private:
-    static void applyMeshDepthDefault(::re::scene::View& v) {
+    static void applyDepthDefault(::re::scene::View& v) {
         v.setDepthConfig(::re::scene::DepthConfig{true});
     }
     ::re::broker::AppContext ctx_;
