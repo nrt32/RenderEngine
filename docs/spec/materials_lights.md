@@ -84,11 +84,14 @@ render::IMaterial
 ### App (`scene/material/` — mirrors RE roles, GL-free, variant OCP binding):
 
 ```
-scene::MaterialDesc  variant< MeshMaterialDesc, VolumeMaterialDesc, SliceMaterialDesc, ContourMaterialDesc >  // variant keeps scene/ header-only, no vtable (Here Be Braces variant vs virtuals)
-  MeshMaterialDesc   variant< PhongDesc, PBRDesc, … >  { vec4 baseColor, vec3 specular, float shininess, float ambient, diffuse; bool doubleSided; }  // IColorMaterial source
-  VolumeMaterialDesc { float densityScale; bool shading; }  // TF NOT inside — TransferFunctionDesc lives **beside** VolumeMaterialDesc in `VolumePresentation{VolumeMaterialDesc mat; TransferFunctionDesc tf; float stepLength; bool shading;}` per §12.5 binding (ISP: TF has its own cache key/lifecycle `TransferFunctionMapper`; bundling would dirty MaterialMapper on TF edit — see §12.5)
+scene::MaterialDesc  variant< MeshMaterialDesc, VolumeMaterialDesc, SliceMaterialDesc, ContourMaterialDesc, PointMaterialDesc, LineMaterialDesc, CsgMaterialDesc >  // V7 extends 4→7: variant keeps scene/ header-only, no vtable (Here Be Braces variant vs virtuals) — new Point/Line/Csg descs are additive, visitor overloads only, zero edits to existing descs per OCP
+  MeshMaterialDesc   variant< PhongDesc, PBRDesc, … >  { vec4 baseColor, vec3 specular, float shininess, float ambient, diffuse; bool doubleSided; }  // IColorMaterial source (IColor = color-uniform, ISP segregation per §12.2 V7)
+  VolumeMaterialDesc { float densityScale; bool shading; }  // IVolumeMaterial source — TF NOT inside — TransferFunctionDesc lives **beside** VolumeMaterialDesc in `VolumePresentation{VolumeMaterialDesc mat; TransferFunctionDesc tf; float stepLength; bool shading;}` per §12.5 binding (ISP: TF has its own cache key/lifecycle `TransferFunctionMapper`; bundling would dirty MaterialMapper on TF edit — see §12.5) — IColor vs IVolume split (ISP)
   SliceMaterialDesc  { vec4 capColor; bool capping; }   // IColorMaterial source — distinct per §12.2 choice (capping not on MeshMaterial — ISP)
-  ContourMaterialDesc{ RgbaColor color; float lineWidth; uint16_t stipple; } // ILineMaterial source — distinct (ISP: linetype not on mesh)
+  ContourMaterialDesc{ RgbaColor color; float lineWidth; uint16_t stipple; } // ILineMaterial source — distinct (ISP: linetype not on mesh) — ILine vs IColor split
+  PointMaterialDesc  { glm::vec4 baseColor; float radius; bool worldUnits; PointFill fill; float fillParam; bool doubleSided; } // V7 IColorMaterial source — radius world default, worldUnits false→10px constant, fill=Solid/Hollow/GridDashed, fillParam grid density, doubleSided for billboard
+  LineMaterialDesc   { glm::vec4 baseColor; float width; bool worldUnits; LineCap cap; LineJoin join; float miterLimit; DashPattern dash; } // V7 ILineMaterial source — width world default, worldUnits toggle, cap=Round/Square, join=Miter/Bevel (miterLimit 4→bevel), dash pattern Rougier mod(s)
+  CsgMaterialDesc    { MeshMaterialDesc base; MeshMaterialDesc cap; CsgOp op; } // V7 IColorMaterial source — base vs cap: hole interior uses B's material (asymmetric Subtract per TASKS.md V7 design), cap op=Subtract/Paint, PaintOperand{Operand oper; bool paintInterior; float blend;} recolor surviving base fragments (true→volume interior, false→surface strip)
 
 // Variant vs base+kind vs polymorphic hierarchy (OCP+ISP binding, web-verified):
 // V3 fixes on variant (Here Be Braces 2020-06-26: variant open for operations/new visitors, closed for types; polymorphic hierarchy open for types/new derived classes, closed for operations).

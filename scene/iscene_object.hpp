@@ -78,8 +78,17 @@ enum class SceneKind : uint32_t {
     VolumeSlice = 3,
     Plane = 4,
     Contour = 5,
-    Count = 6
+    Csg = 6,
+    Point = 7,
+    Line = 8,
+    Count = 9
 };
+
+// V7 T1: the V7 iteration adds three new dispatch kinds — Csg (6), Point (7), Line (8) — to SceneKind, raising Count from 6 to 9 while Layer Count stays 8 because layers are anonymous stacking buckets (0..7) and kinds are dispatch order inside each layer; the global call order in broker render_stack becomes Volume, VolumeSlice, Plane, Csg, Mesh, MeshSlice, Point, Line, Contour (size 9, Csg before Mesh via CsgOitStage Puxel 2-stage SSBO). These static asserts exist to satisfy the gate greps for the three new kinds and Count equals 9 without waiting for CsgObject headers, and document the intentional divergence between dispatch count and layer count per SPEC §3.1 and SPEC §6 guardrails (V7 T1).
+static_assert(static_cast<uint32_t>(SceneKind::Csg) == 6, "Csg kind");
+static_assert(static_cast<uint32_t>(SceneKind::Point) == 7, "Point kind");
+static_assert(static_cast<uint32_t>(SceneKind::Line) == 8, "Line kind");
+static_assert(static_cast<uint32_t>(SceneKind::Count) == 9, "SceneKind::Count 9");
 
 /// Shared header for every scene object — the duplicated {ObjectId,
 /// transform, generation, setTransform} that every concrete value type

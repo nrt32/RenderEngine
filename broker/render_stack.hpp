@@ -39,23 +39,31 @@
 namespace re::broker {
 
 /// Global renderer call order that governs cross-type ordering inside each
-/// Layer (SPEC §3.1 V6 — dumb LAYER_0..7 + techniqueOrder + scoped priority).
+/// Layer (SPEC §3.1 V7 — dumb LAYER_0..7 with scoped priority; this is the
+/// V7 dispatch order covering 9 kinds per SPEC §6 `SceneKind::Count=9` while
+/// `Layer::Count` stays `8` because layers are stacking, kinds are dispatch).
 /// Lower index draws first within the same Layer; priority is scoped inside
 /// the same (layer, technique) bucket so a VolumeSlice priority 100 still
-/// draws before a Contour priority 0 on the same LAYER_0 when techniqueOrder
-/// says VolumeSlice before Contour. The order is explicit and hardcoded
+/// draws before a Contour priority 0 on the same LAYER_0 when the global
+/// order says VolumeSlice before Contour. The order is explicit and hardcoded
 /// (BGFX Sequential / UE AddPass precedent) — Volume, VolumeSlice, Plane,
-/// Mesh, MeshSlice, Contour — and the synchronizer's stable_sort groups by
+/// Csg, Mesh, MeshSlice, Point, Line, Contour — `SceneKind::Count=9`
+/// (`Layer::Count` stays `8` — layers are stacking, kinds are dispatch per
+/// SPEC §3.1/§6; array size `9` covers `Csg` before `Mesh` composite via
+/// `CsgOitStage` Puxel resolve). The synchronizer's stable_sort groups by
 /// (uint16(layer) asc, orderIdx asc, priority asc, insertionIdx asc) before
 /// dispatching to the render-side view. Deterministic regardless of store
 /// insertion order because insertionIdx is the stable tie for same
 /// layer+type+priority. No per-view LayerMask or per-object override map.
-inline constexpr std::array<scene::SceneKind, 6> techniqueOrder{
+inline constexpr std::array<scene::SceneKind, 9> techniqueOrder{
     scene::SceneKind::Volume,
     scene::SceneKind::VolumeSlice,
     scene::SceneKind::Plane,
+    scene::SceneKind::Csg,
     scene::SceneKind::Mesh,
     scene::SceneKind::MeshSlice,
+    scene::SceneKind::Point,
+    scene::SceneKind::Line,
     scene::SceneKind::Contour};
 
 /// The per-technique renderer set one bridge composes with.

@@ -84,7 +84,7 @@ TEST(T5Collapse, NoSphereObjectClassRemains) {
     EXPECT_EQ(fileCount, 6) << "scene/objects/ must contain exactly 6 headers after T5 (Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour)";
 }
 
-// Broker still has 6 technique kinds (Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour)
+// Broker still has 9 technique kinds post-V7 T1 (Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour, Csg, Point, Line) — V7 T1 raises Count 6→9 (Layer::Count stays 8) per SPEC §3.1/§6 guardrails; the V7 T1 gate asserts SceneKind::Count 9 and techniqueOrder size 9 via Csg before Mesh
 TEST(T5Collapse, BrokerRegisteredTypesSixKinds) {
     broker::Broker broker;
     auto registry = std::make_shared<render::AssetRegistry>();
@@ -94,7 +94,7 @@ TEST(T5Collapse, BrokerRegisteredTypesSixKinds) {
     bool hasMesh = false;
     for (auto k : types) if (k == scene::SceneKind::Mesh) hasMesh = true;
     EXPECT_TRUE(hasMesh);
-    EXPECT_EQ(static_cast<uint32_t>(scene::SceneKind::Count), 6u) << "SceneKind::Count must be 6 after T5 (analytic 6, not <=6)";
+    EXPECT_EQ(static_cast<uint32_t>(scene::SceneKind::Count), 9u) << "SceneKind::Count must be 9 after V7 T1 (analytic 9, not <=6) — V7 adds Csg,Point,Line (Layer::Count stays 8)";
     EXPECT_EQ(static_cast<uint32_t>(scene::SceneKind::Mesh), 0u);
     EXPECT_EQ(static_cast<uint32_t>(scene::SceneKind::Contour), 5u);
     EXPECT_EQ(static_cast<uint32_t>(scene::GeometryKind::Count), 12u) << "GeometryKind::Count must be 12 (Mesh + 11 variations)";

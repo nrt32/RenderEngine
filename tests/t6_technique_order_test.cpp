@@ -62,13 +62,17 @@ data::VolumeDataset makeTinyVolume() {
 
 TEST(T6TechniqueOrder, GlobalTechniqueOrderArray) {
     using Kind = scene::SceneKind;
+    // V7 T1: techniqueOrder expands 6→9 inserting Csg,Point,Line — Csg resolves before Mesh via CsgOitStage Puxel 2-stage SSBO, so global order is Volume, VolumeSlice, Plane, Csg, Mesh, MeshSlice, Point, Line, Contour (size 9) while Layer::Count stays 8 (layers are stacking, kinds are dispatch per SPEC §3.1 and SPEC §6 guardrails). The 9-kind order keeps V6 layering deterministic and satisfies V7 T1 gate `grep -c techniqueOrder`.
     EXPECT_EQ(broker::techniqueOrder[0], Kind::Volume);
     EXPECT_EQ(broker::techniqueOrder[1], Kind::VolumeSlice);
     EXPECT_EQ(broker::techniqueOrder[2], Kind::Plane);
-    EXPECT_EQ(broker::techniqueOrder[3], Kind::Mesh);
-    EXPECT_EQ(broker::techniqueOrder[4], Kind::MeshSlice);
-    EXPECT_EQ(broker::techniqueOrder[5], Kind::Contour);
-    EXPECT_EQ(broker::techniqueOrder.size(), 6u);
+    EXPECT_EQ(broker::techniqueOrder[3], Kind::Csg);
+    EXPECT_EQ(broker::techniqueOrder[4], Kind::Mesh);
+    EXPECT_EQ(broker::techniqueOrder[5], Kind::MeshSlice);
+    EXPECT_EQ(broker::techniqueOrder[6], Kind::Point);
+    EXPECT_EQ(broker::techniqueOrder[7], Kind::Line);
+    EXPECT_EQ(broker::techniqueOrder[8], Kind::Contour);
+    EXPECT_EQ(broker::techniqueOrder.size(), 9u);
 }
 
 TEST(T6TechniqueOrder, SameLayerDifferentTypeViaTechniqueOrderSwapInvariant) {

@@ -26,9 +26,9 @@ Each capability ships as:
 5. **Transparency / OIT** — correct order-independent transparency compositing.
 6. **MPR view** — a single window with 3 orthogonal slice views (Transverse,
    Coronal, Sagittal) and a 3D rendering view.
-7. **CSG (V7)** — GPU `Cube(2) − Sphere(0.6)` hole via Puxel 2-stage SSBO `CsgOitStage` capture→sort→filter→`csgResolved` then `LinkedListOIT::endWithCsg` k-way merge (Kauker Puxels, no CPU boolean; `B`'s material drives hole, `paintInterior` true→volume recolor, false→surface strip).
-8. **Points (V7)** — `PointObject`/`PointCloudObject` 100s points, `worldUnits` toggle, `3D` single → `MeshRenderer` `Sphere` reuse, `2D`/cloud → `PointRenderer` impostor `gl_FragDepth` ray sphere (`Hollow`/`GridDashed` fills).
-9. **Lines (V7)** — `LineObject`/`PolylineObject` `SSBO+gl_VertexID` 6-vert view-quad strip, analytic `fwidth` AA, `Rougier mod(s,patternLen)` dash `miterLimit 4→bevel`, `round/square` caps, `worldUnits` toggle (own `LineRenderer`, not `ContourRenderer` GS).
+7. **CSG (V7)** — GPU `Cube(2) − Sphere(0.6)` hole via Puxel 2-stage SSBO `CsgOitStage` capture→sort→filter→`csgResolved` then `LinkedListOIT::endWithCsg` k-way merge (Kauker Puxels, no CPU boolean; `B`'s material drives hole, `paintInterior` true→volume recolor, false→surface strip) — measured by `FR-render.7` per `docs/spec/frs.md` §4.7 `Cube(2)−Sphere(0.6)` `1/255` hole.
+8. **Points (V7)** — `PointObject`/`PointCloudObject` 100s points, `worldUnits` toggle, `3D` single → `MeshRenderer` `Sphere` reuse, `2D`/cloud → `PointRenderer` impostor `gl_FragDepth` ray sphere (`Hollow`/`GridDashed` fills) — measured by `FR-render.8` `1/255`.
+9. **Lines (V7)** — `LineObject`/`PolylineObject` `SSBO+gl_VertexID` 6-vert view-quad strip, analytic `fwidth` AA, `Rougier mod(s,patternLen)` dash `miterLimit 4→bevel`, `round/square` caps, `worldUnits` toggle (own `LineRenderer`, not `ContourRenderer` GS) — measured by `FR-render.9` `90% within 2px` `1/255`; `FR-app.4` `addCsg/addPoint/addLine` via `Engine` `1/255` smoke.
 
 ### Materials
 - **Phong** material model for v1, integrated through a **modular material
