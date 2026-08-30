@@ -11,6 +11,8 @@ add_library(re_render STATIC
     shader_cache.cpp
     mesh_renderer.cpp
     linked_list_oit.cpp
+    csg_stage.cpp
+    csg_renderer.cpp
     plane_renderer.cpp
     volume_renderer.cpp
     volume_slice_renderer.cpp

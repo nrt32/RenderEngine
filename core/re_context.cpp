@@ -345,6 +345,14 @@ void memoryBarrierBufferUpdate() noexcept {
     glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 }
 
+void memoryBarrierAll() noexcept {
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
+}
+
+void finish() noexcept {
+    glFinish();
+}
+
 void bindImageR32ui(const Texture2D& texture, std::uint32_t unit) noexcept {
     glBindImageTexture(static_cast<GLuint>(unit), texture.id(), 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
 }

@@ -177,17 +177,17 @@ TEST(T5HeaderFirewall, AllCoreHeadersGladFreeComprehensive) {
         // — but only check the include, not constants (constants could be named
         // in comments). The mechanical gate is include count.
     }
-    // Analytic: total #include occurrences in core/*.hpp is exactly 63
-    // (re_context.hpp 7 + texture2d.hpp 2 + load_core_gl.hpp 2 + logging.hpp 1
+    // Analytic: total #include occurrences in core/*.hpp is exactly 64
+    // (re_context.hpp 7 + texture2d.hpp 3 (+1 for <vector> for readR32UI T3) + load_core_gl.hpp 2 + logging.hpp 1
     // + transform_feedback.hpp 4 + gl_error.hpp 2 + framebuffer.hpp 3
     // + vertex_array.hpp 3 + window header 5 + draw.hpp 1 + vertex_buffer.hpp 3
     // + read_pixels.hpp 4 + shader_program.hpp 12 + storage_buffer.hpp 4
     // + texture3d.hpp 2 + glsl_version.hpp 1 + element_buffer.hpp 4
-    // + glfw_runtime.hpp 1 + offscreen.hpp 1 + caps.hpp 1 = 63). offscreen adds 1 for
+    // + glfw_runtime.hpp 1 + offscreen.hpp 1 + caps.hpp 1 = 64). offscreen adds 1 for
     // utils/offscreen_context. glfw_runtime adds 1 for <memory>. caps adds 1 for
     // <cstdint> (T11 No cap streaming via core::Caps). shader_program grew by one.
-    // This exact count proves the scan enumerated files, not a vacuous >0.
-    EXPECT_EQ(totalIncludes, 63) << "core headers include count must be 63 (analytic sum, proves scan)";
+    // texture2d grew by one for <vector> (T3 readR32UI). This exact count proves the scan enumerated files, not a vacuous >0.
+    EXPECT_EQ(totalIncludes, 64) << "core headers include count must be 64 (analytic sum, proves scan)";
     EXPECT_EQ(countGladInCoreHeaders(), 0);
 }
 

@@ -92,4 +92,15 @@ void Texture2D::uploadDepth(std::uint32_t width, std::uint32_t height) const noe
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
+data::Result<std::vector<std::uint32_t>> Texture2D::readR32UI(std::uint32_t width, std::uint32_t height) const {
+    if (glGetTexImage == nullptr) {
+        return data::makeError<std::vector<std::uint32_t>>(1, "Texture2D::readR32UI no GL context");
+    }
+    std::vector<std::uint32_t> out(static_cast<std::size_t>(width) * height, 0u);
+    bind(0u);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, out.data());
+    unbind(0u);
+    return data::makeValue<std::vector<std::uint32_t>>(std::move(out));
+}
+
 } // namespace re::core

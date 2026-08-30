@@ -7,6 +7,7 @@
 // glTexImage2D calls live in texture2d.cpp.
 
 #include <cstdint>
+#include <vector>
 
 #include "data/result.hpp"
 
@@ -75,6 +76,11 @@ class Texture2D {
     /// texture must be bound. Used by the optional depth attachment of an
     /// offscreen render target (render::ViewTarget DepthMode::Enabled).
     void uploadDepth(std::uint32_t width, std::uint32_t height) const noexcept;
+
+    /// Read back R32UI texture data (test helper for CSG head). Returns a vector
+    /// of width*height uint32 values row-major bottom-up. Requires a current GL
+    /// context. Used by CsgOitStage debug to verify head population.
+    data::Result<std::vector<std::uint32_t>> readR32UI(std::uint32_t width, std::uint32_t height) const;
 
     /// The GL object name (non-zero for a valid generated name).
     std::uint32_t id() const noexcept {

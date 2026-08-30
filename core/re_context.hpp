@@ -82,6 +82,8 @@ data::Result<void> drawElements(const VertexArray& vao, std::size_t indexCount);
 /// Memory barriers.
 void memoryBarrierShaderStorage() noexcept;
 void memoryBarrierBufferUpdate() noexcept;
+void memoryBarrierAll() noexcept;
+void finish() noexcept;
 
 /// Image binding.
 void bindImageR32ui(const Texture2D& texture, std::uint32_t unit) noexcept;
