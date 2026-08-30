@@ -91,6 +91,7 @@ add_executable(${RE_TEST_TARGET}
     t5_line_renderer_test.cpp
     t8_engine_csg_point_line_test.cpp
     t12_csg_sample_test.cpp
+    t13_point_sample_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

@@ -87,9 +87,10 @@ if(RE_BUILD_SAMPLES OR RE_BUILD_TESTS)
     add_executable(re_sample_oit oit_sample.cpp)
     add_executable(re_sample_mpr mpr_sample.cpp)
     add_executable(re_sample_csg csg_sample.cpp)
+    add_executable(re_sample_point point_sample.cpp)
 
     foreach(sample_target re_sample_mesh re_sample_plane re_sample_volume
-            re_sample_slice re_sample_oit re_sample_mpr re_sample_csg)
+            re_sample_slice re_sample_oit re_sample_mpr re_sample_csg re_sample_point)
         target_link_libraries(${sample_target} PRIVATE
             re_app
             re_broker
@@ -125,7 +126,7 @@ endif()
 # Docs note long-lived not for testing.
 # ---------------------------------------------------------------------------
 foreach(long_target re_sample_mesh_long re_sample_volume_long re_sample_plane_long
-        re_sample_slice_long re_sample_oit_long re_sample_mpr_long re_sample_csg_long)
+        re_sample_slice_long re_sample_oit_long re_sample_mpr_long re_sample_csg_long re_sample_point_long)
     # Map target to source: re_sample_mesh_long -> mesh_long.cpp etc.
     string(REPLACE "re_sample_" "" _stem "${long_target}")
     string(REPLACE "_long" "" _base "${_stem}")
@@ -148,4 +149,4 @@ target_link_libraries(re_sample_mpr_long PRIVATE re_utils)
 target_link_libraries(re_sample_csg_long PRIVATE re_utils)
 add_custom_target(re_samples_long DEPENDS
     re_sample_mesh_long re_sample_volume_long re_sample_plane_long
-    re_sample_slice_long re_sample_oit_long re_sample_mpr_long re_sample_csg_long)
+    re_sample_slice_long re_sample_oit_long re_sample_mpr_long re_sample_csg_long re_sample_point_long)
