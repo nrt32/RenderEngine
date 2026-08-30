@@ -81,27 +81,35 @@ class SceneStore {
     uint64_t addVolumeSliceObject(VolumeSliceObject obj);
     uint64_t addPlaneObject(PlaneObject obj);
     uint64_t addContourObject(ContourObject obj);
+    // V7 T2: new technique kinds — per-kind forwarders for the three new dispatch kinds (Csg, Point, Line) plus the batched PointCloud variant that shares SceneKind::Point as the same technique but stays a distinct C++ type for Broker pair-key (broker_per_type one class per file). Each delegates to the templated addObject<T> path so the single-map + kindIndex_ + generation + dirty tracking stays closed for modification while new kinds remain open for extension (OCP). The PointCloud forwarder is intentionally kept as addPointCloudObject even though its Kind equals Point — the store's kindIndex is technique-level (Point technique) but the typed getter distinguishes via dynamic_cast, so the count(SceneKind::Point) aggregates both single and cloud points as one technique bucket, matching the global techniqueOrder size 9 while Layer::Count stays 8. (V7 T2)
+    uint64_t addCsgObject(CsgObject obj);
+    uint64_t addPointObject(PointObject obj);
+    uint64_t addPointCloudObject(PointCloudObject obj);
+    uint64_t addLineObject(LineObject obj);
 
     /// Generic add for any ISceneObject kind — used by factory and tests that
     /// exercise open extension without naming the concrete add* wrapper.
     uint64_t addObject(std::unique_ptr<ISceneObject> obj);
 
-    /// Templated typed getter — single SRP lookup via the primary map plus kind check to enforce type safety without branching over partitions (T6).
+    /// Templated typed getter — single SRP lookup via the primary map plus kind check to enforce type safety without branching over partitions (T6, V7 T2 update for Point/PointCloud sharing SceneKind::Point).
     ///
-    /// The store's single primary map holds every live ISceneObject keyed by stable Id plus the secondary kindIndex_ for O(kind) iteration; this template consults the primary map directly and verifies the stored object's kind equals T::Kind before down-casting, so callers obtain a correctly typed borrow without a per-kind hand-copied wrapper duplicating the map-lookup logic — one template owns the lookup, per-kind forwarders merely delegate (T6).
+    /// The store's single primary map holds every live ISceneObject keyed by stable Id plus the secondary kindIndex_ for O(kind) iteration; this template consults the primary map directly and verifies the stored object's kind equals T::Kind before down-casting, so callers obtain a correctly typed borrow without a per-kind hand-copied wrapper duplicating the map-lookup logic — one template owns the lookup, per-kind forwarders merely delegate (T6). V7 T2 extends the family to nine kinds (Csg, Point, Line added) while PointCloudObject shares SceneKind::Point (7) with PointObject as the same technique dispatch (both→PointRenderer/MeshRenderer) but remains a distinct C++ type for Broker pair-key OCP — the getter therefore validates via both Kind and dynamic_cast so that get<PointObject> on a PointCloud id returns nullptr (type-safe) while get<PointCloudObject> succeeds, and vice versa; for all other kinds where Kind is unique the Kind check alone is the fast path but dynamic_cast provides the extra type guard for the shared-Kind case without requiring a tenth SceneKind value or editing the 8-layer vs 9-kind divergence. (V7 T2)
     template <typename T>
     const T* /*borrow*/ get(uint64_t id) const noexcept {
         auto it = objects_.find(id);
         if (it == objects_.end()) return nullptr;
         if (it->second->kind() != T::Kind) return nullptr;
-        return static_cast<const T*>(it->second.get());
+        // V7 T2: PointObject vs PointCloudObject share Kind=Point (7) as the same dispatch technique but distinct C++ types — the Kind check alone would alias them, so we additionally verify the dynamic type matches T via dynamic_cast (RTTI, still O(1) for the direct derived, and unique-Kind cases trivially succeed). This keeps SceneKind::Count=9 while Broker pair-key distinguishes the two via separate mapper registrations (broker_per_type).
+        auto* /*borrow*/ dyn = dynamic_cast<const T*>(it->second.get()); // @note lifetime: borrowed — points into SceneStore-owned map entry, valid until next store mutation
+        return dyn;
     }
     template <typename T>
     T* /*borrow*/ getMut(uint64_t id) noexcept {
         auto it = objects_.find(id);
         if (it == objects_.end()) return nullptr;
         if (it->second->kind() != T::Kind) return nullptr;
-        return static_cast<T*>(it->second.get());
+        auto* /*borrow*/ dyn = dynamic_cast<T*>(it->second.get()); // @note lifetime: borrowed — points into SceneStore-owned map entry, valid until next store mutation
+        return dyn;
     }
 
     /// Getters — borrow into the store's OWNED storage. Nullptr if
@@ -117,6 +125,11 @@ class SceneStore {
     const VolumeSliceObject* /*borrow*/ getVolumeSliceObject(uint64_t id) const noexcept;
     const PlaneObject* /*borrow*/ getPlaneObject(uint64_t id) const noexcept;
     const ContourObject* /*borrow*/ getContourObject(uint64_t id) const noexcept;
+    // V7 T2 getters for the three new dispatch kinds plus the batched cloud variant (shared Kind=Point technique). Each borrows from the store-owned primary map via the templated get<T> path so the lifetime contract (valid until next add/remove/erase) is uniform and the dynamic_cast guard distinguishes PointObject vs PointCloudObject even though they share SceneKind::Point. (V7 T2)
+    const CsgObject* /*borrow*/ getCsgObject(uint64_t id) const noexcept;
+    const PointObject* /*borrow*/ getPointObject(uint64_t id) const noexcept;
+    const PointCloudObject* /*borrow*/ getPointCloudObject(uint64_t id) const noexcept;
+    const LineObject* /*borrow*/ getLineObject(uint64_t id) const noexcept;
 
     /// Polymorphic generic getter — returns the base ISceneObject borrow for
     /// any id regardless of kind (open for extension — the synchronizer uses
@@ -143,6 +156,11 @@ class SceneStore {
     MeshObject* /*borrow*/ getMeshObjectMut(uint64_t id) noexcept;
     VolumeObject* /*borrow*/ getVolumeObjectMut(uint64_t id) noexcept;
     ContourObject* /*borrow*/ getContourObjectMut(uint64_t id) noexcept;
+    // V7 T2 mutable getters for the three new dispatch kinds plus cloud variant (shared Kind=Point, dynamic_cast guard distinguishes types). (V7 T2)
+    CsgObject* /*borrow*/ getCsgObjectMut(uint64_t id) noexcept;
+    PointObject* /*borrow*/ getPointObjectMut(uint64_t id) noexcept;
+    PointCloudObject* /*borrow*/ getPointCloudObjectMut(uint64_t id) noexcept;
+    LineObject* /*borrow*/ getLineObjectMut(uint64_t id) noexcept;
 
     /// Remove by id; bumps storeGen; retains generation tombstone for stale detection.
     /// Returns true if existed.
@@ -152,6 +170,11 @@ class SceneStore {
     bool removeVolumeSliceObject(uint64_t id) noexcept;
     bool removePlaneObject(uint64_t id) noexcept;
     bool removeContourObject(uint64_t id) noexcept;
+    // V7 T2 remove forwarders for the three new dispatch kinds plus cloud variant — thin Kind-checked delegates to the generic removeObject single-map path (closed for modification, open for extension via removeTyped<T>). (V7 T2)
+    bool removeCsgObject(uint64_t id) noexcept;
+    bool removePointObject(uint64_t id) noexcept;
+    bool removePointCloudObject(uint64_t id) noexcept;
+    bool removeLineObject(uint64_t id) noexcept;
     /// Generic remove by id (open for extension — removes whatever kind the id
     /// belongs to by consulting kindIndex_). Returns true if existed.
     bool removeObject(uint64_t id) noexcept;
@@ -303,7 +326,7 @@ class SceneStore {
     // Prior to T6 the store held six hand-written unordered_map<uint64_t, unique_ptr<ISceneObject>> partitions (one per SceneKind) duplicating allocation, tombstone, and index logic; T6 replaces those six partitions with this one map plus the existing kindIndex_ (SceneKind → live Ids), and the single templated addObject<T>/get<T>/remove path owns the mutation — per-kind forwarders merely delegate (T6).
     std::unordered_map<uint64_t, std::unique_ptr<ISceneObject>> objects_;
 
-    // Secondary index: SceneKind → live Ids of exactly that kind (6 kinds).
+    // Secondary index: SceneKind → live Ids of exactly that kind (9 kinds after V7 T2: Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour, Csg, Point, Line — PointCloud shares Point as same technique, Layer::Count stays 8 because layers are stacking not dispatch). (V7 T2)
     std::unordered_map<SceneKind, std::unordered_set<uint64_t>> kindIndex_;
 };
 

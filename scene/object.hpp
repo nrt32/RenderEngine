@@ -1,6 +1,8 @@
 #pragma once
 
-// scene/object.hpp — SceneObject family aggregate header (T1 pure-redesign, T5 collapse).
+// scene/object.hpp — SceneObject family aggregate header (T1 pure-redesign, T5 collapse, V7 T2 extension for Csg/Point/Line).
+//
+// V7 T2 adds three new technique kinds — Csg (flat multi-subtract/multi-paint Puxel pipeline, base+subtractors+paints, B's material drives hole, paintInterior controls recolor scope), Point (single marker, 3D→MeshRenderer Sphere reuse vs 2D→PointRenderer impostor with Solid/Hollow/GridDashed fill, worldUnits toggle) and PointCloud (batched hundreds, per-point fillBits, shared worldUnits), and Line (SSBO+gl_VertexID 6-vert view-quad strip, Rougier dash, miterLimit 4→bevel caps) — raising SceneKind::Count from 6 to 9 while Layer::Count stays 8 because layers are stacking (anonymous LAYER_0..7) and kinds are technique dispatch order inside each layer (global techniqueOrder [Volume,VolumeSlice,Plane,Csg,Mesh,MeshSlice,Point,Line,Contour] size 9, Csg before Mesh via CsgOitStage). This header aggregates the polymorphic hierarchy header plus the now nine technique kinds that each derive from ObjectBase<Derived> and register via REGISTER_SCENE_OBJECT into SceneFactory and the Broker; the new headers are header-only value types with no GL/RE dependency so disposition_scene and gpu_api_ownership remain satisfied, and the variant MaterialDesc additively grows 4→7 (Mesh,Volume,Slice,Contour,Point,Line,Csg) without editing existing descs.
 //
 // The closed `variant< MeshObject,…>` alias (scene/object.hpp:144 in the value-
 // type iteration) could not remain the canonical family type once the engine
@@ -33,19 +35,23 @@
 
 #include "scene/geometry_kind.hpp"
 #include "scene/iscene_object.hpp"
+#include "scene/objects/csg_object.hpp"
+#include "scene/objects/line_object.hpp"
 #include "scene/objects/mesh_object.hpp"
 #include "scene/objects/mesh_slice_object.hpp"
+#include "scene/objects/plane_object.hpp"
+#include "scene/objects/point_cloud_object.hpp"
+#include "scene/objects/point_object.hpp"
 #include "scene/objects/volume_object.hpp"
 #include "scene/objects/volume_slice_object.hpp"
-#include "scene/objects/plane_object.hpp"
 #include "scene/objects/contour_object.hpp"
 
 // scene/object.hpp no longer defines a closed variant alias. The canonical
 // family type is now the polymorphic re::scene::ISceneObject hierarchy
-// (ObjectBase<Derived> plus SceneFactory registry) with 6 technique kinds
-// (Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour) plus GeometryKind
+// (ObjectBase<Derived> plus SceneFactory registry) with 9 technique kinds
+// (Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour, Csg, Point, Line) plus GeometryKind
 // inside MeshObject. Adding a Sphere variation needs no new header — `MeshObject{
 // .geometryKind = GeometryKind::Sphere }` suffices — while a new technique
-// (e.g., StreamlineObject) still needs one new header plus one registration
-// line. Zero edits to the store or ViewSynchronizer dispatch for variations.
-// Every technique object now also carries a visual Layer tag LAYER_0..7 (eight anonymous values, lower numeric draws first) whose default is LAYER_0 for all six kinds and whose setLayer and setPriority bump generation so the broker re-groups by (layer, techniqueOrder, priority) — the deterministic ordering replacement for insertion order; no semantic names, no per-view mask or override.
+// (e.g., CsgObject/PointObject/LineObject) still needs one new header plus one registration
+// line. Zero edits to the store or ViewSynchronizer dispatch for variations (closed for modification, open for extension via SceneFactory + Broker pair-key).
+// Every technique object now also carries a visual Layer tag LAYER_0..7 (eight anonymous values, lower numeric draws first) whose default is LAYER_0 for all nine kinds and whose setLayer and setPriority bump generation so the broker re-groups by (layer, techniqueOrder, priority) — the deterministic ordering replacement for insertion order; no semantic names, no per-view mask or override. (V7 T2)

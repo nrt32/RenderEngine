@@ -83,6 +83,7 @@ add_executable(${RE_TEST_TARGET}
     t15b_audit_test.cpp
     t16_build_export_hardening_test.cpp
     t19_builder_fix_test.cpp
+    t2_scene_value_types_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

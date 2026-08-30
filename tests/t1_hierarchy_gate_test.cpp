@@ -46,10 +46,11 @@ static render::Camera makeOrthoCamera() {
     return c;
 }
 
-// Phase A: Factory — 6 technique kinds remain, Count fails loud
+// Phase A: Factory — 6 technique kinds remain after T5, 9 after V7 T2 (Csg, Point, Line added), Count fails loud (V7 T2 extends factory to 9 while Layer::Count stays 8).
 TEST(T1Hierarchy, FactoryCreateTeapotSucceeds) {
     // After T5, Teapot is not a SceneKind — it's a GeometryKind inside Mesh.
-    // The factory still creates the 6 technique kinds; Teapot kind no longer exists.
+    // The factory still creates the technique kinds; Teapot kind no longer exists.
+    // V7 T2 adds three dispatch kinds — Csg (6), Point (7), Line (8) — raising SceneKind::Count from 6 to 9 while Layer::Count stays 8 because layers are stacking not dispatch (guardrails §6). The factory size therefore grows 6→9 additively without breaking the 8-layer vs 9-kind divergence.
     auto mesh = scene::SceneFactory::instance().create(scene::SceneKind::Mesh);
     ASSERT_NE(mesh, nullptr);
     EXPECT_EQ(mesh->kind(), scene::SceneKind::Mesh);
@@ -58,9 +59,9 @@ TEST(T1Hierarchy, FactoryCreateTeapotSucceeds) {
     EXPECT_EQ(contour->kind(), scene::SceneKind::Contour);
     auto unknown = scene::SceneFactory::instance().create(scene::SceneKind::Count);
     EXPECT_EQ(unknown, nullptr) << "Factory::create(Count) must return nullptr";
-    // 6 technique kinds registered (Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour)
-    EXPECT_GE(scene::SceneFactory::instance().size(), 6u) << "factory must have at least 6 kinds (6 technique kinds after T5)";
-    EXPECT_LE(scene::SceneFactory::instance().size(), 6u) << "factory must have exactly 6 kinds after T5 collapse (no extra mesh variations)";
+    // Technique kinds registered: 6 baseline (Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour) + 3 V7 (Csg, Point, Line) = 9, Layer::Count stays 8 because layers are anonymous stacking buckets (0..7) and kinds are dispatch order inside each layer (techniqueOrder size 9, Csg before Mesh via CsgOitStage).
+    EXPECT_GE(scene::SceneFactory::instance().size(), 9u) << "factory must have at least 9 kinds (6 technique kinds after T5 plus Csg/Point/Line after V7 T2)";
+    EXPECT_LE(scene::SceneFactory::instance().size(), 9u) << "factory must have exactly 9 kinds after V7 T2 collapse (6 original + Csg/Point/Line, no extra mesh variations)";
 }
 
 // Phase B: SceneStore 6 partitions + GeometryKind variations inside Mesh partition
@@ -224,10 +225,10 @@ TEST(T1Hierarchy, TeapotRendersThroughBridgeCenterPixelAnalytic) {
     EXPECT_EQ(pixels[3], 255u) << "A must be 255 opaque";
 }
 
-// Check that old variant alias is gone
+// Check that old variant alias is gone — after V7 T2 the technique set grows 6→9 additively (Csg, Point, Line) while Layer stays 8, so the factory size check must track the 9-kind divergence, not the old 6.
 TEST(T1Hierarchy, VariantAliasRemoved) {
-    EXPECT_GE(scene::SceneFactory::instance().size(), 6u);
-    EXPECT_LE(scene::SceneFactory::instance().size(), 6u) << "exactly 6 technique kinds after T5";
+    EXPECT_GE(scene::SceneFactory::instance().size(), 9u);
+    EXPECT_LE(scene::SceneFactory::instance().size(), 9u) << "exactly 9 technique kinds after V7 T2 (6 baseline + Csg/Point/Line, Layer::Count stays 8)";
 }
 
 } // namespace re::tests

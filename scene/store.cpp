@@ -18,6 +18,11 @@ uint64_t SceneStore::addVolumeObject(VolumeObject obj) { return addObject<Volume
 uint64_t SceneStore::addVolumeSliceObject(VolumeSliceObject obj) { return addObject<VolumeSliceObject>(std::move(obj)); }
 uint64_t SceneStore::addPlaneObject(PlaneObject obj) { return addObject<PlaneObject>(std::move(obj)); }
 uint64_t SceneStore::addContourObject(ContourObject obj) { return addObject<ContourObject>(std::move(obj)); }
+// V7 T2: new technique kinds — delegates to the single-map templated path (OCP, closed for modification). Each bumps storeGen and dirties Transform+Items like the six original forwarders; the dirty log already tracks Transform and Items as the two fields that genuinely change on add (material-specific dirty is via bump(FieldId::Material) on presentation mutation, not on add). (V7 T2)
+uint64_t SceneStore::addCsgObject(CsgObject obj) { return addObject<CsgObject>(std::move(obj)); }
+uint64_t SceneStore::addPointObject(PointObject obj) { return addObject<PointObject>(std::move(obj)); }
+uint64_t SceneStore::addPointCloudObject(PointCloudObject obj) { return addObject<PointCloudObject>(std::move(obj)); }
+uint64_t SceneStore::addLineObject(LineObject obj) { return addObject<LineObject>(std::move(obj)); }
 
 uint64_t SceneStore::addObject(std::unique_ptr<ISceneObject> obj) {
     if (!obj) return 0u;
@@ -43,6 +48,11 @@ const VolumeObject* /*borrow*/ SceneStore::getVolumeObject(uint64_t id) const no
 const VolumeSliceObject* /*borrow*/ SceneStore::getVolumeSliceObject(uint64_t id) const noexcept { return get<VolumeSliceObject>(id); }
 const PlaneObject* /*borrow*/ SceneStore::getPlaneObject(uint64_t id) const noexcept { return get<PlaneObject>(id); }
 const ContourObject* /*borrow*/ SceneStore::getContourObject(uint64_t id) const noexcept { return get<ContourObject>(id); }
+// V7 T2 getters for the three new dispatch kinds plus the batched cloud variant (shared Kind=Point, dynamic_cast guard distinguishes the C++ types even though Kind is the same technique). (V7 T2)
+const CsgObject* /*borrow*/ SceneStore::getCsgObject(uint64_t id) const noexcept { return get<CsgObject>(id); }
+const PointObject* /*borrow*/ SceneStore::getPointObject(uint64_t id) const noexcept { return get<PointObject>(id); }
+const PointCloudObject* /*borrow*/ SceneStore::getPointCloudObject(uint64_t id) const noexcept { return get<PointCloudObject>(id); }
+const LineObject* /*borrow*/ SceneStore::getLineObject(uint64_t id) const noexcept { return get<LineObject>(id); }
 
 const ISceneObject* /*borrow*/ SceneStore::getObject(uint64_t id) const noexcept {
     auto it = objects_.find(id);
@@ -77,6 +87,11 @@ std::vector<ISceneObject*> /*borrow*/ SceneStore::objectsOfKindMut(SceneKind k) 
 MeshObject* /*borrow*/ SceneStore::getMeshObjectMut(uint64_t id) noexcept { return getMut<MeshObject>(id); }
 VolumeObject* /*borrow*/ SceneStore::getVolumeObjectMut(uint64_t id) noexcept { return getMut<VolumeObject>(id); }
 ContourObject* /*borrow*/ SceneStore::getContourObjectMut(uint64_t id) noexcept { return getMut<ContourObject>(id); }
+// V7 T2 mutable getters for the three new dispatch kinds plus cloud variant — this block explains that the mutable getters for CsgObject, PointObject, PointCloudObject, and LineObject borrow from the store-owned primary map via the templated getMut<T> path, preserving the lifetime contract (valid until next add/remove/erase) and using a dynamic_cast guard to distinguish PointObject vs PointCloudObject even though they share SceneKind::Point as the same dispatch technique (so that getMut<PointObject> on a cloud id returns null and vice versa), while unique-kind cases remain fast via the Kind check, keeping SceneKind::Count 9 and Layer::Count 8 divergence intact and Broker pair-key distinct (one class per file, CsgOitStage coordinator exempt). (V7 T2)
+CsgObject* /*borrow*/ SceneStore::getCsgObjectMut(uint64_t id) noexcept { return getMut<CsgObject>(id); }
+PointObject* /*borrow*/ SceneStore::getPointObjectMut(uint64_t id) noexcept { return getMut<PointObject>(id); }
+PointCloudObject* /*borrow*/ SceneStore::getPointCloudObjectMut(uint64_t id) noexcept { return getMut<PointCloudObject>(id); }
+LineObject* /*borrow*/ SceneStore::getLineObjectMut(uint64_t id) noexcept { return getMut<LineObject>(id); }
 
 bool SceneStore::removeMeshObject(uint64_t id) noexcept {
     if (!get<MeshObject>(id)) return false;
@@ -100,6 +115,23 @@ bool SceneStore::removePlaneObject(uint64_t id) noexcept {
 }
 bool SceneStore::removeContourObject(uint64_t id) noexcept {
     if (!get<ContourObject>(id)) return false;
+    return removeObject(id);
+}
+// V7 T2 remove forwarders for the three new dispatch kinds plus cloud variant — each Kind-checked delegates to the generic single-map removeObject path (closed for modification, open for extension via pair-key). (V7 T2)
+bool SceneStore::removeCsgObject(uint64_t id) noexcept {
+    if (!get<CsgObject>(id)) return false;
+    return removeObject(id);
+}
+bool SceneStore::removePointObject(uint64_t id) noexcept {
+    if (!get<PointObject>(id)) return false;
+    return removeObject(id);
+}
+bool SceneStore::removePointCloudObject(uint64_t id) noexcept {
+    if (!get<PointCloudObject>(id)) return false;
+    return removeObject(id);
+}
+bool SceneStore::removeLineObject(uint64_t id) noexcept {
+    if (!get<LineObject>(id)) return false;
     return removeObject(id);
 }
 

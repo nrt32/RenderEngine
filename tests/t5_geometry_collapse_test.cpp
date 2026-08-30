@@ -57,12 +57,20 @@ static render::Camera makeOrthoCamera() {
     return c;
 }
 
-// Analytic count 0: no collapsed mesh-backed class remains after collapse
+// Analytic count 0 for mesh-backed collapsed identities after T5, extended for V7 T2: the 11 mesh-backed Cube/Sphere/.../Capsule/Teapot variations that shared `AssetRef<Mesh> mesh; mat4 transform; MeshMaterialDesc presentation;` at scene/objects/*.hpp:36-40 are gone — they are collapsed into MeshObject+GeometryKind. V7 T2 adds four new technique headers (CsgObject, PointObject, PointCloudObject, LineObject) for the Puxel CSG + Points/Lines techniques (SceneKind::Count 9, Layer::Count stays 8), so the total header count grows 6→10 while the old collapsed names remain 0. PointCloudObject is reused as a new technique name (dense point cloud, worldUnits toggle, per-point fillBits, distinct from the old mesh-backed PointCloud variation) — its occurrence is permitted as the new technique, so the collapsed check excludes the V7 point_cloud_object.hpp file from the 11-name sweep. (V7 T2)
 TEST(T5Collapse, NoSphereObjectClassRemains) {
     const std::filesystem::path dir = std::filesystem::path(TEST_SOURCE_DIR) / "scene" / "objects";
     int hits = 0;
+    int pointCloudHits = 0;
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         if (!entry.is_regular_file()) continue;
+        // V7 T2: the new PointCloudObject technique legitimately reuses the PointCloudObject class name for the dense cloud path (PointCloudObject{vector<PointData> points, worldUnits} sharing SceneKind::Point technique with PointObject but distinct C++ type for Broker pair-key). The old mesh-backed PointCloudObject that was collapsed into GeometryKind::PointCloud must not be counted — we therefore exclude the V7 point_cloud_object.hpp file from the 11-name collapsed sweep and track its hits separately.
+        std::string fname = entry.path().filename().string();
+        if (fname == "point_cloud_object.hpp") {
+            const std::string content = readFile(entry.path());
+            pointCloudHits += countOccurrences(content, "class PointCloudObject");
+            continue;
+        }
         const std::string content = readFile(entry.path());
         hits += countOccurrences(content, "class SphereObject");
         hits += countOccurrences(content, "class CubeObject");
@@ -74,14 +82,15 @@ TEST(T5Collapse, NoSphereObjectClassRemains) {
         hits += countOccurrences(content, "class GridObject");
         hits += countOccurrences(content, "class AxesObject");
         hits += countOccurrences(content, "class CapsuleObject");
-        hits += countOccurrences(content, "class PointCloudObject");
+        // Do not count PointCloudObject here — the new V7 technique file is excluded above; old mesh-backed hits must remain 0.
     }
-    EXPECT_EQ(hits, 0) << "scene/objects/*.hpp must have 0 hits for all 11 collapsed mesh-backed classes (analytic count 0, not >0) — MeshObject+GeometryKind collapse (T5)";
+    EXPECT_EQ(hits, 0) << "scene/objects/*.hpp (excluding V7 point_cloud_object.hpp) must have 0 hits for the 10 mesh-backed collapsed classes (Cube/Sphere/Cylinder/Torus/Cone/Arrow/Grid/Axes/Capsule/Teapot) — MeshObject+GeometryKind collapse (T5) preserves 0";
+    EXPECT_EQ(pointCloudHits, 1) << "V7 point_cloud_object.hpp must contain exactly 1 class PointCloudObject definition (new technique, not the collapsed mesh-backed variant) — V7 T2 adds PointCloudObject as a distinct C++ type sharing SceneKind::Point";
     int fileCount = 0;
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         if (entry.is_regular_file()) ++fileCount;
     }
-    EXPECT_EQ(fileCount, 6) << "scene/objects/ must contain exactly 6 headers after T5 (Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour)";
+    EXPECT_EQ(fileCount, 10) << "scene/objects/ must contain exactly 10 headers after V7 T2 (6 baseline Mesh/MeshSlice/Volume/VolumeSlice/Plane/Contour plus Csg/Point/PointCloud/Line for the Puxel + Points/Lines techniques)";
 }
 
 // Broker still has 9 technique kinds post-V7 T1 (Mesh, MeshSlice, Volume, VolumeSlice, Plane, Contour, Csg, Point, Line) — V7 T1 raises Count 6→9 (Layer::Count stays 8) per SPEC §3.1/§6 guardrails; the V7 T1 gate asserts SceneKind::Count 9 and techniqueOrder size 9 via Csg before Mesh
