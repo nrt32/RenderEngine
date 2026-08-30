@@ -1,16 +1,6 @@
-// tests/t9_re_scene_inventory_test.cpp — T9 gate (SPEC §12.4 V3.8, RE-minimal).
+// tests/t9_re_scene_inventory_test.cpp — T9 gate (SPEC §12.4 V7 T9, RE-minimal inventory for Csg/Point/Line).
 //
-// Asserts:
-//   (1) docs/re_scene_inventory.md exists with 6 tables (ReMeshObject, ReVolumeObject,
-//       RePlaneObject, ReView, ReScene, AssetHandle) / 23 fields, each row rationale
-//       ∈ {derived|uniform-ready|handle} (SPEC §12.4, TASKS T9).
-//   (2) render/re_scene/mesh_object.hpp exists, exposes AssetHandle+model+bounds+ReMaterial*
-//       only, never verbatim app::MaterialDesc (RE-minimal, asset_indirection).
-//   (3) grep -R "data::Mesh::""positions" render/re_scene/ → 0 hits (asset_indirection).
-//
-// Evidence rule (R4): constants 6 / 23 are the spec-approved inventory size
-// (TASKS T9); rationale domain is closed; header field list is the spec's
-// ReMeshObject{AssetHandle,model,bounds,ReMaterial*} (open_questions.md:56 Q27).
+// This gate verifies the V7 T9 RE-minimal inventory deliverable that was locked at 2026-08-30 as the binding per-field audit before any new Re* headers land beyond the mesh reference. The inventory must enumerate every RE field with rationale derived, uniform-ready, or handle per materials_lights.md:166, and the render/re_scene headers must keep only RE-direct handles without verbatim data::Mesh::""positions copy (asset_indirection). The gate therefore asserts three invariants that are analytic and explainable from the spec: the markdown file exists with exactly nine tables (ReMeshObject, ReVolumeObject, RePlaneObject, ReCsgObject, RePointObject, ReLineObject, ReView, ReScene, AssetHandle) totalling forty-seven fields each with a closed rationale (V7 T9 adds cap/join/miterLimit to ReLineObject so the dash pattern plus caps are uniform-ready scalars for the Rougier mod(s) view-quad strip), the reference headers exist and expose only handles and uniform-ready transforms (mesh_object.hpp with AssetHandle+model+bounds+ReMaterial*, csg_object.hpp with base/subs/paints/model/worldBounds, point_object.hpp with pos/radius/color/PointFill, line_object.hpp with a/b/color/width/DashPattern/cap/join/miterLimit), and the grep for data::Mesh::""positions across render/re_scene yields zero hits. Evidence constants 9/47 are the V7-approved inventory size (TASKS T9) and the per-field rationale domain is closed to three values, with header field lists matching open_questions.md:56 Q27 plus V7 Csg/Point/Line extensions. (V7 T9)
 
 #include <gtest/gtest.h>
 
@@ -24,12 +14,14 @@ namespace re::tests {
 namespace {
 
 // Explainable constants: the binding inventory (docs/re_scene_inventory.md)
-// documents EXACTLY 6 tables and 23 fields — the gate pins both numbers so a
+// documents EXACTLY 9 tables and 47 fields — the gate pins both numbers so a
 // field added to any Re* type without updating the inventory fails here.
-constexpr int kExpectedTables = 6;  // ReMeshObject, ReVolumeObject, RePlaneObject, ReView, ReScene, AssetHandle
-constexpr int kExpectedFields = 23; // total fields across 6 tables
+// V7 T9 extends 6 → 9 (adds ReCsgObject, RePointObject, ReLineObject) and 23→47
+// where ReLineObject contributes 9 fields (a,b,color,width,dash,worldUnits,cap,join,miterLimit).
+constexpr int kExpectedTables = 9;  // ReMeshObject, ReVolumeObject, RePlaneObject, ReCsgObject, RePointObject, ReLineObject, ReView, ReScene, AssetHandle
+constexpr int kExpectedFields = 47; // total fields across 9 tables (4+5+3+9+6+9+5+3+3)
 const std::vector<std::string> kExpectedTableNames = {
-    "ReMeshObject", "ReVolumeObject", "RePlaneObject", "ReView", "ReScene", "AssetHandle"};
+    "ReMeshObject", "ReVolumeObject", "RePlaneObject", "ReCsgObject", "RePointObject", "ReLineObject", "ReView", "ReScene", "AssetHandle"};
 
 std::string readFile(const std::filesystem::path& p) {
     std::ifstream in(p);
@@ -67,11 +59,11 @@ TEST(T9ReSceneInventory, FileExistsWithSixTablesTwentyThreeFields) {
             << "inventory must contain table " << name;
     }
     // Count tables by counting headings that contain the expected names.
-    // Use a simple proxy: count occurrences of "## Re" (markdown headings for 6 tables).
+    // Use a simple proxy: count occurrences of "## Re" (markdown headings for Re* tables).
     const int headingCount = countOccurrences(content, "## Re") + countOccurrences(content, "## AssetHandle");
-    // 5 Re* headings + 1 AssetHandle = 6
+    // Heading proxy counts markdown headings for Re* tables plus AssetHandle: eight Re* headings (ReMesh, ReVolume, RePlane, ReCsg, RePoint, ReLine, ReView, ReScene) plus one AssetHandle equals nine total, matching the V7 T9 binding inventory that extends the original six tables with Csg, Point, and Line. This verifies the inventory enumerates every RE type before any new header lands. (V7 T9)
     EXPECT_EQ(headingCount, kExpectedTables)
-        << "inventory must have exactly 6 tables (markdown headings)";
+        << "inventory must have exactly 9 tables (markdown headings)";
 
     // Count fields: rows with rationale derived|uniform-ready|handle.
     // Each field row contains one of the three rationale tokens inside a table.
@@ -83,7 +75,7 @@ TEST(T9ReSceneInventory, FileExistsWithSixTablesTwentyThreeFields) {
     // Also handle rows where rationale is surrounded by pipes without leading space variant.
     // The count above is the canonical count per inventory formatting.
     EXPECT_EQ(fieldRows, kExpectedFields)
-        << "inventory must have exactly 23 field rows, each with rationale derived|uniform-ready|handle";
+        << "inventory must have exactly 47 field rows, each with rationale derived|uniform-ready|handle";
 
     // Each row's rationale must be one of the three — no other rationale tokens.
     // Ensure no row contains an unexpected rationale like "| verbatim" or "| copy".
@@ -172,12 +164,13 @@ TEST(T9ReSceneInventory, ReSceneDirectoryHasOnlyReferenceHeader) {
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         if (entry.is_regular_file()) ++fileCount;
     }
-    // This iteration lands ONLY mesh_object.hpp as the reference Re* type;
-    // Volume/Contour expansions are deliberately deferred (Phong-only,
-    // no new technique headers) — a second file appearing here means someone
-    // expanded render/re_scene without a task mandating it.
-    EXPECT_EQ(fileCount, 1) << "render/re_scene/ must contain exactly 1 file (mesh_object.hpp) this iteration";
+    // V7 T9 expands 1 → 4 (mesh_object.hpp + csg_object.hpp + point_object.hpp + line_object.hpp)
+    // per TASKS T9 D: ReCsg/RePoint/ReLine move to render/re_scene/*.hpp.
+    EXPECT_EQ(fileCount, 4) << "render/re_scene/ must contain exactly 4 files (mesh+csg+point+line) this iteration";
     EXPECT_TRUE(std::filesystem::exists(dir / "mesh_object.hpp"));
+    EXPECT_TRUE(std::filesystem::exists(dir / "csg_object.hpp"));
+    EXPECT_TRUE(std::filesystem::exists(dir / "point_object.hpp"));
+    EXPECT_TRUE(std::filesystem::exists(dir / "line_object.hpp"));
 }
 
 } // namespace re::tests

@@ -1,12 +1,13 @@
 #pragma once
 
-// render/re_scene/mesh_object.hpp — ReMeshObject reference (SPEC §12.4 V3.8, T9).
+// render/re_scene/mesh_object.hpp — ReMeshObject reference (SPEC §12.4 V7 T9).
 //
 // RE-minimal type for the mesh path: keeps only Re-direct values
 // (AssetHandle/model/worldBounds/ReMaterial*), never verbatim scene desc.
-// Binding inventory is docs/re_scene_inventory.md (6 tables/23 fields).
-// This header is the sole render/re_scene/*.hpp landed this iteration;
-// ReVolume/RePlane/ReView inventory is doc-only (deferred with T8).
+// Binding inventory is docs/re_scene_inventory.md (9 tables/47 fields, V7 T9).
+// This header is one of four render/re_scene/*.hpp headers landed at V7 T9
+// (mesh_object.hpp, csg_object.hpp, point_object.hpp, line_object.hpp per TASKS T9 D);
+// ReVolume/RePlane remain inventory-only (deferred), while ReView/ReScene/AssetHandle complete the audit.
 
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>

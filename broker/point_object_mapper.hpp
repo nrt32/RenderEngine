@@ -7,14 +7,9 @@
 #include <memory>
 
 #include "broker/cached_mapper_base.hpp"
-#include "render/point_renderer.hpp"
+#include "render/re_scene/point_object.hpp"
 #include "scene/object.hpp"
 #include "scene/translate_context.hpp"
-
-namespace re::render {
-/// RE-minimal single point object alias for the point mapper — maps to the renderer's PointInstance which is the per-point payload the PointRenderer expands as an impostor billboard; using the renderer's native type keeps the RE side handle-free and uniform-ready and satisfies the pair-key without introducing a duplicate struct. The alias preserves the V7 design where a single 3D Point delegates to MeshRenderer via GeometryKind::Sphere for the oracle within 1/255 while the impostor handles 2D and worldUnits false cases. (V7 T7)
-using RePointObject = PointInstance;
-} // namespace re::render
 
 namespace re::broker {
 

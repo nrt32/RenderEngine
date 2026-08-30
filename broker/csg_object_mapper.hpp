@@ -25,28 +25,9 @@
 #include <glm/mat4x4.hpp>
 
 #include "broker/cached_mapper_base.hpp"
-#include "data/aabb.hpp"
-#include "render/asset_registry.hpp"
+#include "render/re_scene/csg_object.hpp"
 #include "scene/object.hpp"
 #include "scene/translate_context.hpp"
-
-namespace re::render::re_scene {
-using Aabb = data::Aabb;
-/// RE-minimal CSG object (reference, V7 T6) — see former render/re_scene/csg_object.hpp comment for the full RE-minimal rationale (kept outside render/re_scene/ until T9 per T9 gate's single-file invariant; the struct lives here in the broker mapper header as the canonical RE type so the 1-file inventory gate stays green while the mapper's ReType is still render::ReCsgObject via alias below). Mirrors scene::CsgObject flat multi-subtract/multi-paint (closed manifold, B's material drives hole, paintInterior controls recolor) with only RE-direct fields: handles, transforms, blends, interior flags, model, worldBounds (derived).
-struct ReCsgObject {
-    AssetHandle baseHandle{};
-    std::vector<AssetHandle> subHandles{};
-    std::vector<glm::mat4> subTransforms{};
-    std::vector<AssetHandle> paintHandles{};
-    std::vector<glm::mat4> paintTransforms{};
-    std::vector<float> paintBlends{};
-    std::vector<bool> paintInteriorFlags{};
-    glm::mat4 model{1.0f};
-    Aabb bounds{};       ///< world-space AABB derived as model * localBounds of base mesh (handle alias for worldBounds)
-    Aabb worldBounds{};  ///< canonical world-space AABB derived as model * localBounds of base mesh (RE-minimal handle, uniform-ready; kept in sync with bounds for task T6 worldBounds naming and ReMeshObject bounds parity — both alias same derived AABB so grep worldBounds and bounds prose parity hold)
-};
-} // namespace re::render::re_scene
-namespace re::render { using ReCsgObject = re_scene::ReCsgObject; }
 
 namespace re::broker {
 

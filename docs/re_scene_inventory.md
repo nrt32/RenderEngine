@@ -1,4 +1,4 @@
-# ReScene Inventory — Binding RE-minimal Field Audit (SPEC §12.4, T9 V3.8)
+# ReScene Inventory — Binding RE-minimal Field Audit (SPEC §12.4, V7 T9)
 
 > **Binding inventory** required before any `render/re_scene/*.hpp` lands (SPEC §12.4).
 > `Re*` keeps only `Re`-direct values (`AssetHandle`/`ReMaterial*`/`ClipPlane`/
@@ -11,12 +11,15 @@
 > - `uniform-ready` — already GPU-uniform shape (`mat4`, `vec4`, `Camera{view,proj,pos}`), uploaded without conversion.
 > - `derived` — computed from app field + context (worldBounds, ClipPlane world, normalMatrix, sliceUVW, ReTfUniforms).
 
-Reference header this iteration: `render/re_scene/mesh_object.hpp` exposes
-`ReMeshObject{AssetHandle, model, worldBounds, ReMaterial*}` only.
+Reference headers this iteration: `render/re_scene/mesh_object.hpp` exposes
+`ReMeshObject{AssetHandle, model, worldBounds, ReMaterial*}`; `render/re_scene/csg_object.hpp` exposes
+`ReCsgObject{AssetHandle base, vector<AssetHandle> subs/paints, mat4 model, worldBounds}`; `render/re_scene/point_object.hpp` exposes
+`RePointObject{vec3 pos, float radius, vec4 color, PointFill}`; `render/re_scene/line_object.hpp` exposes
+`ReLineObject{vec3 a,b, vec4 color, float width, DashPattern}`.
 
 ---
 
-## ReMeshObject — `render/re_scene/mesh_object.hpp` (reference, this iteration)
+## ReMeshObject — `render/re_scene/mesh_object.hpp` (reference, T9)
 
 | Field | RE Type | Rationale | Derivation / Why RE-minimal |
 |---|---|---|---|
@@ -46,6 +49,51 @@ Reference header this iteration: `render/re_scene/mesh_object.hpp` exposes
 | imageTex | `IRHITexture*` | handle | `data::Image` → `IRHIContext::createTexture2D` (never raw pixel copy) |
 | model | `glm::mat4` | uniform-ready | `scene::PlaneObject::transform` as `uModel` for quad placement |
 | worldBounds | `Aabb` | derived | `model * unitQuadXY` bounds → world AABB |
+
+---
+
+## ReCsgObject — `render/re_scene/csg_object.hpp` (V7 T9, flat Puxel CSG)
+
+| Field | RE Type | Rationale | Derivation / Why RE-minimal |
+|---|---|---|---|
+| baseHandle | `AssetHandle` | handle | `scene::CsgObject::base.mesh` → `AssetRegistry::registerAsset` handle (content-hash dedup, never `data::Mesh::positions` copy) |
+| subHandles | `vector<AssetHandle>` | handle | `scene::CsgObject::subtractors[].mesh` → per-subtractor handles via registry (handle vector, not verbatim bytes) |
+| subTransforms | `vector<glm::mat4>` | uniform-ready | `scene::CsgObject::subtractors[].operandTransform` preserved per-operand for GPU Puxel per-operand model |
+| paintHandles | `vector<AssetHandle>` | handle | `scene::CsgObject::paints[].oper.mesh` → per-paint handles (handle vector) |
+| paintTransforms | `vector<glm::mat4>` | uniform-ready | `scene::CsgObject::paints[].oper.operandTransform` per-paint transform |
+| paintBlends | `vector<float>` | derived | `scene::CsgObject::paints[].blend` override 0..1 (derived recolor mix factor, uniform-ready scalar) |
+| paintInteriorFlags | `vector<bool>` | derived | `scene::CsgObject::paints[].paintInterior` true→volume interior, false→surface strip (derived flag for csg_resolve) |
+| model | `glm::mat4` | uniform-ready | `scene::CsgObject::transform * base.operandTransform` as `uModel` (uniform-ready) |
+| worldBounds | `Aabb` | derived | `model * data::Mesh::bounds(base)` → world-space AABB `worldBounds` (derived, RE needs world) |
+
+---
+
+## RePointObject — `render/re_scene/point_object.hpp` (V7 T9, impostor billboard)
+
+| Field | RE Type | Rationale | Derivation / Why RE-minimal |
+|---|---|---|---|
+| pos | `glm::vec3` | derived | `scene::PointObject::position` transformed by `transform * vec4(pos,1)` → world-space `pos` (derived) |
+| radius | `float` | uniform-ready | `scene::PointObject::radius` (world when worldUnits true, else px) as uniform-ready scalar |
+| worldUnits | `bool` | uniform-ready | `scene::PointObject::worldUnits` toggle for `radiusScreen` projection-delta scaling (uniform-ready) |
+| color | `glm::vec4` | uniform-ready | `scene::PointObject::color` straight RGBA (alpha<1 → premul OIT, uniform-ready) |
+| fill | `PointFill` | uniform-ready | `scene::PointObject::fill` {Solid,Hollow,GridDashed} as uniform-ready enum for impostor interior |
+| fillParam | `float` | uniform-ready | `scene::PointObject::fillParam` grid density / hollow thickness (uniform-ready) |
+
+---
+
+## ReLineObject — `render/re_scene/line_object.hpp` (V7 T9, SSBO view-quad strip)
+
+| Field | RE Type | Rationale | Derivation / Why RE-minimal |
+|---|---|---|---|
+| a | `glm::vec3` | derived | `scene::LineObject::segments[].a` transformed by `transform * vec4(a,1)` → world-space endpoint `a` (derived) |
+| b | `glm::vec3` | derived | `scene::LineObject::segments[].b` transformed → world-space `b` (derived) |
+| color | `glm::vec4` | uniform-ready | `scene::LineObject::color` stroke color (premul alpha for OIT, uniform-ready) |
+| width | `float` | uniform-ready | `scene::LineObject::width` (world when worldUnits true, else px) uniform-ready |
+| dash | `DashPattern` | uniform-ready | `scene::LineObject::dash` {dashLength,gapLength,offset} as uniform-ready scalars for Rougier `mod(s)` (covers `dashLength/gapLength/dashOffset/dashed` derived flag) |
+| worldUnits | `bool` | uniform-ready | `scene::LineObject::worldUnits` toggle for width projection-delta scaling (uniform-ready) |
+| cap | `LineCap` | uniform-ready | `scene::LineObject::cap` {Round,Square} end shape via `LineCap` uniform-ready (view-quad cap disc vs square) |
+| join | `LineJoin` | uniform-ready | `scene::LineObject::join` {Miter,Bevel} node shape uniform-ready (miter extension vs bevel cut) |
+| miterLimit | `float` | uniform-ready | `scene::LineObject::miterLimit` `4→bevel` threshold uniform-ready for acute-angle fallback |
 
 ---
 
@@ -83,7 +131,7 @@ Reference header this iteration: `render/re_scene/mesh_object.hpp` exposes
 
 ## Summary
 
-- **6 tables / 23 fields** — each field rationale ∈ {`derived`,`uniform-ready`,`handle`}.
+- **9 tables / 47 fields** — each field rationale ∈ {`derived`,`uniform-ready`,`handle`}.
 - RE keeps only derived/uniform/handle values; never verbatim `scene::MaterialDesc` / `data::Mesh::positions`.
-- `ReMeshObject` reference header is the only `render/re_scene/*.hpp` landed this iteration; `ReVolume/RePlane/ReView/ReScene/AssetHandle` are inventory-only (headers deferred with T8).
-- Guardrail `asset_indirection` (`forbid_grep data::Mesh::positions|data::VolumeDataset::voxels`) active since T9.
+- `ReMeshObject` / `ReCsgObject` / `RePointObject` / `ReLineObject` headers live in `render/re_scene/*.hpp` (V7 T9); `ReVolume/RePlane` remain inventory-only (deferred); `ReView/ReScene/AssetHandle` complete the audit.
+- Guardrail `asset_indirection` (`forbid_grep data::Mesh::positions|data::VolumeDataset::voxels`) active since T9; `grep -R "data::Mesh::positions" render/re_scene/` → 0 hits.

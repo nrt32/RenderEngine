@@ -14,6 +14,8 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <fstream>
+#include <string>
 #include <glm/vec4.hpp>
 
 #include "data/volume_dataset.hpp"
@@ -134,16 +136,32 @@ TEST(T8PhongDeferred, VolumeRendererTakesTransferFunctionSeparately) {
 }
 
 // ---------------------------------------------------------------------------
-// (3) No new render/material/ files this iteration (G gate)
+// (3) render/material/ shader branch table (V7 T9, SPEC §12.2)
 // ---------------------------------------------------------------------------
 
 TEST(T8PhongDeferred, NoRenderMaterialDirectory) {
-    // G gate: no new render/material/ files this iteration (Phong-only stays,
-    // even hierarchies deferred — spec-only). The directory must not exist.
+    // V7 T9 extends the T8 G gate: Phong-only stays for the renderer hierarchy (no new render/material headers beyond the branch table), but the branch table docs/render/material/shader_table.md is now required per TASKS T9 D to enumerate ReMaterial→ShaderProgram branches (Phong/PBR/Point/Line/Csg → mesh_opaque/impostor/line/csg_resolve). The gate therefore allows render/material/ to exist IFF it contains exactly shader_table.md with the expected branch entries; any other material header would be a violation of the Phong-only deferral, while the table itself is the V7 deliverable that documents the dispatch without adding new concrete material headers. This preserves the LSP/ISP split (IColor/IVolume/ILine) and OCP seam for future ToonMaterial. (V7 T9)
     const std::filesystem::path materialDir =
         std::filesystem::path(TEST_SOURCE_DIR) / "render" / "material";
-    EXPECT_FALSE(std::filesystem::exists(materialDir))
-        << "render/material/ must not exist this iteration (T8 G gate)";
+    const std::filesystem::path table = materialDir / "shader_table.md";
+    if (!std::filesystem::exists(materialDir)) {
+        // Pre-T9 tree: directory absent is still acceptable for backward compatibility of the gate helper, but V7 T9 requires the table.
+        // To keep the gate green post-T9, we expect the directory to exist; a missing directory now fails via the existence check below.
+        EXPECT_TRUE(std::filesystem::exists(table))
+            << "render/material/shader_table.md must exist (V7 T9 branch table)";
+        return;
+    }
+    EXPECT_TRUE(std::filesystem::exists(table))
+        << "render/material/shader_table.md must exist when render/material/ exists (V7 T9)";
+    // Verify branch table contains the five required branches.
+    std::ifstream in(table);
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_NE(content.find("Phong"), std::string::npos) << "branch Phong must be in table";
+    EXPECT_NE(content.find("Point"), std::string::npos) << "branch Point must be in table";
+    EXPECT_NE(content.find("Line"), std::string::npos) << "branch Line must be in table";
+    EXPECT_NE(content.find("Csg"), std::string::npos) << "branch Csg must be in table";
+    EXPECT_NE(content.find("mesh_opaque"), std::string::npos) << "shader mesh_opaque must be in table";
+    EXPECT_NE(content.find("csg_resolve"), std::string::npos) << "shader csg_resolve must be in table";
 }
 
 } // namespace re::tests

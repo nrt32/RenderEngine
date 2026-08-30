@@ -7,13 +7,12 @@
 #include <memory>
 
 #include "broker/cached_mapper_base.hpp"
-#include "render/point_renderer.hpp"
+#include "render/re_scene/point_object.hpp"
 #include "scene/object.hpp"
 #include "scene/translate_context.hpp"
 
 namespace re::render {
-/// RE-minimal batched point cloud alias — the renderer's PointScene collection of PointInstances that the PointRenderer draws as instanced impostor quads; reusing the renderer's collection keeps the broker-to-render hand-off uniform-ready without duplicating the per-point layout.
-using RePointCloudObject = PointScene;
+using RePointCloudObject = re_scene::RePointScene;
 } // namespace re::render
 
 namespace re::broker {

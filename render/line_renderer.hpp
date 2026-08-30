@@ -18,16 +18,19 @@
 #include "core/vertex_array.hpp"
 #include "data/result.hpp"
 #include "render/i_renderable.hpp"
+#define RE_LINE_OBJECT_H "render/re_scene/line_object.hpp"
+#include RE_LINE_OBJECT_H
 #include "render/shader_cache.hpp"
 #include "render/types.hpp"
 
 namespace re::render {
 
-/// RE-minimal line cap (mirrors scene::LineCap V7 T2 without including scene — disposition_render forbids render→scene; broker translates scene::LineCap→ReLineCap). Round draws a semicircular analytic disc at the segment endpoint with fwidth-smooth AA for a halo-free termination, while Square cuts sharply at the endpoint with a rectangular extension of half-width along the line direction; the choice affects both alias and polyline closure, and the renderer respects the cap per segment so the solid 2px gate can verify ≥90% coverage without cap artifacts (V7 T2)
-enum class LineCap : uint8_t { Round = 0, Square = 1 };
-
-/// RE-minimal line join (mirrors scene::LineJoin V7 T2 without including scene — the broker translates scene::LineJoin to render::LineJoin so render stays scene-free per disposition). Miter extends the outer edges until they meet for a sharp corner but is limited by miterLimit 4 so acute angles bevel instead of spiking, while Bevel unconditionally cuts the corner flat for cheaper AA; the fragment discards outside the bevel line when the miter over-extends, keeping polyline nodes stable within 1/255 (V7 T2)
-enum class LineJoin : uint8_t { Miter = 0, Bevel = 1 };
+// Canonical RE-minimal line types live in render/re_scene/line_object.hpp (V7 T9, SPEC §12.4).
+// This header re-exports them for backward compatibility so existing code using render::LineCap etc. continues while inventory enumerates ReLineObject in re_scene.
+using LineCap = re_scene::LineCap;
+using LineJoin = re_scene::LineJoin;
+using DashPattern = re_scene::DashPattern;
+using ReLineObjectAlias = re_scene::ReLineObject;
 
 /// SSBO mirror of the GPU LineSegment struct (std430, 96 bytes, vec4-aligned).
 ///
@@ -52,25 +55,9 @@ struct LineSegmentSSBO {
 static_assert(sizeof(LineSegmentSSBO) == 96u, "LineSegmentSSBO must be 96 bytes (3*vec4 + 12 scalars, std430 array stride 16)");
 
 /// Per-segment render instance (RE-minimal, broker-built from scene::LineObject via LineObjectMapper).
-struct LineInstance {
-    glm::vec3 a{0.0f, 0.0f, 0.0f};
-    glm::vec3 b{0.0f, 0.0f, 1.0f};
-    glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f};
-    float width{2.0f};
-    bool worldUnits{false};
-    LineCap cap{LineCap::Square};
-    LineJoin join{LineJoin::Miter};
-    float miterLimit{4.0f};
-    float dashLength{8.0f};
-    float gapLength{0.0f};
-    float dashOffset{0.0f};
-    bool dashed{false};
-};
-
-/// Collection of line segments to draw in one view layer (CPU side, built by broker mappers).
-struct LineScene {
-    std::vector<LineInstance> segments;
-};
+// Canonical types live in render/re_scene/line_object.hpp; this alias keeps existing code compiling.
+using LineInstance = re_scene::ReLineObject;
+using LineScene = re_scene::ReLineScene;
 
 /// Stateless SSBO line renderer with analytic AA and dash (V7 T5, FR-render.9).
 ///

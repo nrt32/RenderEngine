@@ -18,10 +18,10 @@ data::Result<render::RePointObject> PointObjectMapper::map(
     out.color = app.color;
     // Map PointFill directly (same underlying values 0..2).
     switch (app.fill) {
-        case scene::PointFill::Solid: out.fill = render::PointFill::Solid; break;
-        case scene::PointFill::Hollow: out.fill = render::PointFill::Hollow; break;
-        case scene::PointFill::GridDashed: out.fill = render::PointFill::GridDashed; break;
-        default: out.fill = render::PointFill::Solid; break;
+        case scene::PointFill::Solid: out.fill = render::re_scene::PointFill::Solid; break;
+        case scene::PointFill::Hollow: out.fill = render::re_scene::PointFill::Hollow; break;
+        case scene::PointFill::GridDashed: out.fill = render::re_scene::PointFill::GridDashed; break;
+        default: out.fill = render::re_scene::PointFill::Solid; break;
     }
     out.fillParam = app.fillParam;
     return data::makeValue<render::RePointObject>(std::move(out));

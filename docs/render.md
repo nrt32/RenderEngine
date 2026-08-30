@@ -508,14 +508,19 @@ by the color itself.
 - `isTransparent()` returns `baseColor().a < 1.0f` (FR-render.3: an alpha of
   `1.0` is opaque; `0.5` and `0.0` are transparent).
 
-**RE-minimal `Re*` note (T8 V3.7, SPEC §12.4).** `Re*` keeps only RE-direct
+**RE-minimal `Re*` note (V7 T9, SPEC §12.4).** `Re*` keeps only RE-direct
 values (`AssetHandle`/`ReMaterial*`/`ClipPlane`/`ReLight[]`/`worldBounds`/
-`sliceUVW` where derived), never verbatim `app::MaterialDesc`. `ReMeshObject`
-carries `AssetHandle`+`model`+`bounds`+`ReMaterial*` only; `ReVolumeObject`
-carries `VolumeMaterial*` + `ReTfUniforms` separately (TF not owned by material
-— ISP per §12.5). The binding inventory `docs/re_scene_inventory.md` (T9) will
-enumerate every `Re*` field with rationale `derived|uniform-ready|handle`
-(`asset_indirection` guardrail).
+`sliceUVW` where derived), never verbatim `app::MaterialDesc` or
+`data::Mesh::positions` (guardrail `asset_indirection`). `ReMeshObject`
+carries `AssetHandle`+`model`+`bounds`+`ReMaterial*` only; `ReCsgObject`
+carries `AssetHandle base + vector<AssetHandle> subs/paints + mat4 model + worldBounds` (derived);
+`RePointObject` carries `vec3 pos + float radius + vec4 color + PointFill` (uniform-ready/derived);
+`ReLineObject` carries `vec3 a,b + vec4 color + float width + DashPattern` (uniform-ready/derived);
+`ReVolumeObject` carries `VolumeMaterial*` + `ReTfUniforms` separately (TF not owned by material — ISP per §12.5).
+The binding inventory `docs/re_scene_inventory.md` (V7 T9, 9 tables / 47 fields) enumerates every `Re*`
+field with rationale `derived|uniform-ready|handle`, and the branch table
+`render/material/shader_table.md` maps each `ReMaterial` (Phong/PBR/Point/Line/Csg) to its
+`ShaderProgram` (`mesh_opaque`/`impostor`/`line`/`csg_resolve`) (SPEC §12.2).
 
 ### `ITransparencyPipeline` (`render/itransparency_pipeline.hpp`)
 

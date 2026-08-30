@@ -19,29 +19,22 @@
 #include "data/result.hpp"
 #include "render/i_renderable.hpp"
 #include "render/mesh_renderer.hpp"
+#define RE_POINT_OBJECT_H "render/re_scene/point_object.hpp"
+#include RE_POINT_OBJECT_H
 #include "render/screen_quad.hpp"
 #include "render/shader_cache.hpp"
 #include "render/types.hpp"
 
 namespace re::render {
 
-/// RE-minimal point fill (mirrors scene::PointFill V7 T2 without including scene — disposition_render forbids render→scene; broker translates scene::PointFill→RePointFill).
-enum class PointFill : uint8_t { Solid = 0, Hollow = 1, GridDashed = 2 };
-
-/// Per-point render instance (RE-minimal handle-free, derived from scene::PointObject/PointCloudObject via broker translation of PointFill).
-struct PointInstance {
-    glm::vec3 pos{0.0f, 0.0f, 0.0f};
-    float radius{5.0f};
-    bool worldUnits{true};
-    glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f};
-    PointFill fill{PointFill::Solid};
-    float fillParam{0.0f};
-};
-
-/// Collection of points to draw in one view layer (CPU side, built by broker mappers).
-struct PointScene {
-    std::vector<PointInstance> points;
-};
+// Canonical RE-minimal point types live in render/re_scene/point_object.hpp (V7 T9, SPEC §12.4).
+// This header re-exports them for renderer backward compatibility so existing code using
+// render::PointFill / PointInstance / PointScene continues to compile while the inventory
+// binding table per docs/spec/materials_lights.md:166 enumerates the same fields via
+// RePointObject in render/re_scene/point_object.hpp without duplicating definitions.
+using PointFill = re_scene::PointFill;
+using PointInstance = re_scene::RePointObject;
+using PointScene = re_scene::RePointScene;
 
 /// Stateless impostor point renderer with MeshRenderer delegate for single spheres (V7 T4, FR-render.8).
 ///
