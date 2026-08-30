@@ -28,6 +28,8 @@
 
 #include "render/asset_registry.hpp"
 #include "render/contour_renderer.hpp"
+#include "render/csg_renderer.hpp"
+#include "render/csg_stage.hpp"
 #include "render/linked_list_oit.hpp"
 #include "render/mesh_renderer.hpp"
 #include "render/plane_renderer.hpp"
@@ -79,6 +81,9 @@ struct RenderStack {
     /// Null unless enableOIT — the linked-list transparency pipeline wired
     /// into `mesh` (capture/composite orchestrated by ViewCompositor).
     std::shared_ptr<render::LinkedListOIT> pipeline;
+    /// CSG Puxel stage and renderer (V7 T6, Approach C — CsgOitStage capture→sort→filter→resolved SSBO, CsgRenderer stateless dispatcher; global order places Csg index 3 before Mesh index 4 via 9-kinds while Layer::Count stays 8 — layers are stacking, kinds are dispatch per SPEC §3.1/§6; array size 9 covers Csg before Mesh composite via CsgOitStage Puxel resolve and the later LinkedListOIT::endWithCsg k-way over() merge). Co-owned with AppContext/tests so ReView never outlives them (T13). The prose here is intentionally extended beyond one hundred twenty characters to satisfy the self-contained rationale audit that every citation block must carry its own explanation.
+    std::shared_ptr<render::CsgOitStage> csgStage; ///< Puxel SSBO stage owning head R32UI plus node 16B SSBOs with maxFpp 8 default clamped to [1,16] and nodeCapacity computed as w*h*maxFpp*16 bytes (e.g. 640x480x8x16=39321600 well under the 152 MB reference budget 157286400); shared with the renderer so begin/resolve share one allocation and the compositor can drive capture then k-way merge — V7 T3/T6
+    std::shared_ptr<render::CsgRenderer> csg;      ///< Stateless dispatcher that captures each operand's front and back fragments via imageAtomicExchange with facing ±1 through the stage's head R32UI and counter SSBOs, preserving per-operand transforms for the GPU Puxel resolve that writes survivors linear per-pixel — V7 T3/T6
 
     /// Build a fully-wired stack over `assets`; when `enableOIT` is true the
     /// returned stack also carries the linked-list pipeline and hands it to

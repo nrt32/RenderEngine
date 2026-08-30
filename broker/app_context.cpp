@@ -5,6 +5,7 @@
 
 #include "broker/camera_mapper.hpp"
 #include "broker/contour_mapper.hpp"
+#include "broker/csg_object_mapper.hpp"
 #include "broker/material_mapper.hpp"
 #include "broker/mesh_object_mapper.hpp"
 #include "broker/mesh_slice_object_mapper.hpp"
@@ -38,6 +39,7 @@ AppContext::AppContext(Params params) {
     broker_->registerMapper(std::make_unique<PlaneMapper>());
     broker_->registerMapper(std::make_unique<PlaneObjectMapper>(assets_));
     broker_->registerMapper(std::make_unique<ContourMapper>(assets_));
+    broker_->registerMapper(std::make_unique<CsgObjectMapper>(assets_));
 
     bridge_ = ViewBridge::create(broker_, stack_);
 }

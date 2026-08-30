@@ -4,6 +4,7 @@
 add_library(re_broker STATIC
     broker.cpp
     camera_mapper.cpp
+    csg_object_mapper.cpp
     material_mapper.cpp
     mesh_object_mapper.cpp
     mesh_slice_object_mapper.cpp
