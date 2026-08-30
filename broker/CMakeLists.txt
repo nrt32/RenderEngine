@@ -18,6 +18,7 @@ add_library(re_broker STATIC
     point_object_mapper.cpp
     point_cloud_mapper.cpp
     line_object_mapper.cpp
+    csg_tree.cpp
     render_stack.cpp
     slice_display.cpp
     view_synchronizer.cpp

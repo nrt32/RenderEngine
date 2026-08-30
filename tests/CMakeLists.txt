@@ -86,6 +86,7 @@ add_executable(${RE_TEST_TARGET}
     t2_scene_value_types_test.cpp
     t3_csg_stage_test.cpp
     t10_csg_gate_test.cpp
+    t11_csg_tree_test.cpp
     t4_point_renderer_test.cpp
     t5_line_renderer_test.cpp
     t8_engine_csg_point_line_test.cpp

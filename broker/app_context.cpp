@@ -12,6 +12,7 @@
 #include "broker/mesh_slice_object_mapper.hpp"
 #include "broker/plane_mapper.hpp"
 #include "broker/plane_object_mapper.hpp"
+#include "broker/csg_tree.hpp"
 #include "broker/point_cloud_mapper.hpp"
 #include "broker/point_object_mapper.hpp"
 #include "broker/view_bridge.hpp"
@@ -44,6 +45,7 @@ AppContext::AppContext(Params params) {
     broker_->registerMapper(std::make_unique<ContourMapper>(assets_));
     if (params.enableCsg) {
         broker_->registerMapper(std::make_unique<CsgObjectMapper>(assets_));
+        broker_->registerMapper(std::make_unique<CsgTreeObjectMapper>(assets_));
     }
     if (params.enablePoints) {
         broker_->registerMapper(std::make_unique<PointObjectMapper>());
