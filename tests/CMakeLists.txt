@@ -85,6 +85,7 @@ add_executable(${RE_TEST_TARGET}
     t19_builder_fix_test.cpp
     t2_scene_value_types_test.cpp
     t3_csg_stage_test.cpp
+    t4_point_renderer_test.cpp
 )
 
 target_link_libraries(${RE_TEST_TARGET}

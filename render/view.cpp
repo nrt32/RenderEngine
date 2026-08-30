@@ -55,9 +55,12 @@ data::Result<void> View::ensureTarget() {
 
 namespace {
 thread_local const std::vector<ReLight>* t_currentLights = nullptr;
+thread_local bool t_currentIs2D = false;
 } // namespace
 const std::vector<ReLight>* currentViewLights() noexcept { return t_currentLights; }
 void setCurrentViewLights(const std::vector<ReLight>* l) noexcept { t_currentLights = l; }
+bool currentViewIs2D() noexcept { return t_currentIs2D; }
+void setCurrentViewIs2D(bool v) noexcept { t_currentIs2D = v; }
 
 data::Result<void> View::render() {
     if (!target_.has_value()) {
@@ -80,14 +83,17 @@ data::Result<void> View::render() {
                   clearColor_.r, clearColor_.g, clearColor_.b, clearColor_.a,
                   depthTest_);
     t_currentLights = &lights_;
+    t_currentIs2D = is2D();
     for (auto& item : items_) {
         auto res = item->drawLayer(camera_);
         if (res.failed()) {
             t_currentLights = nullptr;
+            t_currentIs2D = false;
             return res;
         }
     }
     t_currentLights = nullptr;
+    t_currentIs2D = false;
     return data::Result<void>(data::value);
 }
 

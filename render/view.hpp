@@ -202,4 +202,11 @@ using ReView = View;
 const std::vector<ReLight>* currentViewLights() noexcept;
 void setCurrentViewLights(const std::vector<ReLight>* lights) noexcept;
 
+/// Per-view 2D discriminator for the PointRenderer impostor is2D() branch (V7 T4, FR-render.8).
+///
+/// View::is2D() is true when the view owns a ClipPlane (2D) and false for 3D perspective. The PointRenderer's impostor shader branches on this flag to decide whether to write gl_FragDepth (3D ray-sphere intersection) versus flat alpha*halo (2D ClipPlane present → no gl_FragDepth write). The flag is published thread-local around the drawLayer loop in View::render, mirroring currentViewLights, so the renderer can query it without taking an explicit ClipPlane param (the typed PointScene+Camera signature stays RE-minimal and View stays the composition owner). The default is false (3D) when no view is being rendered.
+/// @note lifetime: thread-local, valid only during View::render's drawLayer loop; copies must not escape.
+bool currentViewIs2D() noexcept;
+void setCurrentViewIs2D(bool is2D) noexcept;
+
 } // namespace re::render
