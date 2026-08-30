@@ -147,6 +147,7 @@ because the T12/T13 gate spawns them).
 | Slice | `re_sample_slice` | geometry-shader plane clip of a mesh | `data/meshes/teapot.obj` (SPEC §7), clipped by a horizontal midplane |
 | OIT | `re_sample_oit` | order-independent transparency over depth-tested opaque meshes (linked-list) | `data/meshes/bunny.obj` (SPEC §7) + procedural boxes (golden opaque box, two alpha-0.5 glass shells) |
 | MPR | `re_sample_mpr` | Multi-Planar Reconstruction 2×2 grid (T/C/S + 3D) with scrolling + crosshair | `data/volumes/sample_ct.nrrd` + CT transfer function + golden box `kGoldenBoxMin/Max` |
+| CSG | `re_sample_csg` | GPU CSG via Puxel 2-stage SSBO (FR-render.7): Cube(2)−Sphere(0.6) hole + transparent(A α0.5)−B + surrounding Mesh α0.6 k-way merge + paintInterior true/false (V7 T12, 2D/3D) | procedural Cube(2) + Sphere(0.6) + paint cubes 0.3 (closed manifold) |
 
 The mesh sample frames the bunny with a perspective camera computed from its
 AABB (eye pulled back along +Z by `radius / tan(fov/2)`); the plane sample
@@ -212,6 +213,7 @@ reframe, and exiting cleanly:
 | `re_sample_slice` | orbit/pan/zoom the clipped teapot with left/right/middle-drag or wheel (same controller, `viewGen` bump); resize check: drag an edge — the view reframes, no stretching; close the window to exit. |
 | `re_sample_oit` | orbit/pan/zoom the OIT composition with left/right/middle-drag or wheel (same controller, depth-tested target, `viewGen` bump); resize check: ortho extents follow the live aspect; close the window to exit. |
 | `re_sample_mpr` | orbit/pan/zoom the 3D crosshair view with left/right/middle-drag or wheel (same controller, only the 3D perspective view is orbited, the three 2D orthographic slice views keep fixed framing per T9 skip); scroll the auto-advancing slices and watch the 3D crosshair view track them (FR-app.2/3); resize check: the 2x2 grid re-splits into four equal quadrants of the live window; close the window to exit. |
+| `re_sample_csg` | left (3D perspective, `Camera::perspective` fov 45): Cube(2)−Sphere(0.6) hole shows `B` mat `1/255`, `transparent(A α0.5)−B + surrounding Mesh α0.6` k-way `over()` `1/255`, `paintInterior` true interior vs false strip `1/255`; right (2D `ClipPlane` `Space::World` axial + `Camera::ortho`): same CSG under axial plane; left orbit/pan/zoom via controller, right fixed per plane guard; resize halves reframe. |
 
 The overlay instructions text is the authoritative per-sample help for each
 capability; the table above summarizes it.
@@ -263,6 +265,7 @@ The bounded samples above exit after `RE_SAMPLE_MAX_FRAMES` (default 300) so the
 | `re_sample_slice` | `re_sample_slice_long` | interactor called but PlaneDesc guard vetoes (perspective clip view stays fixed per plane guard; 2D orthographic skip via plane guard) |
 | `re_sample_oit` | `re_sample_oit_long` | same (depth-tested, `DepthConfig{true}` preserved) |
 | `re_sample_mpr` | `re_sample_mpr_long` | only the 3D perspective view is orbited; three 2D orthographic slice views keep fixed framing |
+| `re_sample_csg` | `re_sample_csg_long` | `CsgSample 2D/3D`: left 3D perspective orbit/pan/zoom via `CameraController`+`GlfwCameraInteractor` (WantCaptureMouse guard), right 2D `ClipPlane` axial fixed per plane guard; paints `paintInterior` true/false `1/255`, hole `B` mat `1/255`, k-way merge `1/255` |
 
 Each long-lived target mirrors its bounded peer's scene setup but its `renderFrame` calls `interactor.update(view)` (or `interactor.update(builder.view())` / `interactor.update(views_[3])` for MPR) **before** `syncRenderPresent`, respects `ImGui::GetIO().WantCaptureMouse` (no camera change when the overlay wants the mouse) and skips orthographic/PlaneDesc views per V5 T9 guard, and mutates via `view.setCamera(newCam)` (not the deleted `mutateCamera` lambda) so `viewGen`/`cameraGen` + `generation` bump via `SceneStore::bump(FieldId)` lets the broker re-translate only dirty camera fields within the analytic tolerance. They are built via `cmake --build build --target re_samples_long` (or per-target `re_sample_*_long`) and run as `./build/app/re_sample_mesh_long --help` (shows help) or without args until window close via `SampleHarness::runInteractive()` (`app/sample_harness.cpp:111` `until shouldClose()`). They are **EXCLUDE_FROM_ALL** and never invoked by `tools/test.sh` or `ctest` — `ctest` suite count remains two (`re_tests` + `re_tests_death`) and the `re_samples_long` target is separate.
 
