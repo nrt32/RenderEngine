@@ -337,6 +337,15 @@ data::Result<void> drawElements(const VertexArray& vao, std::size_t indexCount) 
     return data::Result<void>(data::value);
 }
 
+data::Result<void> drawArrays(const VertexArray& vao, std::uint32_t vertexCount) {
+    if (glDrawArrays == nullptr) {
+        return data::makeError<void>(1, "drawArrays: no GL context (glDrawArrays not loaded)");
+    }
+    vao.bind();
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertexCount));
+    return data::Result<void>(data::value);
+}
+
 void memoryBarrierShaderStorage() noexcept {
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 }

@@ -19,6 +19,7 @@ add_library(re_render STATIC
     volume_slice_renderer.cpp
     slice_renderer.cpp
     contour_renderer.cpp
+    line_renderer.cpp
     view_target.cpp
     view.cpp
     offscreen.cpp

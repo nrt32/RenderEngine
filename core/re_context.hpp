@@ -79,6 +79,17 @@ void disableBlend() noexcept;
 /// Bind `vao` and issue an indexed triangle draw.
 data::Result<void> drawElements(const VertexArray& vao, std::size_t indexCount);
 
+/// Bind `vao` and issue a non-indexed draw covering `vertexCount` vertices
+/// (glDrawArrays GL_TRIANGLES). Used by the SSBO+gl_VertexID view-quad strip
+/// of LineRenderer (V7 T5): 6 virtual verts per segment (a±n*wA,b±n*wB) with
+/// n=perp(viewport*(b−a)), so drawLayer issues glDrawArrays(6*N,0). The VAO is
+/// a dummy empty VAO (no attributes) because the vertex shader derives all
+/// positions from the SSBO via gl_VertexID and the per-segment s cumulative
+/// length(viewport*(b−a)) that the CPU populates. This keeps raw draw calls
+/// confined to core/ (guardrail gpu_api_ownership, render is GL-call-free) and
+/// mirrors the existing drawElements wrapper (SPEC §3, T5).
+data::Result<void> drawArrays(const VertexArray& vao, std::uint32_t vertexCount);
+
 /// Memory barriers.
 void memoryBarrierShaderStorage() noexcept;
 void memoryBarrierBufferUpdate() noexcept;
