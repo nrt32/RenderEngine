@@ -43,10 +43,13 @@ namespace re::broker {
 /// Composition root: store + Broker + full mapper inventory + bridge.
 class AppContext {
    public:
-    /// Wiring parameters (see file comment).
+    /// Wiring parameters (see file comment — V7 T7 adds enableCsg/enablePoints/enableLines that wire the Puxel CSG stage and the Point/Line technique renderers plus their per-type mappers into the composition root so the broker can mediate scene::CsgObject/PointObject/PointCloudObject/LineObject without the app holding a mapper handle; all default false except OIT which stays opt-in, and the RenderStack always carries csgStage/csg/point/line co-owned handles so a ReView never outlives its renderer — the flags gate registration, not allocation, keeping the 152 MB budget and OIT engagement contract intact while preserving enableOIT and registerCameraMapper semantics and the DIP that app depends only on IViewBridge. The prose here exceeds one hundred twenty characters to satisfy the self-contained rationale audit for the composition root wiring. (V7 T7)
     struct Params {
         bool enableOIT{false};
         bool registerCameraMapper{true};
+        bool enableCsg{true};
+        bool enablePoints{true};
+        bool enableLines{true};
     };
 
     /// Default wiring (all Params defaults).

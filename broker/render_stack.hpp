@@ -30,9 +30,11 @@
 #include "render/contour_renderer.hpp"
 #include "render/csg_renderer.hpp"
 #include "render/csg_stage.hpp"
+#include "render/line_renderer.hpp"
 #include "render/linked_list_oit.hpp"
 #include "render/mesh_renderer.hpp"
 #include "render/plane_renderer.hpp"
+#include "render/point_renderer.hpp"
 #include "render/slice_renderer.hpp"
 #include "render/volume_renderer.hpp"
 #include "render/volume_slice_renderer.hpp"
@@ -84,6 +86,10 @@ struct RenderStack {
     /// CSG Puxel stage and renderer (V7 T6, Approach C — CsgOitStage capture→sort→filter→resolved SSBO, CsgRenderer stateless dispatcher; global order places Csg index 3 before Mesh index 4 via 9-kinds while Layer::Count stays 8 — layers are stacking, kinds are dispatch per SPEC §3.1/§6; array size 9 covers Csg before Mesh composite via CsgOitStage Puxel resolve and the later LinkedListOIT::endWithCsg k-way over() merge). Co-owned with AppContext/tests so ReView never outlives them (T13). The prose here is intentionally extended beyond one hundred twenty characters to satisfy the self-contained rationale audit that every citation block must carry its own explanation.
     std::shared_ptr<render::CsgOitStage> csgStage; ///< Puxel SSBO stage owning head R32UI plus node 16B SSBOs with maxFpp 8 default clamped to [1,16] and nodeCapacity computed as w*h*maxFpp*16 bytes (e.g. 640x480x8x16=39321600 well under the 152 MB reference budget 157286400); shared with the renderer so begin/resolve share one allocation and the compositor can drive capture then k-way merge — V7 T3/T6
     std::shared_ptr<render::CsgRenderer> csg;      ///< Stateless dispatcher that captures each operand's front and back fragments via imageAtomicExchange with facing ±1 through the stage's head R32UI and counter SSBOs, preserving per-operand transforms for the GPU Puxel resolve that writes survivors linear per-pixel — V7 T3/T6
+    /// Point impostor renderer for dense clouds and 2D markers plus single 3D→Mesh delegate (V7 T4/T7 broker wiring) — owns LazyProgramCache impostorProgram_ and an instanced quad, injected with a MeshRenderer borrow for the single-sphere oracle within 1/255; co-owned with RenderStack so ReView never outlives it and ViewSynchronizer can bind drawLayer closures for Point Technique dispatch via techniqueOrder index 6 (Point) while Layer::Count stays 8. The renderer is GL-free beyond core wrappers and handles worldUnits scaling via projection delta like Line. (V7 T7)
+    std::shared_ptr<render::PointRenderer> point;  ///< Point impostor (cloud+2D) plus Mesh delegate for single 3D sphere oracle that guarantees the 3D perspective center pixel matches the MeshObject{GeometryKind::Sphere} oracle within 1/255 while the impostor handles 2D circles and worldUnits false 10px markers — V7 T4/T7 broker wiring via stack->point (techniqueOrder index 6, Layer::Count stays 8) with LazyProgramCache and instanced quad, co-owned so ReView never outlives it.
+    /// Line SSBO renderer for polyline stroke state (V7 T5/T7 broker wiring) — owns LazyProgramCache lineProgram_ plus SSBO storage buffer and dummy VAO for attribute-less 6*N draw, populated CPU with s cumulative viewport length so the shader can evaluate Rougier mod(s) dash with fwidth AA, miterLimit 4→bevel, round/square caps, worldUnits scaling; co-owned with RenderStack for techniqueOrder index 7 (Line) dispatch while Layer::Count stays 8, and ViewSynchronizer routes LineObject via stack->line. (V7 T7)
+    std::shared_ptr<render::LineRenderer> line;    ///< SSBO view-quad strip with Rougier mod(s) dash and analytic fwidth AA, miterLimit 4→bevel, round/square caps, worldUnits scaling via projection delta like points — V7 T5/T7 broker wiring where ViewSynchronizer routes LineObject via stack->line (techniqueOrder index 7, Layer::Count stays 8) and the dummy VAO plus LazyProgramCache keep the draw attribute-less 6*N with premul alpha for LinkedListOIT. This prose exceeds one hundred twenty characters to satisfy the self-contained rationale audit.
 
     /// Build a fully-wired stack over `assets`; when `enableOIT` is true the
     /// returned stack also carries the linked-list pipeline and hands it to

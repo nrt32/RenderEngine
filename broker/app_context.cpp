@@ -6,11 +6,14 @@
 #include "broker/camera_mapper.hpp"
 #include "broker/contour_mapper.hpp"
 #include "broker/csg_object_mapper.hpp"
+#include "broker/line_object_mapper.hpp"
 #include "broker/material_mapper.hpp"
 #include "broker/mesh_object_mapper.hpp"
 #include "broker/mesh_slice_object_mapper.hpp"
 #include "broker/plane_mapper.hpp"
 #include "broker/plane_object_mapper.hpp"
+#include "broker/point_cloud_mapper.hpp"
+#include "broker/point_object_mapper.hpp"
 #include "broker/view_bridge.hpp"
 #include "broker/view_compositor.hpp"
 #include "broker/volume_object_mapper.hpp"
@@ -39,7 +42,16 @@ AppContext::AppContext(Params params) {
     broker_->registerMapper(std::make_unique<PlaneMapper>());
     broker_->registerMapper(std::make_unique<PlaneObjectMapper>(assets_));
     broker_->registerMapper(std::make_unique<ContourMapper>(assets_));
-    broker_->registerMapper(std::make_unique<CsgObjectMapper>(assets_));
+    if (params.enableCsg) {
+        broker_->registerMapper(std::make_unique<CsgObjectMapper>(assets_));
+    }
+    if (params.enablePoints) {
+        broker_->registerMapper(std::make_unique<PointObjectMapper>());
+        broker_->registerMapper(std::make_unique<PointCloudMapper>());
+    }
+    if (params.enableLines) {
+        broker_->registerMapper(std::make_unique<LineObjectMapper>());
+    }
 
     bridge_ = ViewBridge::create(broker_, stack_);
 }

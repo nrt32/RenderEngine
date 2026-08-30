@@ -15,6 +15,9 @@ add_library(re_broker STATIC
     plane_object_mapper.cpp
     volume_object_mapper.cpp
     volume_slice_object_mapper.cpp
+    point_object_mapper.cpp
+    point_cloud_mapper.cpp
+    line_object_mapper.cpp
     render_stack.cpp
     slice_display.cpp
     view_synchronizer.cpp
